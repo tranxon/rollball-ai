@@ -257,6 +257,8 @@ struct SkillExperience {
     user_preferences: HashMap<String, String>,
 
     // 模型兼容性
+    // 联动：当某模型上某类任务成功率低于 60% 时，触发 AutobiographicalNode Limitation 节点自动更新
+    // 详见 05-memory.md Phase 2「自我评估驱动的 AutobiographicalNode 更新」
     model_compatibility: HashMap<ModelKey, ModelCompatibility>,
 }
 
@@ -487,6 +489,8 @@ Grafeo 查询 SkillExperience 节点（动态经验）
 当经验积累到一定程度（如 learned_patterns 超过 5 条，或 model_compatibility 新增了低评分模型），Runtime 可以提示用户：
 
 > "weekly-report Skill 已积累 12 条新经验（3 条成功模式、1 个新模型的适配），建议进入调试模式更新 Skill 定义。"
+
+同时，failure_cases 积累超过 3 条同类失败时，会触发 Skill ↔ ProceduralNode 联动提取（详见 05-memory.md Phase 2），生成跨 Skill 的通用行为模式。
 
 用户确认后，将经验层合并回 SKILL.md，形成新一轮的发布。
 

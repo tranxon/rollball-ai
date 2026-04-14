@@ -19,7 +19,12 @@
 
 ### Phase 2: Memory 分层 + 系统 Agent
 
-- Agent Runtime 内嵌 Grafeo：私有 Memory 初始化、情景记忆写入/检索、语义记忆图操作。
+- Agent Runtime 内嵌 Grafeo：三层五类仿生分层（瞬态/经历/沉淀）、情景记忆写入/检索、语义记忆图操作、乘法衰减遗忘机制（decay_score = importance × activity_signal）、Dormant/Purge 差异化策略。
+- 即时提取 Tool Call 机制：memory_store 工具加入内置列表，LLM 自主判断是否调用，支持 Fact/Preference/Relation/Procedural/Autobiographical 五种类型，带 importance 和 privacy 参数。
+- 关联扩散检索：hybrid_search（HNSW + BM25）+ graph_expand（1-2 跳），经历层↔沉淀层通过 source_episode 反向查询建立跨层关联。
+- AutobiographicalNode：从 manifest.toml 自动派生 Identity/Capability，注入 System Prompt 头部（上限 200 token），History 超过 10 条自动摘要压缩。
+- Episode 内容分类压缩：信息性内容原样存储，工件性内容（代码/文件/命令输出）压缩为摘要 + ArtifactRef 引用，零 LLM 调用，纯 Runtime 确定性逻辑。
+- PrivacyLevel（Public/Personal/Sensitive）按 Zone 强制执行。
 - 系统 Agent 实现：身份管理 ContentProvider、默认交互入口、身份提报接收与 LLM 判断、observe 通知机制。
 - 冷启动身份注入：Gateway 启动 Agent 前向系统 Agent 查询 identity_deps 并注入。
 - Embedding 生成：集成 ONNX Runtime，本地向量生成。
