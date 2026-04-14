@@ -27,8 +27,8 @@ Tool Dispatcher
 
 | 工具名 | 功能 | 所需权限 | 说明 |
 |--------|------|---------|------|
-| `memory_recall` | 语义检索私有 Grafeo | `memory:read` | 混合搜索（向量 + BM25），返回相关记忆片段 |
-| `memory_store` | 写入私有 Grafeo | `memory:write` | 存储情景记忆和/或语义记忆节点 |
+| `memory_recall` | 语义检索私有 Grafeo | `memory:read` | 混合检索（HNSW + BM25）+ 关联扩散（1-2 跳图扩展），返回相关记忆片段 |
+| `memory_store` | 写入私有 Grafeo | `memory:write` | 即时提取 Tool Call 机制：LLM 自主判断是否调用，支持 Fact/Preference/Relation/Procedural/Autobiographical 五种类型，带 importance（0-1）和 privacy（Public/Personal/Sensitive）参数。Fact 按 (subject, predicate) 语义去重 |
 | `http_get` | HTTP GET 请求 | `network:<url_pattern>` | 支持 JSON 响应自动解析 |
 | `http_post` | HTTP POST 请求 | `network:<url_pattern>` | 支持 JSON body 和表单 |
 | `web_fetch` | 获取网页内容 | `network:<url_pattern>` | HTML → Markdown 转换，Agent 直接获得可读文本 |

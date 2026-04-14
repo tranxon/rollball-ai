@@ -27,7 +27,7 @@
 - **统一执行引擎**：Agent Runtime 是平台提供的唯一二进制，负责加载 .agent 包并执行 Agent 逻辑（LLM 交互、工具调度、记忆读写）。
 - **进程级隔离**：每个 Agent 由 Gateway 启动为独立 Agent Runtime 进程，拥有独立工作区、私有 Grafeo 数据库、文件系统隔离、可选资源限制（cgroups/容器）。
 - **Agent 自治**：Agent 进程内直连 LLM API、自主执行工具、自主管理权限校验，不依赖 Gateway 代理业务逻辑。
-- **分层 Memory**：每个 Agent 内嵌私有 Grafeo（情景记忆 + 语义记忆），系统 Agent 提供身份与偏好等系统级数据服务，云端提供跨设备同步。
+- **三层五类仿生 Memory**：每个 Agent 内嵌私有 Grafeo，分瞬态层（工作记忆/LLM 上下文）、经历层（情景记忆）、沉淀层（语义+程序+自传体记忆）。系统 Agent 提供身份与偏好等系统级数据服务。云端同步采用 Zone-Based 差异化策略（identity/preferences 强制本地，knowledge/enterprise 允许同步）。
 - **权限声明与授权**：Agent 在清单中声明所需权限（网络、文件、调用其他 Agent 等），Gateway 在启动时配置沙箱，Agent 在运行时自主校验。
 - **跨平台支持**：.agent 包格式和 Gateway Service API 合同跨平台统一，各平台运行时机制（进程模型、传输层、沙箱）可按平台特性适配。
 
@@ -79,9 +79,9 @@
                     ┌─────────────────────────┐
                     │  Memory Sync Service     │
                     │  (云端同步/跨设备)        │
-                    │  - 增量同步              │
-                    │  - 冲突解决 (CRDT/LWW)   │
-                    │  - 联邦共享 (可选)       │
+                    │  - Zone-Based 差异化同步  │
+                    │  - identity/pref: LocalOnly│
+                    │  - knowledge: CloudSync   │
                     └─────────────────────────┘
 ```
 
@@ -111,7 +111,7 @@
 | 隔离级别 | 进程 + 沙箱 + WASM | 单进程内逻辑隔离 | 单进程内逻辑隔离 | 操作系统容器 |
 | 执行模型 | 统一 Runtime + 声明式包 | 单体二进制 | Node.js 进程 | 容器镜像 |
 | 资源开销 | 极低（空闲可杀死） | 低（常驻 ~5MB） | 中（Node.js 常驻） | 较高 |
-| Memory | 分层 Grafeo（私有+系统Agent+云端） | SQLite/PG/Markdown | ContextEngine | 外部数据库 |
+| Memory | 三层五类仿生 Grafeo（瞬态/经历/沉淀 + Zone-Based 同步） | SQLite/PG/Markdown | ContextEngine | 外部数据库 |
 | LLM 集成 | Agent 直连 + Gateway 协调 | 内置 Provider | 内置 Provider | 各服务自连 |
 | 分发模型 | 应用商店式 .agent 包 | 代码库/配置 | 代码库/配置 | 镜像仓库 |
 | 跨Agent通信 | Intent + Capability Registry | 无（单 Agent） | 无（单 Agent） | HTTP/gRPC |
