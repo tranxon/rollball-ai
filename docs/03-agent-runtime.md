@@ -8,6 +8,8 @@ Agent Runtime 是平台提供的唯一二进制可执行文件，类似 Android 
 
 ## 1. 启动方式
 
+**设计约束：** Agent Runtime 空闲内存占用目标与 ZeroClaw 相当（~5-10 MB）。该目标约束 Runtime 的模块设计——懒初始化（Grafeo、Wasmtime Engine 等重量级模块按需加载）、最小化默认缓存、零后台轮询线程。
+
 ```bash
 agent-runtime \
     /path/to/agent-package \

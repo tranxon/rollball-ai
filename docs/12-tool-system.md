@@ -25,6 +25,8 @@ Tool Dispatcher
 
 以下工具由 Agent Runtime 内置实现，Agent 可在 manifest 中声明使用，无需提供实现代码。
 
+**平台基础设施级工具定义：** 内置工具的范围仅限**平台基础设施级**——即调用开放协议（HTTP/DNS/文件系统/操作系统 API）或本地计算（WASM/Embedding），不依赖特定第三方服务的付费 API。SaaS 集成（Jira/Notion/LinkedIn 等）由独立 Agent 提供，不内置。`web_search` 虽然调用搜索引擎 API，但 API Key 由用户提供并通过 Vault 分发，平台仅做调用通道，不绑死特定服务商——因此归类为平台基础设施级工具。
+
 | 工具名 | 功能 | 所需权限 | 说明 |
 |--------|------|---------|------|
 | `memory_recall` | 语义检索私有 Grafeo | `memory:read` | 混合检索（HNSW + BM25）+ 关联扩散（1-2 跳图扩展），返回相关记忆片段 |

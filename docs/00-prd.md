@@ -125,7 +125,6 @@ Rollball 是一个"Agent as APP"平台。核心隐喻借鉴 Android：Agent 如 
 | GTW-06 | 预算追踪：接收 Agent 上报，超限信号 | P1 | 成本控制 |
 | GTW-07 | 速率限制：令牌分配，跨 Agent 共享资源协调 | P1 | API 调用公平性 |
 | GTW-08 | HTTP API（Axum，端口 19876）：供 Desktop App / CLI 使用 | P1 | 管理面接口 |
-| GTW-09 | Socket API：供 Agent Runtime IPC 使用 | P0 | 数据面接口 |
 | GTW-10 | 定时触发器（cron 解析） | P2 | 定时任务 |
 | GTW-11 | Gateway CLI 二进制：命令行管理 Agent | P1 | 无 GUI 场景 |
 | GTW-12 | 冷启动身份注入：启动 Agent 前向系统 Agent 查询 identity_deps 并注入 | P1 | 身份一致性 |
@@ -256,7 +255,7 @@ Rollball 是一个"Agent as APP"平台。核心隐喻借鉴 Android：Agent 如 
 
 **P0 需求汇总**（Phase 1 必须交付）：
 
-PKG-01~05, FMT-01~03, RUN-01~03, RUN-07~09, MEM-01~03, TOL-01, TOL-05, SKL-01~02, GTW-01~03, GTW-05, GTW-09, SYS-01~02, SYS-06, COM-01~02, COM-05, SEC-01~02, SEC-04~05, SEC-07, PLT-01
+PKG-01~05, FMT-01~03, RUN-01~03, RUN-07~09, MEM-01~03, TOL-01, TOL-05, SKL-01~02, GTW-01~03, GTW-05, SYS-01~02, SYS-06, COM-01~02, COM-05, SEC-01~02, SEC-04~05, SEC-07, PLT-01
 
 ---
 

@@ -365,6 +365,7 @@ read_only_root = true
 - `identity_deps`：声明启动时需要的用户身份字段（如 name、city、language），Gateway 在启动前向系统 Agent 查询并注入。
 - `tools`：工具声明，支持 builtin（内置）和 wasm（自定义沙箱）两种类型。resource_limits 内联到对应 tool 项下。
 - `capabilities`：声明本 Agent 可被其他 Agent 通过 Intent 调用的能力，含类型信息。使用映射语法（action name → schema），因为 action 名称天然唯一。
+- `triggers.cron`：标准 5 段 cron 表达式（`分 时 日 月 周`），使用 UTC 时区，不支持秒级精度和特殊宏（`@daily` 等）。示例：`"0 7 * * *"` = 每天 UTC 07:00。Gateway 在解析时校验格式，非法表达式拒绝安装。时区偏移由 Gateway 根据用户配置的本地时区在触发时计算，manifest 中不声明时区。
 
 ## 4. 设计决策记录
 

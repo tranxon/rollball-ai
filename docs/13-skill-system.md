@@ -643,3 +643,24 @@ System Prompt 组装（步骤 5：Skill Instructions）
 | 经验注入而非替换 | 运行时合并，不修改 SKILL.md | 保证 SKILL.md 作为稳定基准，经验作为动态增强层叠加 |
 | 上下文裁剪 | 经验层优先裁剪 | 基础指令是 Skill 的核心逻辑，经验是锦上添花 |
 | 草稿不进包 | SkillDraft 仅存 Grafeo | 未发布的草稿不应该作为包的一部分分发 |
+
+## 8. 未来扩展
+
+### 8.1 Skill 级联降级（Phase 4+）
+
+当 Skill 依赖的工具在当前平台不可用时（如移动端 `shell` 不可用），Skill 应能自动降级而非整体失效。
+
+**愿景：**
+
+- SKILL.md 的 `tool_deps` 标记每个依赖为 `required` 或 `optional`（默认 optional）
+- `required` 工具不可用时，Skill 整体跳过，不注入 System Prompt
+- `optional` 工具不可用时，Skill 仍注入，但在指令中标注"此步骤在当前平台不可用，请跳过"
+- Runtime 在组装 Skill 上下文时，对比 `tool_deps` 与当前平台可用工具列表，生成降级版本指令
+
+**待解决的设计问题：**
+
+- "跳过某步骤"对 LLM 来说是否足够清晰？是否需要生成替代步骤？
+- 降级后的 Skill 是否需要记录到 SkillExperience？如何区分完整执行和降级执行？
+- 是否需要在 SKILL.md 中显式声明降级策略（类似 `on_tool_unavailable: skip_step | skip_skill | fallback`）？
+
+这些问题需要在 Skill 系统稳定运行后，通过实际场景积累答案后再做详细设计。
