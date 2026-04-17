@@ -1,6 +1,6 @@
 # Agent 打包格式（.agent）
 
-> 版本：v3.2 | 更新日期：2026-04-13
+> 版本：v3.3 | 更新日期：2026-04-17
 
 ---
 
@@ -373,10 +373,134 @@ read_only_root = true
 - `llm.routing.strategy`：LLM 路由策略（cost_priority / quality_priority / latency_priority）。
 - `llm.budget`：Token 和费用预算，超限后的动作（stop / fallback_to_local / warn）。
 - `memory`：已移除 shared 概念。用户身份与偏好由系统 Agent 管理，其他 Agent 通过 Intent 查询。
-- `identity_deps`：声明启动时需要的用户身份字段（如 name、city、language），Gateway 在启动前向系统 Agent 查询并注入。
+- `identity_deps`：声明启动时需要的用户身份字段（如 name、city、language），Gateway 在启动前向系统 Agent 查询并注入。详见下方 §3.1。
 - `tools`：工具声明，支持 builtin（内置）和 wasm（自定义沙箱）两种类型。resource_limits 内联到对应 tool 项下。
 - `capabilities`：声明本 Agent 可被其他 Agent 通过 Intent 调用的能力，含类型信息。使用映射语法（action name → schema），因为 action 名称天然唯一。
 - `triggers.cron`：标准 5 段 cron 表达式（`分 时 日 月 周`），使用 UTC 时区，不支持秒级精度和特殊宏（`@daily` 等）。示例：`"0 7 * * *"` = 每天 UTC 07:00。Gateway 在解析时校验格式，非法表达式拒绝安装。时区偏移由 Gateway 根据用户配置的本地时区在触发时计算，manifest 中不声明时区。
+
+### 3.1 identity_deps 注入细节
+
+`identity_deps` 是一个字符串数组，声明 Agent 启动时需要的用户身份字段。Gateway 在拉起 Agent Runtime 前，向系统 Agent 查询这些字段的值，通过握手协议的 `identity_delivery` 消息注入。
+
+**字段名约定**：
+
+| 字段名 | 语义 | 来源 | Phase 1 默认值（System Agent 无数据时） |
+|--------|------|------|--------------------------------------|
+| `display_name` | 用户希望被怎么称呼 | Onboarding 必填 | `""`（空字符串，Agent 应在 prompt 中优雅降级） |
+| `language` | 用户语言偏好（BCP 47） | Onboarding 必填 | `"en-US"`（安全回退到英语） |
+| `timezone` | 用户时区（IANA） | Onboarding 必填 | `"UTC"`（安全回退到 UTC） |
+| `city` | 所在城市 | Onboarding 选填 | `null`（未知，不猜测） |
+| `occupation` | 职业/领域 | 对话沉淀 | `null` |
+| `communication_style` | 沟通偏好 | 对话沉淀 | `null` |
+| `custom:*` | 开放扩展字段 | 各来源 | `null` |
+
+**required vs optional 语义**：
+
+identity_deps 数组中的字段**全部视为 optional**——即使 Agent 声明了 `identity_deps = ["display_name", "city"]`，如果系统 Agent 返回 `city = null`（用户未提供），Gateway 仍然正常启动 Agent，只是 identity_delivery 中该字段值为 null。
+
+这种设计基于以下考量：
+- Agent 不应因为用户缺少某个身份信息就拒绝工作（如天气 Agent 不知道用户城市，可以主动询问）
+- 必填 vs 选填的控制权在 Onboarding 侧（哪些字段强制采集），而非 Agent 声明侧
+- 如果未来确实需要 required 语义，可在字段名后加 `!` 后缀（如 `"city!"`），但 Phase 1 不实现
+
+**identity_delivery 中字段缺失的处理**：
+
+```json
+// Agent 声明 identity_deps = ["display_name", "city", "occupation"]
+// 系统Agent只知道 display_name
+
+{
+    "type": "identity_delivery",
+    "fields": {
+        "display_name": "张三",
+        "city": null,
+        "occupation": null
+    },
+    "confidence": {
+        "display_name": 1.0,
+        "city": null,
+        "occupation": null
+    }
+}
+```
+
+- 已知字段：返回值 + confidence
+- 未知字段：值为 `null`，confidence 为 `null`
+- 系统 Agent 不认识的字段名：仍返回 `null`（不会报错）
+
+### 3.2 权限匹配语义
+
+permissions 数组中的每条权限字符串遵循统一的模式语法，Gateway 和 Runtime 据此判断工具调用的授权状态。
+
+**权限格式**：
+
+```
+<domain>:<resource>[:<qualifier>]
+```
+
+| 组成 | 说明 | 示例 |
+|------|------|------|
+| `domain` | 权限域（大类别） | `network`, `filesystem`, `memory`, `intent` |
+| `resource` | 具体资源或操作 | `https://api.weather.com`, `read`, `write`, `send` |
+| `qualifier` | 可选限定词 | `~/Documents`, `com.example.calendar` |
+
+**通配符规则**：
+
+| 模式 | 含义 | 匹配示例 | 不匹配 |
+|------|------|---------|--------|
+| `network:https://api.weather.com` | 精确匹配 | `https://api.weather.com` | `https://api.other.com` |
+| `network:https://*.weather.com` | 子域名通配 | `https://api.weather.com`, `https://v2.weather.com` | `https://weather.com`（裸域不匹配） |
+| `network:*` | 整个 network 域 | 任意 HTTPS URL | — |
+| `filesystem:read:*` | 整个 filesystem:read 域 | `~/Documents`, `/tmp` | — |
+| `filesystem:*:*` | 整个 filesystem 域 | read/write 任意路径 | — |
+| `intent:send:*` | 可向任何 Agent 发 Intent | `com.example.calendar`, `com.rollball.system` | — |
+| `memory:read` | 无需 qualifier | — | — |
+
+**匹配算法**：
+
+```rust
+fn matches_permission(declared: &str, requested: &str) -> bool {
+    let decl_parts: Vec<&str> = declared.splitn(3, ':').collect();
+    let req_parts: Vec<&str> = requested.splitn(3, ':').collect();
+
+    // 1. 域必须精确匹配
+    if decl_parts[0] != req_parts[0] { return false; }
+
+    // 2. 资源匹配（支持 * 通配和子域名 *.example.com）
+    if decl_parts[1] == "*" { return true; }  // 整个域通配
+    if !wildcard_match(decl_parts[1], req_parts[1]) { return false; }
+
+    // 3. qualifier 匹配（如果声明了 qualifier）
+    if decl_parts.len() == 3 && req_parts.len() == 3 {
+        wildcard_match(decl_parts[2], req_parts[2])
+    } else if decl_parts.len() == 3 && req_parts.len() == 2 {
+        false  // 声明了 qualifier 但请求没有，不匹配
+    } else {
+        true   // 都没有 qualifier，匹配
+    }
+}
+```
+
+**权限检查流程**：
+
+1. Agent 发起工具调用（如 `http_get("https://api.weather.com/...")`)
+2. Runtime 构造请求权限字符串（如 `network:https://api.weather.com`）
+3. 遍历 manifest.permissions，调用 `matches_permission`
+4. 任一声明权限匹配 → 允许执行
+5. 无匹配 → 拒绝执行，返回 PermissionDenied 错误
+
+**Phase 1 实际权限列表**：
+
+| 域 | 权限示例 | 对应工具 |
+|----|---------|---------|
+| network | `network:https://api.example.com` | http_get, http_post |
+| filesystem | `filesystem:read:~/Documents`, `filesystem:write:~/Documents` | file_read, file_write |
+| filesystem | `filesystem:read:/tmp` | file_read |
+| memory | `memory:read`, `memory:write` | memory_query, memory_store |
+| intent | `intent:send:com.example.calendar` | intent_send |
+| shell | （shell 工具无需声明 permission，由 Approval Gate 控制） | shell |
+| search | （search 工具无需声明 permission，只读公开数据） | web_search |
+| identity | （identity_store 仅系统 Agent 可用，通过 platform.system 声明授权） | identity_store |
 
 ## 4. 设计决策记录
 

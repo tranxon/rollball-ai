@@ -1,6 +1,6 @@
 # 系统 Agent（com.rollball.system）
 
-> 版本：v3.4 | 更新日期：2026-04-16
+> 版本：v3.5 | 更新日期：2026-04-17
 
 ---
 
@@ -292,3 +292,63 @@ Agent 在日常对话中自动提取用户透露的身份信息，通过 `identi
 | Gateway 承担业务逻辑 | Gateway 纯基础设施，零业务逻辑 |
 
 连系统级服务本身也是一个 Agent——这才是 Agent as APP 模型最自洽的设计。
+
+## 8. Bootstrap 流程——System Agent 的冷启动特殊路径
+
+System Agent 在 Gateway 冷启动时必须最先就绪，但它的启动依赖链与普通 Agent 不同——System Agent **不需要** identity injection（它是身份的提供者，不是消费者），也不需要等待其他 Agent 的 Capability Overview。
+
+### 8.1 启动顺序
+
+```
+Gateway 进程启动
+       │
+       ▼
+1. 初始化内部模块（Vault / PackageManager / IntentRouter / BudgetTracker / RateLimiter）
+       │
+       ▼
+2. 加载 com.rollball.system 的 manifest
+   ├─ platform.system = true → 识别为系统 Agent
+   └─ 跳过 identity_deps 查询（系统 Agent 不声明 identity_deps）
+       │
+       ▼
+3. 拉起 System Agent Runtime 进程
+       │
+       ▼
+4. Socket 连接建立，执行握手协议（06-communication.md §1.2）
+   ├─ ① Runtime → Gateway: handshake
+   ├─ ② Gateway → Runtime: handshake_ack
+   ├─ ③ Gateway → Runtime: key_delivery（API Key）
+   ├─ ④ 跳过 identity_delivery（系统 Agent 无需身份注入）
+   └─ ⑤ 跳过 capability_overview（此时无其他 Agent 运行）
+       │
+       ▼
+5. System Agent 进入主循环就绪
+       │
+       ▼
+6. Gateway 开始按需启动其他 Agent
+   └─ 其他 Agent 启动时：identity_delivery 从 System Agent 查询获取
+```
+
+### 8.2 Gateway 对 System Agent 的特殊处理
+
+Gateway 在启动 Agent 时通过 `manifest.platform.system` 字段判断是否为系统 Agent，执行以下差异化逻辑：
+
+| 步骤 | 普通 Agent | 系统 Agent |
+|------|-----------|-----------|
+| 启动时机 | 按需 / 定时 / 手动 | Gateway 启动后立即拉起 |
+| identity_deps 查询 | Gateway 向 System Agent 查询 | 跳过（System Agent 不声明 identity_deps） |
+| identity_delivery | 握手第④步推送 | 跳过 |
+| capability_overview | 握手第⑤步推送 | 跳过（启动时尚无其他 Agent） |
+| 后续 capability 更新 | 其他 Agent 安装/启动后推送增量 | 同普通 Agent |
+| 生命周期 | 空闲可杀 | 常驻（空闲超时后可杀，但需求时立即拉起） |
+
+### 8.3 首次启动（无 Grafeo 数据）
+
+System Agent 首次启动时，私有 Grafeo 为空，无法响应 identity:query。Gateway 处理此场景的策略：
+
+1. 其他 Agent 启动时，Gateway 向 System Agent 发送 identity:query
+2. System Agent 的 Grafeo 无数据 → LLM 返回空结果
+3. Gateway 将空结果通过 identity_delivery 推送给请求 Agent
+4. 请求 Agent 的 prompt 中应包含对缺失身份信息的优雅降级处理（如"如果不知道用户名字，用'你好'代替'你好XX'"）
+
+**这意味着**：Desktop App 的 Onboarding 流程应在第一批 Agent 启动前完成，确保 System Agent 的 Grafeo 中已有基础身份数据。Onboarding 流程见 14-desktop-app.md §4.1。
