@@ -97,7 +97,7 @@ cargo fmt --all -- --check
 
 ## Conventions
 
-- Rust Edition 2024, MSRV 1.87+
+- Rust Edition 2024, MSRV 1.95+
 - Security-first: flag `unsafe` blocks, avoid `unwrap()`/`expect()` in production, validate all external input
 - Use `Result<T>` for fallible operations, propagate with `?`
 - Minimize unnecessary `.clone()` — prefer borrowing
