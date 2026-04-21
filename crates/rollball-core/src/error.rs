@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use crate::providers::ProviderError;
+
 /// Main error type for Rollball
 #[derive(Debug, Error)]
 pub enum RollballError {
@@ -21,7 +23,7 @@ pub enum RollballError {
     Tool(String),
 
     #[error("Provider error: {0}")]
-    Provider(String),
+    Provider(ProviderError),
 
     #[error("Permission denied: {0}")]
     PermissionDenied(String),

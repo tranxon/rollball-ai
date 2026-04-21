@@ -11,3 +11,4 @@ pub mod sign;
 pub mod verify;
 pub mod certificate;
 pub mod error;
+pub mod zip_utils;

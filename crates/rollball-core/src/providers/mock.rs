@@ -119,7 +119,7 @@ impl Provider for MockProvider {
         // Get next response
         let response = {
             let mut responses = self.responses.lock().map_err(|e| {
-                crate::error::RollballError::Provider(format!("Mock lock error: {e}"))
+                crate::error::RollballError::Provider(crate::providers::ProviderError::unknown(format!("Mock lock error: {e}")))
             })?;
             if responses.is_empty() {
                 MockResponse::Text {
@@ -150,7 +150,7 @@ impl Provider for MockProvider {
                 }),
             }),
             MockResponse::Error { message } => {
-                Err(crate::error::RollballError::Provider(message))
+                Err(crate::error::RollballError::Provider(crate::providers::ProviderError::unknown(message)))
             }
         }
     }

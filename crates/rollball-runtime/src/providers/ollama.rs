@@ -207,19 +207,20 @@ impl Provider for OllamaProvider {
             .send()
             .await
             .map_err(|e| {
-                rollball_core::RollballError::Provider(format!("Ollama request failed: {e}"))
+                rollball_core::RollballError::Provider(rollball_core::ProviderError::network(format!("Ollama request failed: {e}")))
             })?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(rollball_core::RollballError::Provider(format!(
-                "Ollama API error: {status} — {body}"
+            return Err(rollball_core::RollballError::Provider(rollball_core::ProviderError::from_status_code(
+                status.as_u16(),
+                format!("Ollama API error: {status} — {body}"),
             )));
         }
 
         let ollama_resp: OllamaChatResponse = response.json().await.map_err(|e| {
-            rollball_core::RollballError::Provider(format!("Failed to parse Ollama response: {e}"))
+            rollball_core::RollballError::Provider(rollball_core::ProviderError::unknown(format!("Failed to parse Ollama response: {e}")))
         })?;
 
         let msg = ollama_resp.message;

@@ -42,6 +42,9 @@ pub enum RuntimeError {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("Tool timeout: {0}")]
+    ToolTimeout(String),
 }
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;

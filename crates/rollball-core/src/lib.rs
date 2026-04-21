@@ -26,5 +26,5 @@ pub use permission::Permission;
 pub use identity::Identity;
 pub use budget::{Budget, UsageReport};
 pub use tools::{Tool, ToolSpec, ToolResult};
-pub use providers::{Provider, ChatMessage, ChatRequest, ChatResponse, StreamEvent};
+pub use providers::{Provider, ChatMessage, ChatRequest, ChatResponse, StreamEvent, ProviderError, ProviderErrorType};
 pub use error::RollballError;

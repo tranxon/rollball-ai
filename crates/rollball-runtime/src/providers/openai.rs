@@ -331,24 +331,24 @@ impl Provider for OpenAIProvider {
             .json(&native_request)
             .send()
             .await
-            .map_err(|e| rollball_core::RollballError::Provider(format!("OpenAI request failed: {e}")))?;
+            .map_err(|e| rollball_core::RollballError::Provider(rollball_core::ProviderError::network(format!("OpenAI request failed: {e}"))))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(rollball_core::RollballError::Provider(format!("OpenAI API error: {status} — {body}")));
+            return Err(rollball_core::RollballError::Provider(rollball_core::ProviderError::from_status_code(status.as_u16(), format!("OpenAI API error: {status} — {body}"))));
         }
 
         let native_resp: NativeChatResponse = response
             .json()
             .await
-            .map_err(|e| rollball_core::RollballError::Provider(format!("Failed to parse OpenAI response: {e}")))?;
+            .map_err(|e| rollball_core::RollballError::Provider(rollball_core::ProviderError::unknown(format!("Failed to parse OpenAI response: {e}"))))?;
 
         let choice = native_resp
             .choices
             .into_iter()
             .next()
-            .ok_or_else(|| rollball_core::RollballError::Provider("No choices in OpenAI response".to_string()))?;
+            .ok_or_else(|| rollball_core::RollballError::Provider(rollball_core::ProviderError::unknown("No choices in OpenAI response".to_string())))?;
 
         Ok(parse_response(choice.message, native_resp.usage))
     }
@@ -378,12 +378,12 @@ impl Provider for OpenAIProvider {
             .json(&native_request)
             .send()
             .await
-            .map_err(|e| rollball_core::RollballError::Provider(format!("OpenAI streaming request failed: {e}")))?;
+            .map_err(|e| rollball_core::RollballError::Provider(rollball_core::ProviderError::network(format!("OpenAI streaming request failed: {e}"))))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(rollball_core::RollballError::Provider(format!("OpenAI API error: {status} — {body}")));
+            return Err(rollball_core::RollballError::Provider(rollball_core::ProviderError::from_status_code(status.as_u16(), format!("OpenAI API error: {status} — {body}"))));
         }
 
         // Spawn a task to read SSE lines and send events via channel

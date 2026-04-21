@@ -4,12 +4,13 @@
 //! 1. Reading the ZIP contents
 //! 2. Computing SHA-256 digests of each section
 //! 3. Creating a SigningBlock with Ed25519 signature
-//! 4. Writing the signed ZIP with the SigningBlock inserted before the Central Directory
+//! 4. Writing the signed ZIP with the SigningBlock binary-embedded
+//!    before the Central Directory (APK v2 style)
 
 use ed25519_dalek::Signer as Ed25519Signer;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read};
 use std::path::Path;
 
 use crate::error::Result;
@@ -71,6 +72,8 @@ pub fn sign_package(
 }
 
 /// Compute SHA-256 digests for each file in the ZIP
+///
+/// Skips `META-INF/SIGNING.BLOCK` entries for legacy re-signing support.
 fn compute_digests(zip_data: &[u8]) -> Result<Vec<SectionDigest>> {
     let reader = Cursor::new(zip_data);
     let mut archive = zip::ZipArchive::new(reader)?;
@@ -80,6 +83,11 @@ fn compute_digests(zip_data: &[u8]) -> Result<Vec<SectionDigest>> {
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let name = file.name().to_string();
+
+        // Skip legacy signing block entry if re-signing
+        if name == "META-INF/SIGNING.BLOCK" {
+            continue;
+        }
 
         let mut content = Vec::new();
         file.read_to_end(&mut content)?;
@@ -115,31 +123,25 @@ pub fn create_signature_data(digests: &[SectionDigest], signed_attrs: &SignedAtt
     data
 }
 
-/// Write a signed ZIP with the SigningBlock inserted before the Central Directory
+/// Write a signed ZIP with the SigningBlock binary-embedded before the Central Directory
 ///
-/// The .agent ZIP format:
+/// The .agent ZIP format (V2, APK v2 style):
 /// ```text
 /// [Local file headers + file data]     — original ZIP content
-/// [SigningBlock]                        — inserted before CD
+/// [SigningBlock (binary)]              — inserted before CD
 /// [Central Directory]                   — original CD, updated offsets
 /// [End of Central Directory Record]     — updated CD offset
 /// ```
 fn write_signed_zip(original_data: &[u8], block: &SigningBlock, output_path: &Path) -> Result<()> {
-    // For Phase 1, we use a simpler approach: append the signing block
-    // as a special entry in the ZIP. This avoids the complexity of
-    // manipulating raw ZIP structures.
-    //
-    // The signing block is stored as a ZIP entry named "META-INF/SIGNING.BLOCK"
-
+    // Step 1: Read input and write clean ZIP to buffer (without signing block)
     let reader = Cursor::new(original_data);
     let mut archive = zip::ZipArchive::new(reader)?;
 
-    let output_file = fs::File::create(output_path)?;
-    let mut writer = zip::ZipWriter::new(output_file);
+    let clean_zip_buffer = Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(clean_zip_buffer);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Stored);
 
-    // Copy all existing entries
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let name = file.name().to_string();
@@ -153,12 +155,14 @@ fn write_signed_zip(original_data: &[u8], block: &SigningBlock, output_path: &Pa
         std::io::copy(&mut file, &mut writer)?;
     }
 
-    // Write signing block as a new entry
-    let block_bytes = block.to_bytes();
-    writer.start_file("META-INF/SIGNING.BLOCK", options)?;
-    writer.write_all(&block_bytes)?;
+    let clean_zip_buffer = writer.finish()?.into_inner();
 
-    writer.finish()?;
+    // Step 2: Insert binary signing block before CD
+    let block_bytes = block.to_binary();
+    let signed_data = crate::zip_utils::insert_block_before_cd(&clean_zip_buffer, &block_bytes)?;
+
+    // Step 3: Write result
+    fs::write(output_path, signed_data)?;
 
     Ok(())
 }
@@ -228,23 +232,276 @@ mod tests {
         )
         .unwrap();
 
-        // Verify the signed ZIP exists and contains signing block
+        // Verify the signed ZIP exists
         assert!(signed_path.exists());
 
-        // Verify we can read the signing block
+        // Verify the binary signing block is present (searched by zip_utils)
         let signed_data = fs::read(&signed_path).unwrap();
-        let reader = Cursor::new(signed_data);
-        let mut archive = zip::ZipArchive::new(reader).unwrap();
+        let found = crate::zip_utils::find_binary_signing_block(
+            &signed_data,
+            &crate::signing_block::SIGNING_BLOCK_MAGIC_V2,
+        )
+        .unwrap();
+        assert!(found.is_some(), "Binary signing block not found in signed ZIP");
 
-        let mut found = false;
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    // ------------------------------------------------------------------
+    // S1.3 Integration Tests
+    // ------------------------------------------------------------------
+
+    /// Sign a package using the legacy V1 format (ZIP entry) for backward compat testing
+    #[cfg(test)]
+    fn sign_package_legacy(
+        input_path: &Path,
+        output_path: &Path,
+        key_dir: &Path,
+        key_type: KeyType,
+    ) -> Result<()> {
+        let keypair = load_keypair(key_dir, key_type)?;
+        let input_data = fs::read(input_path)?;
+        let digests = compute_digests(&input_data)?;
+        let signed_attrs = SignedAttributes {
+            signing_time: chrono::Utc::now().to_rfc3339(),
+        };
+        let signature_data = create_signature_data(&digests, &signed_attrs);
+        let signature = keypair.signing_key.sign(&signature_data);
+        let block = SigningBlock {
+            signers: vec![BlockSigner {
+                certificates: vec![Certificate {
+                    data: keypair.public_key_bytes().to_vec(),
+                    identity: match key_type {
+                        KeyType::Developer => crate::signing_block::SignerIdentity::Developer,
+                        KeyType::Platform => crate::signing_block::SignerIdentity::Platform,
+                    },
+                }],
+                digest_algorithm: DigestAlgorithm::Sha256,
+                digests,
+                signature: signature.to_bytes().to_vec(),
+                signed_attrs,
+            }],
+        };
+
+        // Write as legacy ZIP entry
+        let reader = Cursor::new(input_data);
+        let mut archive = zip::ZipArchive::new(reader)?;
+        let output_file = fs::File::create(output_path)?;
+        let mut writer = zip::ZipWriter::new(output_file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let name = file.name().to_string();
+            if name == "META-INF/SIGNING.BLOCK" {
+                continue;
+            }
+            writer.start_file(&name, options)?;
+            std::io::copy(&mut file, &mut writer)?;
+        }
+
+        let block_bytes = block.to_bytes(); // V1 legacy format
+        writer.start_file("META-INF/SIGNING.BLOCK", options)?;
+        writer.write_all(&block_bytes)?;
+        writer.finish()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sign_binary_embed() {
+        let tmp_dir = std::env::temp_dir().join("rollball-test-binary-embed");
+        let _ = fs::remove_dir_all(&tmp_dir);
+        fs::create_dir_all(&tmp_dir).unwrap();
+
+        // Generate key pair
+        crate::keygen::generate_and_save(&tmp_dir.join("keys"), KeyType::Developer).unwrap();
+
+        // Create test ZIP
+        let zip_path = tmp_dir.join("test.agent");
+        create_test_zip(&zip_path);
+
+        // Sign with V2 binary format
+        let signed_path = tmp_dir.join("signed.agent");
+        sign_package(
+            &zip_path,
+            &signed_path,
+            &tmp_dir.join("keys"),
+            KeyType::Developer,
+        )
+        .unwrap();
+
+        // Verify the binary signing block is embedded before CD
+        let signed_data = fs::read(&signed_path).unwrap();
+        let block_data = crate::zip_utils::find_binary_signing_block(
+            &signed_data,
+            &crate::signing_block::SIGNING_BLOCK_MAGIC_V2,
+        )
+        .unwrap()
+        .expect("Binary signing block should be present");
+
+        // The block should be parseable as V2 binary format
+        let block = SigningBlock::from_binary(&block_data).unwrap();
+        assert_eq!(block.signers.len(), 1);
+        assert_eq!(block.signers[0].digests.len(), 2); // manifest.toml + prompts/system.md
+
+        // The signing block should NOT be a ZIP entry
+        let reader = Cursor::new(&signed_data);
+        let mut archive = zip::ZipArchive::new(reader).unwrap();
         for i in 0..archive.len() {
             let file = archive.by_index(i).unwrap();
-            if file.name() == "META-INF/SIGNING.BLOCK" {
-                found = true;
-                break;
-            }
+            assert_ne!(
+                file.name(),
+                "META-INF/SIGNING.BLOCK",
+                "V2 signing block should not be a ZIP entry"
+            );
         }
-        assert!(found, "Signing block not found in signed ZIP");
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_verify_binary_embed() {
+        let tmp_dir = std::env::temp_dir().join("rollball-test-verify-binary");
+        let _ = fs::remove_dir_all(&tmp_dir);
+        fs::create_dir_all(&tmp_dir).unwrap();
+
+        // Generate key pair
+        crate::keygen::generate_and_save(&tmp_dir.join("keys"), KeyType::Developer).unwrap();
+
+        // Create and sign
+        let zip_path = tmp_dir.join("test.agent");
+        create_test_zip(&zip_path);
+
+        let signed_path = tmp_dir.join("signed.agent");
+        sign_package(
+            &zip_path,
+            &signed_path,
+            &tmp_dir.join("keys"),
+            KeyType::Developer,
+        )
+        .unwrap();
+
+        // Verify with the verify module
+        let result = crate::verify::verify_package(&signed_path).unwrap();
+        assert!(result.valid);
+        assert_eq!(result.signer, "developer");
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_sign_verify_roundtrip() {
+        let tmp_dir = std::env::temp_dir().join("rollball-test-binary-roundtrip");
+        let _ = fs::remove_dir_all(&tmp_dir);
+        fs::create_dir_all(&tmp_dir).unwrap();
+
+        // Generate key pair
+        crate::keygen::generate_and_save(&tmp_dir.join("keys"), KeyType::Developer).unwrap();
+
+        // Create and sign
+        let zip_path = tmp_dir.join("test.agent");
+        create_test_zip(&zip_path);
+
+        let signed_path = tmp_dir.join("signed.agent");
+        sign_package(
+            &zip_path,
+            &signed_path,
+            &tmp_dir.join("keys"),
+            KeyType::Developer,
+        )
+        .unwrap();
+
+        // Verify
+        let result = crate::verify::verify_package(&signed_path).unwrap();
+        assert!(result.valid, "Signature should be valid");
+        assert_eq!(result.signer, "developer");
+        assert_eq!(result.sections_count, 2);
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_verify_legacy_format() {
+        let tmp_dir = std::env::temp_dir().join("rollball-test-legacy-verify");
+        let _ = fs::remove_dir_all(&tmp_dir);
+        fs::create_dir_all(&tmp_dir).unwrap();
+
+        // Generate key pair
+        crate::keygen::generate_and_save(&tmp_dir.join("keys"), KeyType::Developer).unwrap();
+
+        // Create test ZIP
+        let zip_path = tmp_dir.join("test.agent");
+        create_test_zip(&zip_path);
+
+        // Sign with legacy V1 format
+        let signed_path = tmp_dir.join("signed_legacy.agent");
+        sign_package_legacy(
+            &zip_path,
+            &signed_path,
+            &tmp_dir.join("keys"),
+            KeyType::Developer,
+        )
+        .unwrap();
+
+        // Verify should succeed with backward-compatible verification
+        let result = crate::verify::verify_package(&signed_path).unwrap();
+        assert!(result.valid, "Legacy format should verify successfully");
+        assert_eq!(result.signer, "developer");
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_signed_zip_still_valid() {
+        let tmp_dir = std::env::temp_dir().join("rollball-test-zip-valid");
+        let _ = fs::remove_dir_all(&tmp_dir);
+        fs::create_dir_all(&tmp_dir).unwrap();
+
+        // Generate key pair
+        crate::keygen::generate_and_save(&tmp_dir.join("keys"), KeyType::Developer).unwrap();
+
+        // Create test ZIP
+        let zip_path = tmp_dir.join("test.agent");
+        create_test_zip(&zip_path);
+
+        // Sign
+        let signed_path = tmp_dir.join("signed.agent");
+        sign_package(
+            &zip_path,
+            &signed_path,
+            &tmp_dir.join("keys"),
+            KeyType::Developer,
+        )
+        .unwrap();
+
+        // The signed file should still be a valid ZIP
+        let signed_data = fs::read(&signed_path).unwrap();
+        let reader = Cursor::new(&signed_data);
+        let mut archive = zip::ZipArchive::new(reader).unwrap();
+
+        // All original entries should be readable
+        assert_eq!(archive.len(), 2);
+
+        let mut names = Vec::new();
+        for i in 0..archive.len() {
+            let file = archive.by_index(i).unwrap();
+            names.push(file.name().to_string());
+        }
+        names.sort();
+
+        assert_eq!(names[0], "manifest.toml");
+        assert_eq!(names[1], "prompts/system.md");
+
+        // Read and verify content
+        let mut manifest = String::new();
+        archive
+            .by_name("manifest.toml")
+            .unwrap()
+            .read_to_string(&mut manifest)
+            .unwrap();
+        assert_eq!(manifest, "agent_id = \"com.test\"");
 
         let _ = fs::remove_dir_all(&tmp_dir);
     }

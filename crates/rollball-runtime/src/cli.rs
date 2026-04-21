@@ -26,7 +26,12 @@ pub struct Cli {
 
     /// Gateway endpoint (e.g., unix:///tmp/agent-gateway.sock)
     #[arg(long, env = "ROLLBALL_GATEWAY_ENDPOINT")]
-    pub gateway_endpoint: String,
+    pub gateway_endpoint: Option<String>,
+
+    /// Gateway Unix socket path for IPC connection.
+    /// When omitted, the runtime runs in standalone mode without Gateway.
+    #[arg(long, env = "ROLLBALL_GATEWAY_SOCKET")]
+    pub gateway_socket: Option<String>,
 
     /// Enable developer mode (debug protocol)
     #[arg(long, default_value = "false")]
@@ -84,6 +89,29 @@ impl Cli {
     }
 }
 
+/// Attempt to connect to Gateway via the given socket path.
+/// Returns Some(client) on success, None on failure (graceful fallback to standalone mode).
+async fn connect_gateway_client(socket_path: &str) -> Option<crate::ipc::client::GatewayClient> {
+    match crate::ipc::client::GatewayClient::connect(socket_path) {
+        Ok(client) => {
+            if let Err(e) = client.connect_transport(socket_path).await {
+                tracing::warn!(
+                    "Failed to connect transport to Gateway at {}: {}",
+                    socket_path,
+                    e
+                );
+                return None;
+            }
+            tracing::info!("Connected to Gateway at {}", socket_path);
+            Some(client)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to create Gateway client for {}: {}", socket_path, e);
+            None
+        }
+    }
+}
+
 /// Async entry point after tokio runtime is initialized
 async fn async_main(config: RuntimeConfig) -> Result<()> {
     use crate::package::loader::load_package;
@@ -93,6 +121,18 @@ async fn async_main(config: RuntimeConfig) -> Result<()> {
     use crate::tools::builtin;
     use crate::tools::registry::ToolRegistry;
     use crate::providers::router::create_provider;
+
+    // Step 0: Connect to Gateway if socket path is provided
+    let ipc_client = if let Some(ref socket) = config.gateway_socket {
+        connect_gateway_client(socket).await
+    } else {
+        None
+    };
+    if ipc_client.is_some() {
+        tracing::info!("Gateway IPC client initialized");
+    } else {
+        tracing::info!("Running in standalone mode (no Gateway)");
+    }
 
     // Step 1: Load .agent package
     tracing::info!(path = %config.package_path, "Loading .agent package");
@@ -163,12 +203,13 @@ async fn async_main(config: RuntimeConfig) -> Result<()> {
     };
 
     // Step 8: Create AgentLoop
-    let mut agent_loop = AgentLoop::new(
+    let (mut agent_loop, _inbound_tx) = AgentLoop::new(
         config.clone(),
         loaded.manifest.clone(),
         provider,
         active_tools,
         budget,
+        ipc_client,
     );
 
     // Step 9: Run interactive chat loop
@@ -239,4 +280,38 @@ async fn run_chat_loop(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_gateway_socket_arg() {
+        let cli = Cli::parse_from([
+            "rollball-runtime",
+            "--agent-id",
+            "com.test.agent",
+            "--package-path",
+            "/tmp/test.agent",
+            "--work-dir",
+            "/tmp/work",
+            "--gateway-socket",
+            "unix:///tmp/gateway.sock",
+        ]);
+        assert_eq!(cli.agent_id, "com.test.agent");
+        assert_eq!(cli.package_path, "/tmp/test.agent");
+        assert_eq!(cli.work_dir, "/tmp/work");
+        assert_eq!(cli.gateway_socket, Some("unix:///tmp/gateway.sock".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_gateway_client_connection_failure_graceful() {
+        // Use a non-existent socket path to force connection failure
+        let client = connect_gateway_client("unix:///nonexistent/socket/path.sock").await;
+        assert!(
+            client.is_none(),
+            "Should gracefully fallback to None on connection failure"
+        );
+    }
 }

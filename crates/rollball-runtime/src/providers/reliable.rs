@@ -9,7 +9,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures_core::Stream;
 use rollball_core::providers::traits::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, StreamEvent,
+    ChatMessage, ChatRequest, ChatResponse, Provider, ProviderError, ProviderErrorType, StreamEvent,
 };
 use tokio::time::sleep;
 
@@ -85,13 +85,9 @@ impl ReliableProvider {
     /// Check if an error is retryable
     fn is_retryable(error: &rollball_core::RollballError) -> bool {
         match error {
-            rollball_core::RollballError::Provider(msg) => {
-                // Network timeouts, 500, 502, 503, 429 (rate limit) are retryable
-                msg.contains("timeout")
-                    || msg.contains("500")
-                    || msg.contains("502")
-                    || msg.contains("503")
-                    || msg.contains("429")
+            rollball_core::RollballError::Provider(provider_err) => {
+                // Use structured retryable flag; rate-limited errors are retryable.
+                provider_err.retryable || provider_err.error_type == ProviderErrorType::RateLimited
             }
             rollball_core::RollballError::RateLimited(_) => true,
             rollball_core::RollballError::Io(_) => true,
@@ -102,9 +98,11 @@ impl ReliableProvider {
     /// Check if an error indicates insufficient balance (not retryable)
     fn is_balance_exhausted(error: &rollball_core::RollballError) -> bool {
         match error {
-            rollball_core::RollballError::Provider(msg) => {
+            rollball_core::RollballError::Provider(provider_err) => {
                 // Common error codes for insufficient balance
-                msg.contains("1113") || msg.contains("1311") || msg.contains("insufficient_quota")
+                provider_err.message.contains("1113")
+                    || provider_err.message.contains("1311")
+                    || provider_err.message.contains("insufficient_quota")
             }
             _ => false,
         }
@@ -161,7 +159,7 @@ impl Provider for ReliableProvider {
         }
 
         Err(rollball_core::RollballError::Provider(
-            "All providers failed (primary + fallbacks)".to_string(),
+            ProviderError::unknown("All providers failed (primary + fallbacks)".to_string()),
         ))
     }
 
@@ -180,7 +178,7 @@ impl Provider for ReliableProvider {
                     }
                 }
                 Err(rollball_core::RollballError::Provider(
-                    "All providers failed for streaming".to_string(),
+                    ProviderError::unknown("All providers failed for streaming".to_string()),
                 ))
             }
         }
@@ -215,10 +213,13 @@ mod tests {
 
     #[test]
     fn test_is_retryable() {
-        let err = rollball_core::RollballError::Provider("timeout".to_string());
+        let err = rollball_core::RollballError::Provider(ProviderError::network("timeout".to_string()));
         assert!(ReliableProvider::is_retryable(&err));
 
-        let err = rollball_core::RollballError::Provider("401 unauthorized".to_string());
+        let err = rollball_core::RollballError::Provider(ProviderError::from_status_code(
+            401,
+            "401 unauthorized".to_string(),
+        ));
         assert!(!ReliableProvider::is_retryable(&err));
 
         let err = rollball_core::RollballError::RateLimited("too many requests".to_string());
@@ -227,10 +228,15 @@ mod tests {
 
     #[test]
     fn test_is_balance_exhausted() {
-        let err = rollball_core::RollballError::Provider("insufficient_quota".to_string());
+        let err = rollball_core::RollballError::Provider(ProviderError::unknown(
+            "insufficient_quota".to_string(),
+        ));
         assert!(ReliableProvider::is_balance_exhausted(&err));
 
-        let err = rollball_core::RollballError::Provider("500 internal error".to_string());
+        let err = rollball_core::RollballError::Provider(ProviderError::from_status_code(
+            500,
+            "500 internal error".to_string(),
+        ));
         assert!(!ReliableProvider::is_balance_exhausted(&err));
     }
 }
