@@ -14,7 +14,11 @@ pub struct RuntimeConfig {
     /// Working directory for the agent
     pub work_dir: String,
     /// Gateway endpoint (e.g., unix:///tmp/agent-gateway.sock)
-    pub gateway_endpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_endpoint: Option<String>,
+    /// Gateway Unix socket path for IPC connection
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_socket: Option<String>,
     /// Path to manifest.toml override
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_path: Option<String>,
@@ -67,7 +71,8 @@ impl Default for RuntimeConfig {
             agent_id: String::new(),
             package_path: String::new(),
             work_dir: String::new(),
-            gateway_endpoint: String::new(),
+            gateway_endpoint: None,
+            gateway_socket: None,
             manifest_path: None,
             config_dir: None,
             dev_mode: false,
@@ -88,6 +93,7 @@ impl RuntimeConfig {
             package_path: cli.package_path.clone(),
             work_dir: cli.work_dir.clone(),
             gateway_endpoint: cli.gateway_endpoint.clone(),
+            gateway_socket: cli.gateway_socket.clone(),
             manifest_path: cli.manifest_path.clone(),
             config_dir: cli.config_dir.clone(),
             dev_mode: cli.dev_mode,

@@ -5,10 +5,13 @@
 
 pub mod state;
 
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::gateway::state::GatewayState;
-use crate::ipc::server::IpcServer;
+use crate::ipc::server::{IpcServer, SharedState};
 use crate::lifecycle::manager::LifecycleManager;
 use crate::package_manager::install;
 use crate::package_manager::uninstall;
@@ -35,10 +38,12 @@ impl Gateway {
         }
     }
 
-    /// Run the Gateway daemon (blocking)
+    /// Run the Gateway daemon (async, multi-connection)
     ///
     /// This starts the IPC server and enters the main event loop.
     /// Blocks until shutdown signal is received.
+    /// The GatewayState is wrapped in Arc<RwLock> for concurrent access
+    /// by multiple IPC connection handlers.
     pub async fn run(&mut self) -> Result<(), GatewayError> {
         tracing::info!("Gateway starting");
         tracing::info!("  Socket path: {}", self.config.socket_path);
@@ -48,12 +53,13 @@ impl Gateway {
         // Ensure directories exist
         self.ensure_dirs()?;
 
-        // Start IPC server in a background task
-        let socket_path = self.config.socket_path.clone();
+        // Wrap state in Arc<RwLock> for concurrent access in multi-connection mode.
+        // std::mem::take replaces self.state with Default so the Arc takes ownership.
+        // This is safe because run() is the terminal daemon method that blocks forever.
+        let shared_state: SharedState =
+            Arc::new(RwLock::new(std::mem::take(&mut self.state)));
 
-        // Phase 1: run IPC server synchronously in the main task
-        // Phase 2: run in a separate task and use channels for communication
-        let mut ipc_server = IpcServer::new(&socket_path);
+        let socket_path = self.config.socket_path.clone();
 
         // Spawn the idle timeout checker in a background task
         let idle_timeout = self.config.idle_timeout_secs;
@@ -70,11 +76,11 @@ impl Gateway {
             }
         });
 
-        tracing::info!("Gateway entering IPC event loop");
+        tracing::info!("Gateway entering IPC event loop (async multi-connection)");
 
-        // Run the IPC server (blocking)
-        // Phase 2 will use Arc<Mutex<GatewayState>> for true async
-        ipc_server.run(&mut self.state)?;
+        // Run the IPC server (async, multi-connection)
+        let ipc_server = IpcServer::new(&socket_path);
+        ipc_server.listen(shared_state).await?;
 
         Ok(())
     }
