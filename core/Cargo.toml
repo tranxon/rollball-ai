@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "crates/rollball-core",
-    "crates/rollball-memory",
-    "crates/rollball-runtime",
-    "crates/rollball-gateway",
-    "crates/rollball-grafeo",
-    "crates/rollball-vault",
-    "crates/rollball-sign",
+    "rollball-core",
+    "rollball-memory",
+    "rollball-runtime",
+    "rollball-gateway",
+    "rollball-grafeo",
+    "rollball-vault",
+    "rollball-sign",
 ]
 resolver = "2"
 
@@ -79,8 +79,8 @@ sha2 = "0.10"
 secrecy = "0.10"
 
 # Internal crate references
-rollball-core = { path = "crates/rollball-core" }
-rollball-memory = { path = "crates/rollball-memory" }
-rollball-grafeo = { path = "crates/rollball-grafeo" }
-rollball-vault = { path = "crates/rollball-vault" }
-rollball-sign = { path = "crates/rollball-sign" }
+rollball-core = { path = "rollball-core" }
+rollball-memory = { path = "rollball-memory" }
+rollball-grafeo = { path = "rollball-grafeo" }
+rollball-vault = { path = "rollball-vault" }
+rollball-sign = { path = "rollball-sign" }

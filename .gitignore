@@ -1,5 +1,7 @@
 # Rust
-/target
+target/
+core/target/
+apps/**/target/
 **/*.rs.bk
 *.pdb
 Cargo.lock
@@ -28,7 +30,7 @@ Thumbs.db
 .env.local
 
 # refer
-zeroclaw/
-LightMem/
-HippoRAG/
-mem0/
+refer-repo/
+
+# Legacy (before repo restructure)
+/cargo-check-output.txt
