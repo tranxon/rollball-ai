@@ -12,14 +12,32 @@ RollBall.AI is a decentralized, high-security, scalable AI Agent runtime platfor
 
 ```
 agent-study/
+├── core/                    # Rust workspace (library crates + integration tests)
+│   ├── Cargo.toml           # Workspace root
+│   ├── rollball-core/       # Shared types, errors, config
+│   ├── rollball-runtime/    # Agent runtime (main loop, tools, providers)
+│   ├── rollball-gateway/    # Gateway (lifecycle, IPC, HTTP API)
+│   ├── rollball-grafeo/     # Memory engine (graph-based, layered)
+│   ├── rollball-memory/     # Memory manager (trait, middleware)
+│   ├── rollball-vault/      # Encrypted key/value store
+│   ├── rollball-sign/       # Package signing & verification
+│   ├── tests/               # Integration tests
+│   ├── rustfmt.toml
+│   └── clippy.toml
+├── apps/                    # Application layer (executables)
+│   ├── cli/                 # Gateway CLI (planned)
+│   └── desktop/             # Tauri v2 Desktop App (planned)
 ├── docs/                    # Architecture design docs (Chinese, v3.x)
-├── docs/module-design/      # Detailed module specs (crate structure)
-├── docs/plan/               # planning docs (Chinese)
-├── docs/review/             # Review reports (design review + code review, numbered)
-├── ref-doc/                 # Reference materials (ZeroClaw, memory research)
-├── zeroclaw/                # Reference implementation ONLY (not source of truth)
-├── .opencode/               # OpenCode config (style-guide.md)
-└── AGENTS.md               # This file
+│   ├── module-design/       # Detailed module specs (crate structure)
+│   ├── plan/                # Planning docs (Chinese)
+│   ├── review/              # Review reports (design + code review, numbered)
+│   └── reference/           # Reference materials (ZeroClaw, Grafeo, memory research)
+├── examples/                # Example .agent packages
+├── ref-repo/                # Reference implementation ONLY (not source of truth)
+├── dev/                     # CI/CD scripts
+├── AGENTS.md                # This file
+├── README.md
+└── LICENSE
 ```
 
 ## WHERE TO LOOK
@@ -76,7 +94,7 @@ Agent Runtime (统一二进制)
 - `.agent` bundles are **declarative only** — no executable code
 - Version v3.x terminology only — no mixing with older versions
 - ZeroClaw is **reference only** — not source of truth for RollBall design
-- Rust implementation follows workspace pattern: `rollball-core`, `rollball-runtime`, `rollball-gateway`, `rollball-grafeo`, `rollball-vault`, `rollball-sign`
+- Rust implementation follows workspace pattern under `core/`: `rollball-core`, `rollball-runtime`, `rollball-gateway`, `rollball-grafeo`, `rollball-vault`, `rollball-sign`
 
 ## ZEROCLAW CODE REUSE
 
@@ -110,11 +128,11 @@ ZeroClaw is a complete Agent implementation. RollBall may reuse its code under t
 
 ## COMMANDS
 
-This is a design/research repository — no build commands.
-Implementation will use:
+Core workspace (under `core/`):
 ```bash
-cargo build --release
-cargo clippy --all-targets -- -D warnings
+cd core && cargo build --release
+cd core && cargo clippy --all-targets -- -D warnings
+cd core && cargo test
 ./dev/ci.sh all
 ```
 
