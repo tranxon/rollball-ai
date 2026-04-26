@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::GatewayConfig;
+use crate::cron::CronStore;
 use crate::error::GatewayError;
 use crate::gateway::state::GatewayState;
 use crate::ipc::server::{IpcServer, SharedState};
@@ -79,6 +80,23 @@ impl Gateway {
         let shared_state: SharedState =
             Arc::new(RwLock::new(std::mem::take(&mut self.state)));
 
+        // S3.2: Open CronStore and load persisted cron entries
+        {
+            let cron_db_path = std::path::Path::new(&self.config.data_dir).join("cron_entries.db");
+            match CronStore::open(&cron_db_path) {
+                Ok(store) => {
+                    let mut gw = shared_state.write().await;
+                    if let Err(e) = gw.cron_scheduler.load_from_store(&store) {
+                        tracing::warn!("Failed to load cron entries: {}", e);
+                    }
+                    gw.cron_store = Some(store);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to open cron store: {}", e);
+                }
+            }
+        }
+
         let socket_path = self.config.socket_path.clone();
 
         // Spawn the idle timeout checker in a background task
@@ -116,6 +134,29 @@ impl Gateway {
         let session_mgr: crate::http::routes::SharedSessionMgr =
             Arc::new(tokio::sync::Mutex::new(crate::ipc::session::SessionManager::new()));
         let http_session_mgr = Some(session_mgr.clone());
+
+        // S3.1: Start cron scheduler tick loop
+        let cron_scheduler = Arc::new(tokio::sync::Mutex::new({
+            let gw = shared_state.read().await;
+            std::mem::take(&mut gw.cron_scheduler.clone())
+        }));
+        // Sync back loaded entries into the shared scheduler
+        {
+            let mut gw = shared_state.write().await;
+            gw.cron_scheduler = {
+                let sched = cron_scheduler.lock().await;
+                sched.clone()
+            };
+        }
+        let cron_session_mgr = session_mgr.clone();
+        let cron_gw_state = shared_state.clone();
+        let _cron_handle = tokio::spawn(async move {
+            crate::cron::run_cron_scheduler(
+                cron_scheduler,
+                cron_session_mgr,
+                cron_gw_state,
+            ).await;
+        });
 
         // Create bridge channel for HTTP ↔ IPC message forwarding
         let (bridge_tx, _) = tokio::sync::broadcast::channel::<crate::http::routes::BridgeEvent>(256);

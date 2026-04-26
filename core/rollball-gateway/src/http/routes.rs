@@ -67,6 +67,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::http::vault_api::vault_routes())
         .merge(crate::http::config_api::config_routes())
         .merge(crate::http::permission_api::permission_routes())
+        .merge(crate::http::cron_api::cron_routes())
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors)

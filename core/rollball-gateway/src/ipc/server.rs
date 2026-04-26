@@ -278,6 +278,18 @@ async fn dispatch_request(
         GatewayRequest::CapabilityQuery { agent_id } => {
             handle_capability_query(agent_id.as_deref(), state).await
         }
+        GatewayRequest::CronRegister {
+            agent_id,
+            schedule,
+            action,
+            params,
+        } => handle_cron_register(&agent_id, &schedule, &action, &params, state).await,
+        GatewayRequest::CronUnregister { cron_id } => {
+            handle_cron_unregister(&cron_id, state).await
+        }
+        GatewayRequest::CronList {} => {
+            handle_cron_list(conn_id, session_mgr, state).await
+        }
     }
 }
 
@@ -344,6 +356,7 @@ async fn handle_key_release(
 const INTENT_PARAMS_MAX_SIZE_BYTES: usize = 64 * 1024;
 
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 async fn handle_intent_send(
     target: &str,
     action: &str,
@@ -659,6 +672,7 @@ impl AsyncPermissionApprovalCallback for AsyncCliApprovalCallback {
 /// when we implement interactive CLI approval, the approval step will
 /// be spawned as a separate tokio task to avoid blocking the IPC loop.
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 async fn handle_permission_request(
     request_id: &str,
     permission: &str,
@@ -854,6 +868,101 @@ async fn handle_capability_query(
             }
         }
     }
+}
+
+// ── Cron handlers (S3.4) ──────────────────────────────────────────────────
+
+async fn handle_cron_register(
+    agent_id: &str,
+    schedule: &str,
+    action: &str,
+    params: &serde_json::Value,
+    state: &SharedState,
+) -> GatewayResponse {
+    let mut guard = state.write().await;
+    match guard.cron_scheduler.register(agent_id, schedule, action, params.clone()) {
+        Ok(cron_id) => {
+            // Persist to CronStore
+            if let Some(store) = &guard.cron_store {
+                let entry = crate::cron::StoredCronEntry {
+                    id: cron_id.clone(),
+                    agent_id: agent_id.to_string(),
+                    schedule: schedule.to_string(),
+                    action: action.to_string(),
+                    params: serde_json::to_string(params).unwrap_or_else(|_| "{}".to_string()),
+                };
+                if let Err(e) = store.insert(&entry) {
+                    tracing::warn!("Failed to persist cron entry {}: {}", cron_id, e);
+                }
+            }
+            tracing::info!(
+                "Cron registered via IPC: agent={} cron_id={} schedule={} action={}",
+                agent_id, cron_id, schedule, action
+            );
+            GatewayResponse::CronRegisterResult {
+                cron_id: Some(cron_id),
+                error: None,
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Cron register failed: agent={} schedule={} error={}", agent_id, schedule, e);
+            GatewayResponse::CronRegisterResult {
+                cron_id: None,
+                error: Some(e),
+            }
+        }
+    }
+}
+
+async fn handle_cron_unregister(
+    cron_id: &str,
+    state: &SharedState,
+) -> GatewayResponse {
+    let mut guard = state.write().await;
+    let removed = guard.cron_scheduler.unregister(cron_id);
+    if removed {
+        // Remove from CronStore
+        if let Some(store) = &guard.cron_store
+            && let Err(e) = store.delete(cron_id) {
+                tracing::warn!("Failed to delete cron entry {} from store: {}", cron_id, e);
+            }
+    }
+    tracing::info!("Cron unregister: cron_id={} removed={}", cron_id, removed);
+    GatewayResponse::CronUnregisterResult { removed }
+}
+
+async fn handle_cron_list(
+    conn_id: &str,
+    session_mgr: &SharedSessionMgr,
+    state: &SharedState,
+) -> GatewayResponse {
+    // Get agent_id from session
+    let agent_id = {
+        let mgr = session_mgr.lock().await;
+        mgr.get_session(conn_id).and_then(|s| s.agent_id.clone())
+    };
+
+    let agent_id = match agent_id {
+        Some(id) => id,
+        None => {
+            return GatewayResponse::CronListResult { entries: vec![] };
+        }
+    };
+
+    let guard = state.read().await;
+    let entries = guard.cron_scheduler
+        .entries_for_agent(&agent_id)
+        .into_iter()
+        .map(|e| rollball_core::protocol::CronEntryInfo {
+            id: e.id.clone(),
+            agent_id: e.agent_id.clone(),
+            schedule: e.schedule.clone(),
+            action: e.action.clone(),
+            params: e.params.clone(),
+        })
+        .collect();
+
+    GatewayResponse::CronListResult { entries }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

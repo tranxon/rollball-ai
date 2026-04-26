@@ -132,6 +132,14 @@ impl AgentManifest {
     pub fn has_permission(&self, perm: &Permission) -> bool {
         self.permissions.iter().any(|p| p.matches(perm))
     }
+
+    /// Get all cron triggers from the manifest
+    pub fn cron_triggers(&self) -> Vec<&Trigger> {
+        self.triggers
+            .iter()
+            .filter(|t| t.trigger_type == "cron")
+            .collect()
+    }
 }
 
 /// LLM provider configuration
@@ -304,6 +312,12 @@ pub struct Trigger {
     /// Cron schedule expression (for cron triggers)
     #[serde(default)]
     pub schedule: Option<String>,
+    /// Action to fire when the trigger activates (for cron/event triggers)
+    #[serde(default)]
+    pub action: Option<String>,
+    /// Params to include when the trigger fires (JSON, for cron/event triggers)
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
     /// Event name (for event triggers)
     #[serde(default)]
     pub event: Option<String>,

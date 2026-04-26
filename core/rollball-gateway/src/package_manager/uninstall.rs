@@ -29,6 +29,18 @@ pub fn uninstall_package(
 
     // Remove from state
     state.remove_installed(agent_id);
+
+    // S3.3: Clean up cron entries for this agent
+    let count = state.cron_scheduler.unregister_agent(agent_id);
+    if count > 0 {
+        tracing::info!("Cleaned up {} cron entries for agent {}", count, agent_id);
+        // Also clean from CronStore
+        if let Some(store) = &state.cron_store
+            && let Err(e) = store.delete_by_agent(agent_id) {
+                tracing::warn!("Failed to clean cron entries from store for agent {}: {}", agent_id, e);
+            }
+    }
+
     tracing::info!("Uninstalled agent: {}", agent_id);
     Ok(())
 }

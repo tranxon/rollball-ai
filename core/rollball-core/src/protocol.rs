@@ -61,6 +61,24 @@ pub enum GatewayRequest {
         /// Optional agent ID filter (None = all agents)
         agent_id: Option<String>,
     },
+    /// Register a cron entry (S3.4)
+    CronRegister {
+        /// Agent ID that owns this cron entry
+        agent_id: String,
+        /// Cron schedule expression (5-field)
+        schedule: String,
+        /// Action to fire when the schedule triggers
+        action: String,
+        /// Params to include in the IntentReceived
+        params: Value,
+    },
+    /// Unregister a cron entry (S3.4)
+    CronUnregister {
+        /// Cron entry ID to remove
+        cron_id: String,
+    },
+    /// List cron entries for the calling agent (S3.4)
+    CronList {},
 }
 
 /// Gateway Service API response
@@ -133,6 +151,38 @@ pub enum GatewayResponse {
         /// Whether this is a removal
         removed: bool,
     },
+    /// Cron registration result (S3.4)
+    CronRegisterResult {
+        /// Cron entry ID on success
+        cron_id: Option<String>,
+        /// Error message on failure
+        error: Option<String>,
+    },
+    /// Cron unregistration result (S3.4)
+    CronUnregisterResult {
+        /// Whether the entry was found and removed
+        removed: bool,
+    },
+    /// Cron list result (S3.4)
+    CronListResult {
+        /// List of cron entries
+        entries: Vec<CronEntryInfo>,
+    },
+}
+
+/// Cron entry info (for IPC responses)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronEntryInfo {
+    /// Unique ID for this cron entry
+    pub id: String,
+    /// Agent ID that owns this entry
+    pub agent_id: String,
+    /// Cron schedule expression
+    pub schedule: String,
+    /// Action to fire
+    pub action: String,
+    /// Params for the IntentReceived
+    pub params: Value,
 }
 
 /// Transport layer frame format

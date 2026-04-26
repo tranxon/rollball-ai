@@ -104,6 +104,46 @@ pub fn install_package(
 
     tracing::info!("Installed agent: {} v{}", info.agent_id, info.version);
     state.add_installed(info.clone());
+
+    // S3.3: Register cron triggers from manifest
+    let cron_triggers = info.manifest.cron_triggers();
+    if !cron_triggers.is_empty() {
+        let agent_id = &info.agent_id;
+        for trigger in cron_triggers {
+            if let Some(schedule) = &trigger.schedule {
+                let action = trigger.action.as_deref().unwrap_or("cron_trigger");
+                let params = trigger.params.clone().unwrap_or(serde_json::json!({}));
+                match state.cron_scheduler.register(agent_id, schedule, action, params.clone()) {
+                    Ok(cron_id) => {
+                        tracing::info!(
+                            "Registered cron trigger: agent={} cron_id={} schedule={}",
+                            agent_id, cron_id, schedule
+                        );
+                        // Persist to CronStore
+                        if let Some(store) = &state.cron_store {
+                            let entry = crate::cron::StoredCronEntry {
+                                id: cron_id.clone(),
+                                agent_id: agent_id.clone(),
+                                schedule: schedule.clone(),
+                                action: action.to_string(),
+                                params: serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string()),
+                            };
+                            if let Err(e) = store.insert(&entry) {
+                                tracing::warn!("Failed to persist cron entry {}: {}", cron_id, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Invalid cron schedule in manifest for agent {}: schedule={} error={}",
+                            agent_id, schedule, e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     Ok(info)
 }
 
