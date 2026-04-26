@@ -5,6 +5,8 @@ use crate::vault::VaultFacade;
 use crate::budget::tracker::BudgetTracker;
 use crate::rate::bucket::RateLimiter;
 use crate::capability::registry::CapabilityRegistry;
+use crate::cron::CronScheduler;
+use crate::cron::store::CronStore;
 
 /// Information about an installed agent
 #[derive(Debug, Clone)]
@@ -39,6 +41,10 @@ pub struct GatewayState {
     rate_limiter: Option<RateLimiter>,
     /// Capability registry for Intent routing
     pub capability_registry: CapabilityRegistry,
+    /// Cron scheduler for time-based triggers
+    pub cron_scheduler: CronScheduler,
+    /// Cron persistence store
+    pub cron_store: Option<CronStore>,
 }
 
 impl GatewayState {
@@ -51,6 +57,8 @@ impl GatewayState {
             budget_tracker: None,
             rate_limiter: None,
             capability_registry: CapabilityRegistry::new(),
+            cron_scheduler: CronScheduler::new(),
+            cron_store: None,
         }
     }
 

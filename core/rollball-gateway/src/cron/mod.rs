@@ -11,12 +11,15 @@
 //! - `0 9 * * 1-5`   — weekdays at 9:00 AM
 //! - `0 0 1 * *`     — first day of every month at midnight
 
+pub mod store;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{Timelike, Datelike};
 
 use crate::ipc::session::SessionManager;
+pub use store::{CronStore, StoredCronEntry, CronStoreError};
 
 /// A registered cron entry
 #[derive(Debug, Clone)]
@@ -166,6 +169,41 @@ impl CronScheduler {
             .filter(|e| e.agent_id == agent_id)
             .collect()
     }
+
+    /// Load entries from a CronStore (used on Gateway restart)
+    pub fn load_from_store(&mut self, store: &CronStore) -> Result<(), String> {
+        let stored = store.list_all().map_err(|e| format!("Failed to load cron entries: {}", e))?;
+        for entry in stored {
+            if let Ok(parsed) = parse_cron(&entry.schedule) {
+                let cron_entry = CronEntry {
+                    id: entry.id.clone(),
+                    agent_id: entry.agent_id.clone(),
+                    schedule: entry.schedule.clone(),
+                    action: entry.action.clone(),
+                    params: serde_json::from_str(&entry.params)
+                        .unwrap_or(serde_json::json!({})),
+                    parsed,
+                };
+                self.entries.insert(entry.id.clone(), cron_entry);
+
+                // Update next_id counter to avoid ID collisions
+                if let Some(num) = entry.id.strip_prefix("cron-")
+                    && let Ok(n) = num.parse::<u64>()
+                    && n >= self.next_id {
+                        self.next_id = n + 1;
+                }
+            } else {
+                tracing::warn!(
+                    "Skipping cron entry with invalid schedule: id={} schedule={}",
+                    entry.id, entry.schedule
+                );
+            }
+        }
+        if !self.entries.is_empty() {
+            tracing::info!("Loaded {} cron entries from store", self.entries.len());
+        }
+        Ok(())
+    }
 }
 
 // ── Cron expression parser ──────────────────────────────────────────────────
@@ -266,9 +304,13 @@ fn parse_field(field: &str, min: u8, max: u8, name: &str) -> Result<Vec<u8>, Str
 ///
 /// Checks every minute for entries that should fire, and pushes
 /// IntentReceived messages to the target Agent's IPC session.
+///
+/// If the target Agent is not running, attempts to start it first
+/// (via LifecycleManager), then pushes the Intent.
 pub async fn run_cron_scheduler(
     scheduler: Arc<Mutex<CronScheduler>>,
     session_mgr: Arc<Mutex<SessionManager>>,
+    gateway_state: crate::ipc::server::SharedState,
 ) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     // Skip the first immediate tick
@@ -292,6 +334,33 @@ pub async fn run_cron_scheduler(
         for (agent_id, action, params) in triggers {
             tracing::info!("Cron fired: agent={} action={}", agent_id, action);
 
+            // Check if agent is running; if not, try to start it
+            let is_running = {
+                let gw = gateway_state.read().await;
+                gw.is_running(&agent_id)
+            };
+
+            if !is_running {
+                tracing::info!("Cron: agent {} not running, attempting to start", agent_id);
+                let mut gw = gateway_state.write().await;
+                if gw.is_installed(&agent_id) {
+                    // Start the agent process
+                    let mut lifecycle = crate::lifecycle::manager::LifecycleManager::new(0);
+                    match lifecycle.start_agent(&agent_id, &mut gw).await {
+                        Ok(()) => {
+                            tracing::info!("Cron: started agent {} for scheduled trigger", agent_id);
+                        }
+                        Err(e) => {
+                            tracing::error!("Cron: failed to start agent {}: {}", agent_id, e);
+                            continue;
+                        }
+                    }
+                } else {
+                    tracing::warn!("Cron: agent {} not installed, skipping trigger", agent_id);
+                    continue;
+                }
+            }
+
             // Find the agent's session and push IntentReceived
             let pushed = {
                 let mgr = session_mgr.lock().await;
@@ -301,8 +370,6 @@ pub async fn run_cron_scheduler(
                         action: action.clone(),
                         params: params.clone(),
                     };
-                    // Use push_message which is async
-                    // We need to release the lock first, then push
                     let _ = session;
                     drop(mgr);
 
@@ -315,7 +382,7 @@ pub async fn run_cron_scheduler(
                     }
                 } else {
                     tracing::warn!(
-                        "Cron trigger skipped: agent {} not connected",
+                        "Cron trigger skipped: agent {} not connected (session not found)",
                         agent_id
                     );
                     false
