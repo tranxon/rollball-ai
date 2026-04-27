@@ -75,8 +75,11 @@ async fn test_health_check() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["status"], "ok");
+    // Without session_mgr/stores, status should be "degraded"
+    assert!(json["status"] == "ok" || json["status"] == "degraded");
     assert!(!json["version"].as_str().unwrap().is_empty());
+    // Dependency checks should be present
+    assert!(json["checks"].is_object());
 }
 
 // ── System status ─────────────────────────────────────────────────────

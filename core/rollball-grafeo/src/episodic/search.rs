@@ -51,6 +51,9 @@ impl GrafeoStore {
     ///
     /// Returns up to `limit` episodes with the given `session_id`,
     /// ordered by timestamp descending.
+    ///
+    /// S5.3: Uses parameterized query (`$sid`) instead of string
+    /// interpolation to prevent GQL injection.
     pub fn search_episodes_by_session(
         &self,
         session_id: &str,
@@ -58,11 +61,12 @@ impl GrafeoStore {
     ) -> Result<Vec<Episode>> {
         let session = self.db.session();
         let gql = format!(
-            "MATCH (e:Episodic) WHERE e.session_id = '{}' RETURN e ORDER BY e.timestamp DESC LIMIT {}",
-            crate::episodic::escape_gql_string(session_id),
+            "MATCH (e:Episodic) WHERE e.session_id = $sid RETURN e ORDER BY e.timestamp DESC LIMIT {}",
             limit
         );
-        let result = session.execute(&gql)?;
+        let mut params = std::collections::HashMap::new();
+        params.insert("sid".to_string(), grafeo_common::types::Value::from(session_id));
+        let result = session.execute_with_params(&gql, params)?;
 
         let mut episodes = Vec::new();
         for row in result.rows() {
