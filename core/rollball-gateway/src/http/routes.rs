@@ -89,18 +89,180 @@ pub fn build_router(state: AppState) -> Router {
 
 // ── Health check ──────────────────────────────────────────────────────
 
-/// Health check response
-#[derive(Serialize)]
+/// Overall health status
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HealthStatus {
+    /// All checks passed
+    Ok,
+    /// Some non-critical checks failed (system still functional)
+    Degraded,
+    /// Critical checks failed (system may not function correctly)
+    Unhealthy,
+}
+
+/// Individual check result
+#[derive(Debug, Serialize)]
+pub struct CheckResult {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Health check response with dependency checks
+#[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+    pub checks: std::collections::HashMap<String, CheckResult>,
 }
 
+/// Minimum disk space for healthy operation (100 MB)
+const MIN_DISK_SPACE_BYTES: u64 = 100 * 1024 * 1024;
+
 /// `GET /health` — health check (no auth required)
-pub async fn health_check() -> Json<HealthResponse> {
+///
+/// Checks critical dependencies and returns an aggregated status:
+/// - `"ok"` — all checks passed
+/// - `"degraded"` — non-critical checks failed (IPC unavailable, disk low)
+/// - `"unhealthy"` — critical checks failed (permission/cron stores unreachable)
+pub async fn health_check(
+    State(state): State<AppState>,
+) -> Json<HealthResponse> {
+    let mut checks = std::collections::HashMap::new();
+    let mut has_degraded = false;
+    let mut has_unhealthy = false;
+
+    // 1. IPC Session Manager check
+    match &state.session_mgr {
+        Some(_) => {
+            checks.insert("ipc".to_string(), CheckResult {
+                status: "ok".to_string(),
+                detail: None,
+            });
+        }
+        None => {
+            has_degraded = true;
+            checks.insert("ipc".to_string(), CheckResult {
+                status: "degraded".to_string(),
+                detail: Some("Session manager not initialized".to_string()),
+            });
+        }
+    }
+
+    // 2. PermissionStore database check
+    {
+        let gw = state.gateway_state.read().await;
+        match &gw.permission_store {
+            Some(store) => {
+                // Try a lightweight query to verify the DB is reachable
+                match store.health_check() {
+                    Ok(()) => {
+                        checks.insert("permission_store".to_string(), CheckResult {
+                            status: "ok".to_string(),
+                            detail: None,
+                        });
+                    }
+                    Err(e) => {
+                        has_unhealthy = true;
+                        checks.insert("permission_store".to_string(), CheckResult {
+                            status: "unhealthy".to_string(),
+                            detail: Some(format!("Database error: {}", e)),
+                        });
+                    }
+                }
+            }
+            None => {
+                // PermissionStore not yet initialized is degraded, not unhealthy
+                has_degraded = true;
+                checks.insert("permission_store".to_string(), CheckResult {
+                    status: "degraded".to_string(),
+                    detail: Some("PermissionStore not initialized".to_string()),
+                });
+            }
+        }
+
+        // 3. CronStore database check
+        match &gw.cron_store {
+            Some(store) => {
+                match store.health_check() {
+                    Ok(()) => {
+                        checks.insert("cron_store".to_string(), CheckResult {
+                            status: "ok".to_string(),
+                            detail: None,
+                        });
+                    }
+                    Err(e) => {
+                        has_degraded = true; // Cron is non-critical
+                        checks.insert("cron_store".to_string(), CheckResult {
+                            status: "unhealthy".to_string(),
+                            detail: Some(format!("Database error: {}", e)),
+                        });
+                    }
+                }
+            }
+            None => {
+                has_degraded = true;
+                checks.insert("cron_store".to_string(), CheckResult {
+                    status: "degraded".to_string(),
+                    detail: Some("CronStore not initialized".to_string()),
+                });
+            }
+        }
+    }
+
+    // 4. Disk space check on data directory
+    {
+        let gw = state.gateway_state.read().await;
+        // Use the vault directory as a proxy for data dir health
+        let data_dir = gw.vault.dir();
+        match fs2::available_space(data_dir) {
+            Ok(available) => {
+                if available < MIN_DISK_SPACE_BYTES {
+                    has_degraded = true;
+                    checks.insert("disk".to_string(), CheckResult {
+                        status: "degraded".to_string(),
+                        detail: Some(format!(
+                            "Low disk space: {} MB available",
+                            available / (1024 * 1024)
+                        )),
+                    });
+                } else {
+                    checks.insert("disk".to_string(), CheckResult {
+                        status: "ok".to_string(),
+                        detail: Some(format!(
+                            "{} MB available",
+                            available / (1024 * 1024)
+                        )),
+                    });
+                }
+            }
+            Err(e) => {
+                has_degraded = true;
+                checks.insert("disk".to_string(), CheckResult {
+                    status: "degraded".to_string(),
+                    detail: Some(format!("Cannot check disk space: {}", e)),
+                });
+            }
+        }
+    }
+
+    let overall = if has_unhealthy {
+        HealthStatus::Unhealthy
+    } else if has_degraded {
+        HealthStatus::Degraded
+    } else {
+        HealthStatus::Ok
+    };
+
     Json(HealthResponse {
-        status: "ok".to_string(),
+        status: match overall {
+            HealthStatus::Ok => "ok".to_string(),
+            HealthStatus::Degraded => "degraded".to_string(),
+            HealthStatus::Unhealthy => "unhealthy".to_string(),
+        },
         version: env!("CARGO_PKG_VERSION").to_string(),
+        checks,
     })
 }
 
@@ -186,9 +348,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check() {
-        let resp = health_check().await;
-        assert_eq!(resp.status, "ok");
+        let state = test_app_state();
+        let resp = health_check(State(state)).await;
+        assert_eq!(resp.status, "degraded"); // degraded because no session_mgr/stores
         assert!(!resp.version.is_empty());
+        assert!(!resp.checks.is_empty());
     }
 
     #[tokio::test]

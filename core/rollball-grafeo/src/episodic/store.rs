@@ -213,13 +213,15 @@ impl GrafeoStore {
     }
 
     /// Find an existing Session node by `session_id`, or create one.
+    ///
+    /// S5.3: Uses parameterized query (`$sid`) instead of string
+    /// interpolation to prevent GQL injection.
     fn find_or_create_session(&self, session_id: &str) -> Result<NodeId> {
         let session = self.db.session();
-        let gql = format!(
-            "MATCH (s:Session) WHERE s.session_id = '{}' RETURN id(s)",
-            crate::episodic::escape_gql_string(session_id)
-        );
-        let result = session.execute(&gql)?;
+        let gql = "MATCH (s:Session) WHERE s.session_id = $sid RETURN id(s)";
+        let mut params = std::collections::HashMap::new();
+        params.insert("sid".to_string(), Value::from(session_id));
+        let result = session.execute_with_params(gql, params)?;
 
         if let Some(row) = result.rows().first() {
             if let Some(Value::Int64(id)) = row.first() {

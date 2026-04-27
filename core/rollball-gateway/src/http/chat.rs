@@ -24,6 +24,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::http::routes::{ApiError, AppState};
 
+/// Maximum content length for a single message (32 KB)
+const MAX_CONTENT_LENGTH: usize = 32 * 1024;
+
 /// Build the chat/conversation router
 pub fn chat_routes() -> Router<AppState> {
     Router::new()
@@ -94,6 +97,18 @@ pub async fn send_message(
         if !conv_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
             return Err(ApiError::bad_request("conversation_id contains invalid characters (only alphanumeric, '-', '_' allowed)"));
         }
+    }
+
+    // Validate content length
+    if body.content.is_empty() {
+        return Err(ApiError::bad_request("content must not be empty"));
+    }
+    if body.content.len() > MAX_CONTENT_LENGTH {
+        return Err(ApiError::bad_request(&format!(
+            "content too long (max {} bytes, got {})",
+            MAX_CONTENT_LENGTH,
+            body.content.len()
+        )));
     }
 
     // Generate message ID
@@ -255,6 +270,25 @@ async fn handle_ws_text(
     }
 
     let content = client_msg.content.unwrap_or_default();
+
+    // Validate content length for WebSocket messages too
+    if content.is_empty() {
+        let err = serde_json::json!({
+            "type": "error",
+            "message": "content must not be empty",
+        });
+        let _ = socket.send(Message::Text(err.to_string().into())).await;
+        return;
+    }
+    if content.len() > MAX_CONTENT_LENGTH {
+        let err = serde_json::json!({
+            "type": "error",
+            "message": format!("content too long (max {} bytes)", MAX_CONTENT_LENGTH),
+        });
+        let _ = socket.send(Message::Text(err.to_string().into())).await;
+        return;
+    }
+
     let message_id = format!("msg-{}", uuid::Uuid::new_v4());
 
     // Push to agent via SessionManager
@@ -330,5 +364,29 @@ mod tests {
         let msg: WsClientMessage = serde_json::from_str(json).unwrap();
         assert_eq!(msg.msg_type, "message");
         assert_eq!(msg.content, Some("Hi there".to_string()));
+    }
+
+    #[test]
+    fn test_content_length_limit() {
+        // 32KB is the limit
+        assert_eq!(MAX_CONTENT_LENGTH, 32 * 1024);
+    }
+
+    #[test]
+    fn test_conversation_id_valid_format() {
+        // Valid formats
+        let valid_ids = ["conv-123", "abc_def", "ABC123", "conv-2024-01-01"];
+        for id in &valid_ids {
+            assert!(id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_'));
+        }
+    }
+
+    #[test]
+    fn test_conversation_id_invalid_chars() {
+        // Invalid: contains spaces, dots, slashes
+        let invalid_ids = ["conv 123", "conv.123", "conv/123", "conv@123"];
+        for id in &invalid_ids {
+            assert!(!id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_'));
+        }
     }
 }
