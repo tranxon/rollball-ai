@@ -85,6 +85,7 @@ futures-util = "0.3"
 
 # Stream
 futures-core = "0.3"
+tokio-tungstenite = "0.26"
 
 # Regex
 regex = "1.0"
