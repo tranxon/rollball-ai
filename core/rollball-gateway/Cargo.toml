@@ -56,3 +56,6 @@ grafeo-common = { workspace = true }
 zip = { workspace = true }
 tempfile = { workspace = true }
 tower = { workspace = true, features = ["util"] }
+reqwest = { workspace = true, features = ["blocking"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true, features = ["tokio-io"] }

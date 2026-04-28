@@ -1,6 +1,6 @@
 # Phase 5: Desktop App + 开发框架 — 实施计划
 
-> 版本：v1.0 | 更新日期：2026-04-27
+> 版本：v1.1 | 更新日期：2026-04-28
 > 前置条件：Phase 4（M15~M19）全部完成
 > 预计周期：16~18 周
 > 预计里程碑：M20~M25
@@ -47,9 +47,9 @@
 | S1 | Desktop App 骨架 + 系统托盘 | 9 | 45 | 4 周 |
 | S2 | Debug Protocol 实现 | 8 | 52 | 4 周 |
 | S3 | 开发框架高级能力 | 7 | 40 | 3 周 |
-| S4 | 发布工具链 | 6 | 30 | 2 周 |
+| S4 | 发布工具链 | 7 | 25 | 2 周 |
 | S5 | Phase 4 遗留技术债务 + 集成验证 | 10 | 50 | 3~4 周 |
-| **合计** | | **40** | **217** | **16~18 周** |
+| **合计** | | **41** | **222** | **16~18 周** |
 
 ---
 
@@ -137,19 +137,77 @@ Skill 热加载、Provider 动态切换、录制回放引擎。
 
 ---
 
-## S4：发布工具链（2 周，6 项任务）
+## S4：发布工具链（2 周，7 项任务）
 
 Agent 克隆、发布检查、打包签名、分发。
 
 **涉及 crate**：`rollball-gateway`（新增克隆/发布 API）、`rollball-sign`（验证集成）
 
+> **开发优先级调整**：S1 阶段（Desktop App 骨架）已完成，但缺乏可用 Agent 包进行功能验证。
+> 先完成 S4 Wave A（后端 API），打通「examples → 打包 → 安装 → 对话测试」闭环，
+> 再继续 Wave B（Desktop UI）。
+
 ### Wave A：Agent 克隆 + 发布 API（1 周，3 项）
 
-| 任务 | 内容 | 预期测试 | 验收标准 |
-|------|------|---------|----------|
-| S4.1 Agent 克隆 API | Gateway 新增 `POST /api/agents/:id/clone`：骨架克隆（manifest + prompts + config + tools + resources）；完整克隆（+ skills + data + Grafeo 快照）；新 Agent 标记 `dev: true`；系统 Agent 不可克隆 | 6 | 骨架/完整克隆正确、dev 标记设置 |
-| S4.2 发布检查与清理 API | Gateway 新增 `POST /api/agents/:id/publish/prepare`：manifest 完整性校验、SKILL.md 格式校验、prompts 存在性检查；清理操作：移除 dev 标记、清空 recordings/、清空私有 Grafeo、重置 config | 8 | 检查发现的问题正确返回、清理操作执行成功 |
-| S4.3 打包与签名 API | Gateway 新增 `POST /api/agents/:id/publish/build`：按 .agent 包格式打包为 ZIP；可选签名（调用 rollball-sign）；输出到 `build/<agent_id>-<version>.agent`；新增 `POST /api/agents/:id/publish/install-locally` 和 `POST /api/agents/:id/publish/export` | 8 | 打包 ZIP 正确、签名验证通过、本地安装成功 |
+#### S4.1 Agent 克隆 API
+
+`POST /api/agents/:id/clone`
+
+| 子任务 | 文件 | 验收标准 |
+|--------|------|----------|
+| S4.1.1 定义 CloneRequest/CloneResponse 结构体 | `http/publish_api.rs` | `CloneRequest { new_agent_id, mode: skeleton|full }`，`CloneResponse { agent_id, install_path }` 编译通过 |
+| S4.1.2 clone_agent 核心逻辑 | `package_manager/clone.rs` | 骨架克隆：复制 manifest + prompts + config + tools + resources；完整克隆：额外复制 skills + data；新 manifest 的 agent_id 替换为 new_agent_id；dev 字段设为 true；系统 Agent（system=true）不可克隆 |
+| S4.1.3 注册克隆后的 Agent | `package_manager/clone.rs` | 调用 `state.add_installed()` 注册；Capability 自动注册（复用 add_installed 逻辑） |
+| S4.1.4 HTTP route 注册 | `http/routes.rs`, `http/agents.rs` | `POST /api/agents/{id}/clone` 挂载到 router |
+| S4.1.5 单元测试 | `package_manager/clone.rs`, `http/agents.rs` | 骨架克隆正确、完整克隆正确、dev 标记设置、系统 Agent 不可克隆、重复 agent_id 报错 |
+
+预期测试数：6
+
+#### S4.2 发布检查与清理 API
+
+`POST /api/agents/:id/publish/prepare`
+
+| 子任务 | 文件 | 验收标准 |
+|--------|------|----------|
+| S4.2.1 定义 PrepareRequest/PrepareResponse 结构体 | `http/publish_api.rs` | `PrepareRequest { clean: bool }`；`PrepareResponse { checks, warnings, errors, cleaned }` 编译通过 |
+| S4.2.2 manifest 完整性校验 | `package_manager/publish.rs` | 必填字段（agent_id/version/name/description/author/runtime_version）非空；llm 配置完整（provider + model）；agent_id 格式校验（反向域名） |
+| S4.2.3 prompts 存在性检查 | `package_manager/publish.rs` | 检查 install_path/prompts/system.md 是否存在；检查至少一个 prompt 文件 |
+| S4.2.4 skills 格式校验（可选） | `package_manager/publish.rs` | 如果 skills/ 目录存在，检查每个 SKILL.md 是否有 YAML frontmatter |
+| S4.2.5 清理操作 | `package_manager/publish.rs` | 移除 dev 标记（manifest.dev = false 并重写）；清空 recordings/ 目录；重置 config/settings.toml 为默认 |
+| S4.2.6 HTTP route 注册 | `http/routes.rs` | `POST /api/agents/{id}/publish/prepare` 挂载到 router |
+| S4.2.7 单元测试 | `package_manager/publish.rs` | 完整 manifest 通过检查；缺失字段返回错误；清理操作生效 |
+
+预期测试数：8
+
+#### S4.3 打包与签名 API
+
+`POST /api/agents/:id/publish/build`
+
+| 子任务 | 文件 | 验收标准 |
+|--------|------|----------|
+| S4.3.1 定义 BuildRequest/BuildResponse 结构体 | `http/publish_api.rs` | `BuildRequest { sign: bool, key_dir: Option<String> }`；`BuildResponse { output_path, signed, file_size }` 编译通过 |
+| S4.3.2 build_package 核心打包逻辑 | `package_manager/publish.rs` | 读取 install_path 下所有文件；按 .agent ZIP 格式打包（manifest.toml + prompts/ + config/ + data/ + skills/ + tools/ + resources/）；输出到 `build/<agent_id>-<version>.agent`；ZIP 内不包含 META-INF/SIGNING.BLOCK |
+| S4.3.3 可选签名集成 | `package_manager/publish.rs` | sign=true 时调用 `rollball_sign::sign::sign_package()`；sign=false 时仅打包不签名；签名使用 dev key 或指定 key_dir |
+| S4.3.4 install-locally API | `http/publish_api.rs` | `POST /api/agents/{id}/publish/install-locally`：复用 `install::install_package()` 安装 build 产物；自动覆盖已安装的同 agent_id（调用 upgrade 逻辑） |
+| S4.3.5 export API | `http/publish_api.rs` | `POST /api/agents/{id}/publish/export`：返回 .agent 文件内容（binary download）；支持指定输出路径 |
+| S4.3.6 HTTP route 注册 | `http/routes.rs` | 三个 publish 路由挂载到 router |
+| S4.3.7 单元测试 | `package_manager/publish.rs` | 打包 ZIP 结构正确；签名包验证通过；未签名包 dev_mode 可安装；install-locally 成功；export 文件完整 |
+
+预期测试数：8
+
+#### S4.3a CLI 打包命令
+
+`rollball-gateway package --source <dir> --output <dir> [--sign] [--key-dir <dir>]`
+
+| 子任务 | 文件 | 验收标准 |
+|--------|------|----------|
+| S4.3a.1 新增 CLI Package 子命令 | `cli.rs` | `Commands::Package { source, output, sign, key_dir }` 解析正确 |
+| S4.3a.2 package_agent CLI 逻辑 | `cli.rs` | 读取 source 目录下的 manifest.toml；调用 build_package 核心逻辑打包；输出 .agent 文件到 output 目录 |
+| S4.3a.3 单元测试 | `cli.rs` | CLI 解析正确；打包 examples/weather-agent 成功 |
+
+预期测试数：3
+
+**为什么需要 CLI 打包**：当前 examples 目录下的 agent（system-agent、weather-agent）是目录格式（manifest.toml + prompts/），需要先打包成 .agent ZIP 格式才能通过 Gateway install 命令安装。CLI 打包命令不依赖 Desktop App，可在终端直接执行。
 
 ### Wave B：Desktop 发布向导 + 创建向导（1 周，3 项）
 
@@ -160,6 +218,33 @@ Agent 克隆、发布检查、打包签名、分发。
 | S4.6 Desktop Agent 创建向导 | 前端实现：5 步流程（基本信息 → LLM 配置 → 权限声明 → 选择模板 → 生成）；模板选择（空白/天气/日历/自定义）；创建后自动进入 DevMode | 2 | 创建向导端到端走通 |
 
 **里程碑 M23：发布工具链可用** — 克隆 Agent → 开发调试 → 发布检查 → 打包签名 → 分发
+
+### 测试闭环验证
+
+Wave A 完成后，执行以下端到端验证，确认 S1 Desktop App 可与 Agent 对话：
+
+```bash
+# 1. CLI 打包 system-agent
+rollball package --source examples/system-agent --output build/
+
+# 2. CLI 打包 weather-agent
+rollball package --source examples/weather-agent --output build/
+
+# 3. 通过 Gateway HTTP API 安装
+curl -X POST http://127.0.0.1:19876/api/agents/install \
+  -H 'Content-Type: application/json' \
+  -d '{"package_path": "build/com.rollball.system-1.0.0.agent", "dev_mode": true}'
+
+curl -X POST http://127.0.0.1:19876/api/agents/install \
+  -H 'Content-Type: application/json' \
+  -d '{"package_path": "build/com.example.weather-1.0.0.agent", "dev_mode": true}'
+
+# 4. 启动 weather-agent
+curl -X POST http://127.0.0.1:19876/api/agents/com.example.weather/start
+
+# 5. 通过 Desktop App 对话测试
+cargo tauri dev  # 启动 Desktop App，选择 weather-agent 对话
+```
 
 ---
 
