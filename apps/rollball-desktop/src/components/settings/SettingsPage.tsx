@@ -228,13 +228,21 @@ function ProvidersTab() {
   const handleEditSave = async () => {
     if (!showEditDialog) return;
     try {
-      await invoke("update_key", {
+      // NOTE: editKey is initialized from key_preview (masked), NOT the real API key.
+      // Do NOT send the key field unless the user explicitly entered a new key.
+      // The Gateway update_key API preserves the existing key when key is omitted.
+      const updatePayload: Record<string, unknown> = {
         provider: showEditDialog,
-        key: editKey,
         baseUrl: editBaseUrl || undefined,
         defaultModel: undefined,
         models: editModels.length > 0 ? editModels : undefined,
-      });
+      };
+      // Only include key if user actually typed a new one (not the masked preview)
+      const keyEntry = keys.find((k) => k.provider === showEditDialog);
+      if (editKey && editKey !== keyEntry?.key_preview) {
+        updatePayload.key = editKey;
+      }
+      await invoke("update_key", updatePayload);
       setShowEditDialog(null);
       await fetchKeys();
     } catch (e) {
