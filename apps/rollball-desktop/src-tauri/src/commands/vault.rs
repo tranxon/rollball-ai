@@ -45,12 +45,12 @@ pub async fn remove_key(
     client.remove_key(&provider).await.map_err(|e| e.to_string())
 }
 
-/// Update an API key (with optional base_url and models list)
+/// Update an API key (supports partial updates — key is optional)
 #[tauri::command]
 pub async fn update_key(
     state: State<'_, AppState>,
     provider: String,
-    key: String,
+    key: Option<String>,
     base_url: Option<String>,
     default_model: Option<String>,
     models: Option<Vec<String>>,
@@ -59,7 +59,7 @@ pub async fn update_key(
     client
         .update_key(
             &provider,
-            &key,
+            key.as_deref(),
             base_url.as_deref(),
             default_model.as_deref(),
             models.as_deref(),

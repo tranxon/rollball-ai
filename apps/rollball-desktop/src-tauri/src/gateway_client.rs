@@ -214,16 +214,24 @@ impl GatewayClient {
         Ok(result)
     }
 
-    /// `PUT /api/vault/keys/:provider` (with optional base_url, default_model, and models)
+    /// `PUT /api/vault/keys/:provider` (supports partial updates — key is optional)
+    ///
+    /// If `key` is None, the existing API key is preserved on the Gateway side.
+    /// This prevents the masked key_preview from overwriting the real key.
     pub async fn update_key(
         &self,
         provider: &str,
-        key: &str,
+        key: Option<&str>,
         base_url: Option<&str>,
         default_model: Option<&str>,
         models: Option<&[String]>,
     ) -> Result<GenericMessageResponse> {
-        let mut body = serde_json::json!({ "key": key });
+        let mut body = serde_json::json!({});
+        if let Some(k) = key {
+            if !k.is_empty() {
+                body["key"] = serde_json::Value::String(k.to_string());
+            }
+        }
         if let Some(url) = base_url {
             body["base_url"] = serde_json::Value::String(url.to_string());
         }

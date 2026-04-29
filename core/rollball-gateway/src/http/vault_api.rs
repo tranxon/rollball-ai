@@ -59,10 +59,13 @@ pub struct AddKeyRequest {
     pub models: Vec<String>,
 }
 
-/// Update key request (supports full provider configuration)
+/// Update key request (supports partial updates — key is optional)
 #[derive(Deserialize)]
 pub struct UpdateKeyRequest {
-    pub key: String,
+    /// API key. If None or empty, the existing key is preserved.
+    /// This prevents the masked key_preview from overwriting the real key.
+    #[serde(default)]
+    pub key: Option<String>,
     /// Optional base URL override (e.g. "https://api.deepseek.com/v1")
     #[serde(default)]
     pub base_url: Option<String>,
@@ -172,7 +175,11 @@ pub async fn remove_key(
     }))
 }
 
-/// `PUT /api/vault/keys/:provider` — update a key (with optional base_url and default_model)
+/// `PUT /api/vault/keys/:provider` — update a key (supports partial updates)
+///
+/// If `key` is not provided or empty, the existing API key is preserved.
+/// This prevents the masked key_preview from overwriting the real key
+/// when the user only changes base_url or models.
 pub async fn update_key(
     State(state): State<AppState>,
     Path(provider): Path<String>,
@@ -186,12 +193,25 @@ pub async fn update_key(
             ));
         }
     }
-    // Validate API key is not empty
-    if body.key.is_empty() {
-        return Err(ApiError::bad_request("key must not be empty"));
-    }
 
     let mut gw = state.gateway_state.write().await;
+
+    // Resolve the API key: use provided key, or preserve existing key if not specified
+    let api_key = match body.key {
+        Some(ref k) if !k.is_empty() => k.clone(),
+        _ => {
+            // No new key provided — preserve existing key from Vault
+            match gw.vault.get_provider(&provider) {
+                Ok(entry) => entry.api_key,
+                Err(e) => {
+                    return Err(ApiError::not_found(&format!(
+                        "Provider '{}' not found in Vault: {}", provider, e
+                    )));
+                }
+            }
+        }
+    };
+
     // Remove old entry, store new with full config
     let _ = gw.vault.remove_key(&provider);
     // Resolve models: prefer `models` field; fallback to `default_model` for backward compat
@@ -206,7 +226,7 @@ pub async fn update_key(
         &provider,
         body.base_url.as_deref(),
         &resolved_models,
-        &body.key,
+        &api_key,
     ).map_err(|e| ApiError::internal(&format!("Failed to update key: {}", e)))?;
     drop(gw); // Release write lock before hot-push (which acquires read lock)
 
