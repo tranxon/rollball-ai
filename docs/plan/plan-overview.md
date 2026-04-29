@@ -73,12 +73,12 @@
 Desktop App 和开发调试能力在同一阶段交付，因为它们共享 Debug Protocol 基础设施。
 
 > **2026-04-27 更新**：Phase 5 实施计划已编制完成，详见 `docs/plan/plan-p5.md`。
-> - S1：Desktop App 骨架 + 系统托盘（Tauri v2 + React 19）
-> - S2：Debug Protocol 实现（WebSocket + JSON-RPC 2.0 + 执行控制）
-> - S3：开发框架高级能力（Skill 热加载 + Provider 切换 + 录制回放）
+> - S1：Desktop App 骨架 + 系统托盘 + 记忆管理 + Skill 浏览器 + Tool Approval Gate（Tauri v2 + React 19）
+> - S2：Debug Protocol 实现 + 记忆调试面板（WebSocket + JSON-RPC 2.0 + 执行控制）
+> - S3：开发框架高级能力（Skill 热加载 + Provider 切换 + 录制回放 + Skill 管理增强）
 > - S4：发布工具链（Agent 克隆 + 发布检查 + 打包签名）
 > - S5：Phase 4 遗留技术债务清偿 + 全链路集成验证
-> - 预计 16~18 周，40 项任务，217 项测试
+> - 预计 17~20 周，46 项任务，248 项测试
 
 #### Phase 4 遗留技术债务
 
@@ -113,6 +113,9 @@ Desktop App 和开发调试能力在同一阶段交付，因为它们共享 Debu
 - 对话界面：消息收发、流式输出（WebSocket）、工具调用展示（可展开/折叠）。
 - 设置页面：Gateway 连接配置、Provider 管理、Vault API Key 管理、外观设置。
 - 首次启动引导：5 步流程（欢迎 → Gateway 连接 → API Key → 身份信息 → 安装 Agent）。
+- **记忆管理面板**：Gateway HTTP API（`GET /api/agents/:id/memory/nodes|stats`、`DELETE .../nodes/:node_id`、`POST .../consolidate`）+ Desktop UI（MemoryPanel.tsx：节点列表、搜索过滤、decay_score 展示、Dormant 标记/删除）。
+- **Skill 浏览器**：Gateway HTTP API（`GET /api/agents/:id/skills`、`GET .../skills/:name|history`）+ Desktop UI（SkillBrowser.tsx：Skill 列表、触发词、依赖工具、执行历史统计）。
+- **Tool Approval Gate 交互**：高风险工具调用确认对话框、Shell 命令风险分级（Low/Medium/High）、允许/拒绝/会话级授权、权限追溯信息展示。
 
 #### 5.2: 开发框架（Debug Protocol + 开发者模式）
 
@@ -121,12 +124,14 @@ Desktop App 和开发调试能力在同一阶段交付，因为它们共享 Debu
 - 消息快照与回滚机制：`ConversationSnapshot`（轻量，记录 message_count）、`debugger.rollback(target_index)`。
 - Gateway DevMode 集成：Agent 标记 `dev: true` 时追加 `--dev-mode` 启动参数。
 - Desktop App 开发者模式：调试面板、单步执行详情、断点管理、消息编辑/回滚。
+- **记忆调试面板**：Episodic 片段浏览 + decay_score 实时显示、巩固过程可视化、冲突检测日志查看、手动触发遗忘扫描。
 
 #### 5.3: 开发框架高级
 
 - Skill 热加载：`debugger.reloadSkills` 命令、Desktop Skill 编辑器。
 - Provider 动态切换：`debugger.switchProvider` 命令、Desktop Provider 切换器。
 - Grafeo Skill 经验层：`SkillDraft` / `SkillIteration` / `SkillExecution` / `SkillExperience` 节点类型。
+- **Skill 管理增强**：Skill 列表 + 新建入口、Skill 试运行（`POST /api/agents/:id/skills/:name/test`）、Skill 版本/迭代历史浏览、经验层可视化。
 - 录制回放引擎：JSONL 格式录制、自动/手动回放、回放中编辑/切换 Provider。
 - Desktop 录制回放 UI：录制控制栏、回放进度条、步骤详情。
 

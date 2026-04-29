@@ -1,27 +1,45 @@
 //! rollball-sign CLI
 
 use clap::Parser;
+use rollball_sign::keygen::KeyType;
+use rollball_sign::sign::sign_package;
 use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "rollball-sign")]
 #[command(about = "Sign .agent packages")]
 struct Cli {
-    /// Input .agent package path
+    /// Input .agent package path (unsigned ZIP)
     #[arg(short, long)]
     input: PathBuf,
 
-    /// Key file path
+    /// Key directory path (contains developer.key, developer.pub, developer.cert)
     #[arg(short, long)]
     key: PathBuf,
 
     /// Output signed package path
     #[arg(short, long)]
     output: PathBuf,
+
+    /// Key type to use for signing
+    #[arg(long, default_value = "developer", value_enum)]
+    key_type: KeyType,
 }
 
-fn main() {
-    let _cli = Cli::parse();
-    // TODO: Implement signing CLI
-    println!("rollball-sign: TODO - implement package signing");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    println!("Signing package...");
+    println!("  Input:     {}", cli.input.display());
+    println!("  Key dir:   {}", cli.key.display());
+    println!("  Key type:  {}", cli.key_type);
+    println!("  Output:    {}", cli.output.display());
+    println!("");
+
+    sign_package(&cli.input, &cli.output, &cli.key, cli.key_type)?;
+
+    println!("Package signed successfully");
+    println!("  Output: {}", cli.output.display());
+
+    Ok(())
 }
