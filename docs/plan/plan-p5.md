@@ -2,7 +2,7 @@
 
 > 版本：v1.1 | 更新日期：2026-04-28
 > 前置条件：Phase 4（M15~M19）全部完成
-> 预计周期：16~18 周
+> 预计周期：17~20 周
 > 预计里程碑：M20~M25
 
 ---
@@ -44,16 +44,16 @@
 
 | 阶段 | 主题 | 任务数 | 预期测试 | 预计周期 |
 |------|------|--------|---------|---------|
-| S1 | Desktop App 骨架 + 系统托盘 | 9 | 45 | 4 周 |
-| S2 | Debug Protocol 实现 | 8 | 52 | 4 周 |
-| S3 | 开发框架高级能力 | 7 | 40 | 3 周 |
+| S1 | Desktop App 骨架 + 系统托盘 | 12 | 67 | 5 周 |
+| S2 | Debug Protocol 实现 | 9 | 58 | 4~5 周 |
+| S3 | 开发框架高级能力 | 8 | 48 | 3~4 周 |
 | S4 | 发布工具链 | 7 | 25 | 2 周 |
 | S5 | Phase 4 遗留技术债务 + 集成验证 | 10 | 50 | 3~4 周 |
-| **合计** | | **41** | **222** | **16~18 周** |
+| **合计** | | **46** | **248** | **17~20 周** |
 
 ---
 
-## S1：Desktop App 骨架 + 系统托盘（4 周，9 项任务）
+## S1：Desktop App 骨架 + 系统托盘（5 周，12 项任务）
 
 Desktop App 基础设施搭建，用户模式下的完整功能闭环。
 
@@ -76,13 +76,23 @@ Desktop App 基础设施搭建，用户模式下的完整功能闭环。
 | S1.6 设置页面 | 前端实现：Gateway 连接配置 + 健康状态；Provider 管理（Vault API Key 增删改）；外观设置（主题亮/暗、字体大小）；通用设置（日志级别、数据目录） | 5 | 设置页面各功能可用 |
 | S1.7 首次启动引导 | 前端实现：5 步引导流程（欢迎 → Gateway 连接 → API Key → 身份信息 → 安装第一个 Agent）；引导状态持久化（`tauri-plugin-store`）；身份信息通过 `POST /api/system/identity` 写入系统 Agent | 5 | 引导流程完成、身份信息写入成功 |
 | S1.8 Agent 管理 UI 完善 | 前端实现：安装 Agent（文件选择 + 拖放 .agent）；卸载确认对话框；启动/停止按钮 + 状态转换；Agent 详情页面（manifest 信息） | 4 | Agent CRUD 操作通过 UI 完成 |
-| S1.9 执行结果区（用户模式） | 前端实现：工具调用摘要（工具名、参数、耗时、状态）；Token 用量统计（prompt/completion/total）；当前 Agent 运行状态 | 3 | 结果区正确展示工具调用和 Token 用量 |
+| S1.9 执行结果区（用户模式） | 前端实现：工具调用摘要（工具名、参数、耗时、状态）；**工具调用可展开/折叠的详细信息面板**（完整参数、返回值、执行时间）；**权限追溯信息**（哪个权限允许/拦截了此调用，PermissionGrant 来源）；Token 用量统计（prompt/completion/total）；当前 Agent 运行状态 | 5 | 结果区正确展示工具调用、Token 用量、权限追溯信息 |
 
-**里程碑 M20：Desktop App 用户模式可用** — 安装 Agent → 对话 → 查看结果 → 设置管理
+### Wave C：记忆管理 + Skill 浏览器 + Tool Approval Gate（1 周，3 项）
+
+| 任务 | 内容 | 预期测试 | 验收标准 |
+|------|------|---------|----------|
+| S1.10 记忆管理面板（用户模式） | **Gateway HTTP API**（新增）：<br>• `GET /api/agents/:id/memory/nodes` — 查询记忆节点列表（支持分页、类型过滤：Knowledge/Episodic/Procedural）<br>• `GET /api/agents/:id/memory/stats` — 记忆统计（节点数、存储大小、各类型占比）<br>• `DELETE /api/agents/:id/memory/nodes/:node_id` — 手动删除记忆节点<br>• `POST /api/agents/:id/memory/consolidate` — 触发离线巩固<br>**Desktop UI**：<br>• 记忆面板组件（`MemoryPanel.tsx`）：展示 Knowledge/Episodic/Procedural 节点列表<br>• 搜索和过滤（按类型、关键词、时间范围）<br>• 节点详情展示（内容、置信度、decay_score、上次访问时间）<br>• 手动标记为 Dormant / 删除操作 | 8 | 记忆 API 返回正确、UI 展示和过滤正常、删除/标记操作生效 |
+| S1.11 Skill 浏览器（用户模式） | **Gateway HTTP API**（新增）：<br>• `GET /api/agents/:id/skills` — Skill 列表（名称、触发词、依赖工具、状态）<br>• `GET /api/agents/:id/skills/:name` — Skill 详情<br>• `GET /api/agents/:id/skills/:name/history` — Skill 执行历史<br>**Desktop UI**：<br>• Skill 列表组件（`SkillBrowser.tsx`）：展示当前 Agent 拥有的 Skill<br>• 每个 Skill 显示：名称、描述、触发词、依赖工具列表<br>• Skill 执行历史（成功/失败统计） | 6 | Skill API 返回正确、浏览器展示和过滤正常、历史统计准确 |
+| S1.12 Tool Approval Gate 交互 | **Desktop UI**：<br>• 高风险工具调用时显示确认对话框（模态框），展示工具名、参数摘要、风险等级<br>• Shell 命令风险分级展示（Low/Medium/High 标签 + 颜色区分）<br>• 用户可选择：允许 / 拒绝 / 允许本次会话所有同类操作<br>• Tool 执行详情展开面板：参数、返回值、执行时间、权限信息<br>• 与 Gateway Permission IPC 链路对接：`POST /api/agents/:id/permissions/approve` 或 WebSocket 实时推送 | 6 | 高风险工具触发确认对话框、三种选择正确响应、权限信息准确展示 |
+
+> **前置依赖**：S1.10 依赖 Gateway HTTP API 扩展（需 `/api/agents/:id/memory/*` 路由支持）；S1.11 依赖 Skill Registry 已注册 Skill 的查询接口；S1.12 依赖 Phase 3 已实现的 Permission IPC 和 Approval Gate 后端逻辑。
+
+**里程碑 M20：Desktop App 用户模式可用** — 安装 Agent → 对话 → 查看结果 → 设置管理 → 记忆浏览 → Skill 查看 → Tool 审批
 
 ---
 
-## S2：Debug Protocol 实现（4 周，8 项任务）
+## S2：Debug Protocol 实现（4~5 周，9 项任务）
 
 Agent Runtime DevMode 的完整实现，包含 Debug Protocol Server、执行控制、状态查询、快照机制。
 
@@ -97,7 +107,7 @@ Agent Runtime DevMode 的完整实现，包含 Debug Protocol Server、执行控
 | S2.3 状态查询 + 断点 | `debugger.getState`：返回当前迭代、Phase、消息列表、快照 IDs、断点、Token 用量；`debugger.setBreakpoint`/`removeBreakpoint`/`listBreakpoints`：4 类条件（on_phase / on_tool_call / on_iteration / on_tool_result）；断点命中时 `onBreakpoint` 事件 | 10 | 状态查询返回正确、断点命中触发事件 |
 | S2.4 消息快照机制 | 新增 `debug/snapshot.rs`：`ConversationSnapshot`（iteration, message_count, cumulative_usage, timestamp）；主循环每步迭代结束自动创建快照；`debugger.rollback(target_index)`：截断 messages 到目标长度；`debugger.editMessage(index, content)`：修改指定消息 | 8 | 快照创建、回滚截断正确、消息编辑生效 |
 
-### Wave B：Gateway DevMode 集成 + Desktop 调试面板（2 周，4 项）
+### Wave B：Gateway DevMode 集成 + Desktop 调试面板（2 周，5 项）
 
 | 任务 | 内容 | 预期测试 | 验收标准 |
 |------|------|---------|----------|
@@ -105,12 +115,15 @@ Agent Runtime DevMode 的完整实现，包含 Debug Protocol Server、执行控
 | S2.6 Desktop 调试面板（基础） | 前端实现：调试控制栏（Resume / Pause / Step / Stop 按钮）；当前状态显示（迭代、Phase、Token 用量）；连接 Debug Protocol WebSocket；开发者模式 toggle 切换 | 4 | 调试面板连接成功、控制命令生效 |
 | S2.7 断点面板 | 前端实现：断点列表（条件类型 + 参数 + 启用/禁用）；添加断点对话框（4 类条件）；删除断点；`onBreakpoint` 事件实时更新 | 4 | 断点 CRUD 操作正常、命中事件实时显示 |
 | S2.8 Desktop 消息编辑与回滚 | 前端实现：消息右键菜单（Edit / Rollback to here / Re-execute from here）；编辑模式（消息内容可编辑文本框）；`debugger.editMessage` / `debugger.rollback` / `debugger.reExecute` 调用 | 4 | 消息编辑、回滚、重执行功能正常 |
+| S2.9 记忆调试面板（开发者模式） | **Debug Protocol 扩展**：<br>• `debugger.getMemoryState`：返回当前 Grafeo 状态（节点数、边数、各层分布）<br>• `debugger.getEpisodicFragments`：返回 Episodic 片段列表（含 decay_score 实时值）<br>• `debugger.triggerConsolidation`：手动触发离线巩固，返回合并结果报告<br>• `debugger.getConflictLog`：返回冲突检测日志（Negation/Evolution 事件）<br>• `debugger.triggerForgettingScan`：手动触发遗忘扫描，返回标记为 Dormant/Purged 的节点列表<br>**Desktop UI**：<br>• Episodic 片段浏览 + decay_score 实时显示（进度条/颜色编码）<br>• 巩固过程可视化（触发时机、合并结果、生成的新节点）<br>• 冲突检测日志查看（时间线形式，支持过滤）<br>• 手动触发遗忘扫描按钮 + 扫描结果预览 | 6 | 记忆调试命令正确响应、UI 实时展示 decay_score、巩固和遗忘扫描结果准确 |
 
-**里程碑 M21：Debug Protocol 可用** — 连接 DevMode Agent → 暂停/步进 → 设断点 → 查看状态 → 编辑消息
+> **前置依赖**：S2.9 依赖 S1.10 的 Gateway 记忆 API 已就绪；依赖 Grafeo 引擎的调试接口（`grafeo::debug` 模块）；巩固和遗忘扫描调用 `rollball-grafeo` 内部 API。
+
+**里程碑 M21：Debug Protocol 可用** — 连接 DevMode Agent → 暂停/步进 → 设断点 → 查看状态 → 编辑消息 → 记忆调试
 
 ---
 
-## S3：开发框架高级能力（3 周，7 项任务）
+## S3：开发框架高级能力（3~4 周，8 项任务）
 
 Skill 热加载、Provider 动态切换、录制回放引擎。
 
@@ -124,7 +137,7 @@ Skill 热加载、Provider 动态切换、录制回放引擎。
 | S3.2 Provider 动态切换 | 新增 `debugger.switchProvider` 命令：更新 LLM Client 当前 provider/model/base_url；需要新 Key 时通过 Gateway KeyRelease 获取；本地 Provider (ollama) 直连无需 Key；下次 LLM 调用使用新 provider；Desktop Provider 切换器 UI | 6 | 切换 provider 后 LLM 调用使用新配置 |
 | S3.3 Grafeo Skill 经验层（核心数据结构） | 新增 `rollball-grafeo/src/skills/` 模块：`SkillDraft` / `SkillIteration` / `SkillExecution` / `SkillExperience` 节点类型；节点关系边（`HAS_ITERATION` / `EXECUTED_AS` / `PUBLISHED_AS` / `HAS_EXPERIENCE`）；CRUD 操作接口 | 8 | 经验层节点创建/查询/更新正确 |
 
-### Wave B：录制回放引擎（1.5 周，4 项）
+### Wave B：录制回放引擎（1.5 周，5 项）
 
 | 任务 | 内容 | 预期测试 | 验收标准 |
 |------|------|---------|----------|
@@ -132,8 +145,11 @@ Skill 热加载、Provider 动态切换、录制回放引擎。
 | S3.5 回放引擎 | 新增 `debug/replay.rs`：`debugger.loadRecording` / `stopReplay`；两种模式：auto（按录制顺序自动推进，可设延迟）+ manual（每步需 Step）；回放时注入录制步骤到主循环；`onRecordStep` 事件推送 | 8 | 自动/手动回放正确推进、事件推送正常 |
 | S3.6 Desktop 录制回放 UI | 前端实现：录制控制栏（开始录制 / 停止录制 / 加载回放）；回放进度条（当前步骤 / 总步骤）；自动/手动模式切换；回放步骤详情展示 | 4 | 录制/回放操作通过 UI 完成 |
 | S3.7 回放与编辑结合 | 支持回放过程中：编辑某步消息 + Re-execute；切换 Provider 后从某步重新执行；插入新用户消息偏离原路径；录制文件作为"回归测试用例" + "调试起点"双重用途 | 8 | 编辑/切换/插入操作在回放中生效 |
+| S3.8 Skill 管理增强 | **Desktop UI**：<br>• Skill 列表 + 新建 Skill 入口（从模板或空白创建 SKILL.md）<br>• Skill 试运行功能：`POST /api/agents/:id/skills/:name/test`，传入测试输入，返回执行结果和日志<br>• Skill 版本/迭代历史浏览：对应 `SkillIteration` 节点查询和展示（迭代时间、变更摘要、发布状态）<br>• 经验层可视化：`SkillExperience` 节点查询和展示（触发场景、执行成功率、性能统计）<br>**Gateway HTTP API**（新增）：<br>• `POST /api/agents/:id/skills/:name/test` — Skill 试运行<br>• `GET /api/agents/:id/skills/:name/iterations` — Skill 迭代历史<br>• `GET /api/agents/:id/skills/:name/experiences` — Skill 经验节点查询 | 8 | Skill 试运行正确执行、迭代历史完整展示、经验层数据准确 |
 
-**里程碑 M22：开发框架可用** — Skill 热加载 → Provider 切换 → 录制 → 回放 → 编辑 → 重执行
+> **前置依赖**：S3.8 依赖 S3.1 Skill 热加载（SkillRegistry 可查询）；依赖 S3.3 Grafeo Skill 经验层（`SkillIteration` / `SkillExperience` 节点已创建）；依赖 S1.11 Skill 浏览器（UI 基础组件复用）。
+
+**里程碑 M22：开发框架可用** — Skill 热加载 → Provider 切换 → 录制 → 回放 → 编辑 → 重执行 → Skill 管理
 
 ---
 

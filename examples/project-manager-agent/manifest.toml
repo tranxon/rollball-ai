@@ -1,0 +1,84 @@
+# Project Manager Agent
+# A professional project manager for requirements, planning, tracking, risk, and communication.
+
+agent_id = "com.rollball.project-manager"
+version = "1.0.0"
+name = "Project Manager"
+description = "A professional project manager skilled in requirements analysis, task decomposition, progress tracking, risk assessment, and team coordination."
+author = "RollBall Team"
+runtime_version = "0.1.0"
+system = false
+dev = false
+
+identity_deps = ["display_name", "language", "timezone"]
+
+[[permissions]]
+type = "FilesystemRead"
+
+[[permissions]]
+type = "FilesystemWrite"
+
+[[permissions]]
+type = "Network"
+
+[[permissions]]
+type = "MemoryRead"
+
+[[permissions]]
+type = "MemoryWrite"
+
+[[tools]]
+name = "file_read"
+
+[[tools]]
+name = "file_write"
+
+[[tools]]
+name = "http_request"
+
+[[tools]]
+name = "memory_store"
+
+[[tools]]
+name = "memory_recall"
+
+[llm]
+suggested_provider = "openai"
+suggested_model = "gpt-4o"
+temperature = 0.5
+
+[llm.providers.openai]
+model = "gpt-4o"
+api_key_ref = "vault:openai_key"
+
+[llm.providers.claude]
+model = "claude-sonnet-4"
+api_key_ref = "vault:anthropic_key"
+
+[llm.routing]
+strategy = "quality_priority"
+fallback_order = ["openai", "claude"]
+
+[llm.budget]
+max_output_tokens = 8192
+exceeded_action = "warn"
+
+[memory]
+enabled = true
+retention_days = 365
+
+[resources]
+max_memory_mb = 512
+idle_timeout_secs = 3600
+
+[sandbox]
+enabled = false
+
+[capabilities.requirements_analysis]
+description = "Analyze and document project requirements into a structured PRD"
+
+[capabilities.task_decomposition]
+description = "Break down project goals into actionable tasks with estimates and dependencies"
+
+[capabilities.risk_assessment]
+description = "Identify, evaluate, and create mitigation plans for project risks"
