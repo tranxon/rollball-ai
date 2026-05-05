@@ -4,7 +4,7 @@ import { useToast } from "../common/ToastProvider";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { AgentDetailDialog } from "./AgentDetailDialog";
 import { cn } from "../../lib/utils";
-import { Play, Square, Trash2, Info, Copy, Plus } from "lucide-react";
+import { Play, Square, Trash2, Info, Copy, Plus, Search, Users } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSessionStore } from "../../stores/sessionStore";
 
@@ -21,6 +21,9 @@ export function AgentList({ width }: AgentListProps) {
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [installing, setInstalling] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -48,11 +51,14 @@ export function AgentList({ width }: AgentListProps) {
     return () => clearInterval(interval);
   }, [fetchAgents]);
 
-  // Close context menu on click outside
+  // Close context menu and add menu on click outside
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setContextMenu(null);
+      }
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) {
+        setAddMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -156,17 +162,61 @@ export function AgentList({ width }: AgentListProps) {
   };
 
   const contextAgent = agents.find((a) => a.agent_id === contextMenu?.agentId);
+  const filteredAgents = agents.filter((a) =>
+    a.name.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
 
   return (
     <div
       className="flex flex-col bg-[#EEEEF0] dark:bg-[#2F2F30]"
       style={{ width: width ?? 240 }}
     >
-      {/* Header - 微信联系人列表风格 */}
-      <div className="flex items-center justify-between bg-[#EEEEF0] px-4 py-3 dark:bg-[#2F2F30]">
-        <span className="text-xs font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-          Agents
-        </span>
+      {/* Header - 微信联系人搜索风格 */}
+      <div className="bg-[#EEEEF0] px-3 py-2 dark:bg-[#2F2F30]">
+        <div className="flex items-center gap-2">
+          {/* Search input */}
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search agents..."
+              className="w-full rounded-md bg-[#D8D9DC] py-1.5 pl-7 pr-2 text-xs text-zinc-800 placeholder-zinc-500 outline-none dark:bg-[#3D3D3F] dark:text-zinc-200 dark:placeholder-zinc-400"
+            />
+          </div>
+          {/* Add button */}
+          <div ref={addMenuRef} className="relative">
+            <button
+              onClick={() => setAddMenuOpen(!addMenuOpen)}
+              className="flex items-center justify-center rounded-md p-1.5 transition-colors hover:bg-[#D8D9DC] dark:hover:bg-[#3D3D3F]"
+            >
+              <Plus className="h-4 w-4 text-zinc-600 dark:text-zinc-300" />
+            </button>
+            {/* Add menu dropdown */}
+            {addMenuOpen && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+                <button
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  Create Team
+                </button>
+                <button
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    void handleInstall();
+                  }}
+                  disabled={installing}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Install Agent
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Agent list - 微信联系人列表风格 */}
@@ -177,7 +227,7 @@ export function AgentList({ width }: AgentListProps) {
           </div>
         )}
 
-        {agents.map((agent) => {
+        {filteredAgents.map((agent) => {
           const isSystem = agent.agent_id === "com.rollball.system";
           const sessionTitle = sessionTitles[agent.agent_id];
           
@@ -226,44 +276,23 @@ export function AgentList({ width }: AgentListProps) {
           );
         })}
 
-        {agents.length === 0 && !loading && (
+        {filteredAgents.length === 0 && !loading && (
           <div className="px-3 py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">
-            No agents installed
+            {agents.length === 0 ? "No agents installed" : "No matching agents"}
           </div>
         )}
-      </div>
-
-      {/* Bottom action area - 微信联系人列表风格 */}
-      <div className="bg-[#EEEEF0] px-3 pt-1 pb-3 dark:bg-[#2F2F30]">
-        <button
-          onClick={handleInstall}
-          disabled={installing}
-          className="flex w-full items-center justify-center gap-1.5 rounded-md bg-[#E2E3E6] px-3 py-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-[#D8D9DC] disabled:opacity-50 dark:bg-[#38383A] dark:text-zinc-300 dark:hover:bg-[#3D3D3F]"
-        >
-          {installing ? (
-            <>
-              <div className="h-3 w-3 animate-spin rounded-full border border-zinc-400 border-t-zinc-700" />
-              Installing...
-            </>
-          ) : (
-            <>
-              <Plus className="h-3.5 w-3.5" />
-              Install Agent
-            </>
-          )}
-        </button>
       </div>
 
       {/* Context menu */}
       {contextMenu && (
         <div
           ref={menuRef}
-          className="fixed z-50 min-w-[160px] rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
+          className="fixed z-50 min-w-[160px] rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           {contextAgent && !contextAgent.running && (
             <button
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
               onClick={() => handleStart(contextMenu.agentId)}
             >
               <Play className="h-3.5 w-3.5" /> Start
@@ -271,14 +300,14 @@ export function AgentList({ width }: AgentListProps) {
           )}
           {contextAgent && contextAgent.running && (
             <button
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
               onClick={() => handleStop(contextMenu.agentId)}
             >
               <Square className="h-3.5 w-3.5" /> Stop
             </button>
           )}
           <button
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
             onClick={() => {
               setDetailAgentId(contextMenu.agentId);
               setContextMenu(null);
@@ -287,7 +316,7 @@ export function AgentList({ width }: AgentListProps) {
             <Info className="h-3.5 w-3.5" /> Details
           </button>
           <button
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-700/50"
             disabled
             title="Available in S4"
           >
@@ -295,7 +324,7 @@ export function AgentList({ width }: AgentListProps) {
           </button>
           <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />
           <button
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
             onClick={() => handleUninstall(contextMenu.agentId)}
           >
             <Trash2 className="h-3.5 w-3.5" /> Uninstall
