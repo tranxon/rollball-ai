@@ -543,15 +543,18 @@ fn test_t44_long_conversation_paginated_read() {
     let page1 = read_messages_paginated(&jsonl_path, None, 25, "backward").unwrap();
     assert_eq!(page1.messages.len(), 25);
     assert!(page1.has_more, "Should have more messages");
+    // Verify cursor is offset format
+    let cursor1 = page1.cursor.as_ref().unwrap().clone();
+    assert!(cursor1.starts_with("offset:"), "Cursor should be offset format, got: {}", cursor1);
 
     // Continue backward from cursor
-    let cursor = page1.cursor.as_ref().unwrap().clone();
-    let page2 = read_messages_paginated(&jsonl_path, Some(cursor), 25, "backward").unwrap();
+    let page2 = read_messages_paginated(&jsonl_path, Some(cursor1), 25, "backward").unwrap();
     assert_eq!(page2.messages.len(), 25);
     assert!(page2.has_more, "Should still have more messages");
+    let cursor2 = page2.cursor.as_ref().unwrap().clone();
+    assert!(cursor2.starts_with("offset:"));
 
     // Third page — remaining 10 messages
-    let cursor2 = page2.cursor.as_ref().unwrap().clone();
     let page3 = read_messages_paginated(&jsonl_path, Some(cursor2), 25, "backward").unwrap();
     assert_eq!(page3.messages.len(), 10);
     assert!(!page3.has_more, "No more messages");
@@ -773,4 +776,70 @@ fn test_t50_concurrent_session_creation() {
         let page = read_messages_paginated(&path, None, 100, "backward").unwrap();
         assert_eq!(page.messages.len(), 1, "Each session should have 1 message");
     }
+}
+
+/// T51: Large file (100+ messages) — backward pagination with byte-offset cursors.
+#[test]
+fn test_t51_large_file_backward_pagination() {
+    let temp_dir = TempDir::new().unwrap();
+    let work_dir = temp_dir.path();
+    let session_id = generate_session_id();
+
+    let session = ConversationSession::new(work_dir, &session_id, "com.test.agent").unwrap();
+
+    for i in 0..150 {
+        let role = if i % 2 == 0 { "user" } else { "assistant" };
+        session.append_message(role, &format!("Large file message {:03}", i), None);
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async { session.close().await.unwrap(); });
+
+    let jsonl_path = work_dir.join("conversations").join(format!("{session_id}.jsonl"));
+    assert!(jsonl_path.exists());
+
+    // Verify all messages are readable
+    let all_page = read_messages_paginated(&jsonl_path, None, 200, "backward").unwrap();
+    assert_eq!(all_page.messages.len(), 150, "Should read all 150 messages");
+
+    // Paginate backward with limit 50
+    let page1 = read_messages_paginated(&jsonl_path, None, 50, "backward").unwrap();
+    assert_eq!(page1.messages.len(), 50);
+    assert!(page1.has_more);
+    // First page should contain messages 100-149
+    assert_eq!(page1.messages[0].content, "Large file message 100");
+    assert_eq!(page1.messages[49].content, "Large file message 149");
+
+    let cursor1 = page1.cursor.unwrap();
+    assert!(cursor1.starts_with("offset:"));
+    let cursor1_clone = cursor1.clone();
+
+    let page2 = read_messages_paginated(&jsonl_path, Some(cursor1), 50, "backward").unwrap();
+    assert_eq!(page2.messages.len(), 50);
+    assert!(page2.has_more);
+    // Second page should contain messages 50-99
+    assert_eq!(page2.messages[0].content, "Large file message 050");
+    assert_eq!(page2.messages[49].content, "Large file message 099");
+
+    let cursor2 = page2.cursor.unwrap();
+    assert!(cursor2.starts_with("offset:"));
+
+    let page3 = read_messages_paginated(&jsonl_path, Some(cursor2), 50, "backward").unwrap();
+    assert_eq!(page3.messages.len(), 50);
+    // Page3 contains the oldest messages (0-49), so has_more is false —
+    // message 0 starts at exactly meta_end, so first_offset == meta_end.
+    assert!(!page3.has_more, "No more older messages after reaching the beginning");
+    // Third page should contain messages 0-49
+    assert_eq!(page3.messages[0].content, "Large file message 000");
+    assert_eq!(page3.messages[49].content, "Large file message 049");
+    // Since has_more is false, cursor is None — no page4 exists
+    assert!(page3.cursor.is_none());
+
+    // Forward direction from offset cursor
+    let fwd_page = read_messages_paginated(&jsonl_path, Some(cursor1_clone), 10, "forward").unwrap();
+    assert_eq!(fwd_page.messages.len(), 10);
+    assert!(fwd_page.has_more);
+    // Forward from page1 cursor should read messages starting at cursor1 offset
+    assert_eq!(fwd_page.messages[0].content, "Large file message 100");
 }
