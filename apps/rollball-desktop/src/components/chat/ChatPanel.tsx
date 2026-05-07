@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import { useAgentStore } from "../../stores/agentStore";
 import { useChatStore } from "../../stores/chatStore";
@@ -99,6 +100,14 @@ export function ChatPanel() {
     flushToolGroup();
     return grouped;
   }, [messages, streamingMessageId]);
+
+  // Virtual scrolling: only render visible messages
+  const virtualizer = useVirtualizer({
+    count: displayMessages.length,
+    getScrollElement: () => messagesContainerRef.current,
+    estimateSize: () => 80,
+    overscan: 5,
+  });
 
   // Load available models from Vault keys
   const loadModels = useCallback(async () => {
@@ -237,24 +246,23 @@ export function ChatPanel() {
   useEffect(() => {
     if (isLoadingMoreRef.current) {
       // Loading more: restore scroll position to keep view stable
-      const container = messagesContainerRef.current;
-      if (container && prevScrollHeightRef.current > 0) {
-        const newScrollHeight = container.scrollHeight;
-        const heightDiff = newScrollHeight - prevScrollHeightRef.current;
-        container.scrollTop += heightDiff;
+      // With virtualizer, use scrollToOffset to adjust for prepended items
+      if (prevScrollHeightRef.current > 0 && displayMessages.length > 0) {
+        const prevOffset = prevScrollHeightRef.current;
         prevScrollHeightRef.current = 0;
         isLoadingMoreRef.current = false;
+        virtualizer.scrollToOffset(prevOffset, { align: "start" });
       }
       return;
     }
     // Initial load: scroll to bottom immediately without animation
-    if (isInitialLoadRef.current && messages.length > 0) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-    } else {
-      // Normal new message: smooth scroll
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isInitialLoadRef.current && messages.length > 0 && displayMessages.length > 0) {
+      virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end" });
+    } else if (displayMessages.length > 0) {
+      // Normal new message: smooth scroll to bottom
+      virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end", behavior: "smooth" });
     }
-  }, [messages]);
+  }, [messages, displayMessages.length, virtualizer]);
 
   // Scroll handler: load more messages when scrolled to top
   const handleScroll = useCallback(() => {
@@ -267,13 +275,14 @@ export function ChatPanel() {
 
     // Trigger when within 50px of the top
     if (container.scrollTop < 50) {
-      prevScrollHeightRef.current = container.scrollHeight;
+      // Store current scroll offset for position restoration after prepending messages
+      prevScrollHeightRef.current = virtualizer.scrollOffset ?? 0;
       isLoadingMoreRef.current = true;
       void useChatStore
         .getState()
         .loadMoreMessages(selectedAgentId, currentSessionId);
     }
-  }, [selectedAgentId]);
+  }, [selectedAgentId, virtualizer]);
 
   const handleSend = () => {
     const content = inputValue.trim();
@@ -397,38 +406,59 @@ export function ChatPanel() {
               Start a conversation with {selectedAgent.name}
             </div>
           )}
-          <div className="space-y-2">
-            {displayMessages.map((item, idx) => {
-              const displayItem = item as any;
-              
-              // Tool group - multiple consecutive tool calls/results
-              if (displayItem.type === 'tool_group') {
-                return <ToolCallGroup key={idx} items={displayItem.items} />;
-              }
-              
-              // Think message with folding
-              if (displayItem.type === 'think_group') {
-                const isThinkStreaming = displayItem.item.id === streamingMessageId;
+          {/* Virtualized message list — only renders visible items */}
+          {displayMessages.length > 0 && (
+            <div
+              style={{
+                height: virtualizer.getTotalSize(),
+                width: '100%',
+                position: 'relative',
+              }}
+            >
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const item = displayMessages[virtualRow.index];
+                const displayItem = item as any;
+
                 return (
-                  <ThinkBlock
-                    key={idx}
-                    content={displayItem.item.content}
-                    isStreaming={isThinkStreaming}
-                    hasReplyStarted={!isThinkStreaming}
-                    startTime={displayItem.item.startTime}
-                    endTime={displayItem.item.endTime}
-                    defaultExpanded={false}
-                  />
+                  <div
+                    key={virtualRow.key}
+                    ref={virtualizer.measureElement}
+                    data-index={virtualRow.index}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                    className="mb-2"
+                  >
+                    {/* Tool group - multiple consecutive tool calls/results */}
+                    {displayItem.type === 'tool_group' && (
+                      <ToolCallGroup items={displayItem.items} />
+                    )}
+
+                    {/* Think message with folding */}
+                    {displayItem.type === 'think_group' && (
+                      <ThinkBlock
+                        content={displayItem.item.content}
+                        isStreaming={displayItem.item.id === streamingMessageId}
+                        hasReplyStarted={displayItem.item.id !== streamingMessageId}
+                        startTime={displayItem.item.startTime}
+                        endTime={displayItem.item.endTime}
+                        defaultExpanded={false}
+                      />
+                    )}
+
+                    {/* Regular message */}
+                    {!displayItem.type && (
+                      <MessageBubble message={item as ChatMessage} isStreaming={(item as ChatMessage).id === streamingMessageId} />
+                    )}
+                  </div>
                 );
-              }
-              
-              // Regular message
-              const msg = item as ChatMessage;
-              return (
-                <MessageBubble key={msg.id} message={msg} isStreaming={msg.id === streamingMessageId} />
-              );
-            })}
-          </div>
+              })}
+            </div>
+          )}
           {/* Iteration limit pause — Continue button */}
           {iterationLimitPaused && (
             <div className="flex w-fit items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:bg-amber-900/20">

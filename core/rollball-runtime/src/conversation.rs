@@ -3,7 +3,7 @@
 //! Provides `ConversationSession` for managing a single session's JSONL file
 //! and `ConversationWriter` for channel-based single-writer thread architecture.
 
-use std::io::{BufRead, BufReader, Seek, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -453,10 +453,157 @@ pub struct SessionInfo {
 pub struct PaginatedMessages {
     /// Messages in the current page
     pub messages: Vec<ConversationEntry>,
-    /// Cursor for the next page (message ID)
+    /// Cursor for the next page (byte offset format: "offset:<bytes>")
     pub cursor: Option<String>,
     /// Whether more messages exist after this page
     pub has_more: bool,
+}
+
+/// Chunk size for backward reading (8 KB).
+const BACKWARD_READ_CHUNK: usize = 8 * 1024;
+
+/// A line with its byte offset in the file.
+#[derive(Clone)]
+struct LineWithOffset {
+    content: String,
+    offset: u64,
+}
+
+/// Read `count` data lines backward from a file starting at `end_offset`.
+///
+/// Returns lines in chronological order (oldest → newest) with their byte
+/// offsets. Skips the metadata line (first line of the file).
+fn read_lines_backward(
+    file: &mut std::fs::File,
+    end_offset: u64,
+    count: usize,
+) -> std::io::Result<Vec<LineWithOffset>> {
+    let file_len = file.metadata()?.len();
+    let end = end_offset.min(file_len);
+
+    if end == 0 || count == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Phase 1: Read chunks backward, accumulating raw bytes into one buffer.
+    // Track the file offset where the accumulated buffer starts.
+    let mut buf_start = end;
+    let mut accumulated: Vec<u8> = Vec::new();
+    let mut found_newlines = 0;
+
+    while found_newlines < count + 1 && buf_start > 0 {
+        let chunk_start = buf_start.saturating_sub(BACKWARD_READ_CHUNK as u64);
+        let to_read = (buf_start - chunk_start) as usize;
+
+        file.seek(SeekFrom::Start(chunk_start))?;
+        let mut chunk = vec![0u8; to_read];
+        file.read_exact(&mut chunk)?;
+
+        // Count newlines in this chunk (plus those we already have)
+        let newline_count = chunk.iter().filter(|&&b| b == b'\n').count()
+            + accumulated.iter().filter(|&&b| b == b'\n').count();
+
+        // Prepend chunk to accumulated buffer
+        let mut new_buf = chunk;
+        new_buf.extend_from_slice(&accumulated);
+        accumulated = new_buf;
+        buf_start = chunk_start;
+
+        found_newlines = newline_count;
+    }
+
+    // Phase 2: Convert accumulated bytes to string, split into lines,
+    // and compute exact byte offsets from buf_start.
+    let text = String::from_utf8_lossy(&accumulated);
+    let mut lines_with_offsets: Vec<LineWithOffset> = Vec::new();
+    let mut byte_pos = buf_start;
+
+    for line in text.split('\n') {
+        let line_start = byte_pos;
+        byte_pos += line.len() as u64;
+        // The newline char itself (if present in the original file)
+        // We track it for offset computation but skip adding for the last segment
+        // which may not have a trailing newline
+        byte_pos += 1u64; // account for the \n separator
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Skip metadata line (contains both "version" and "session_id")
+        if trimmed.contains("\"version\"") && trimmed.contains("\"session_id\"") {
+            continue;
+        }
+
+        lines_with_offsets.push(LineWithOffset {
+            content: trimmed.to_string(),
+            offset: line_start,
+        });
+    }
+
+    // Take the last `count` lines (they are already in chronological order)
+    let start = lines_with_offsets.len().saturating_sub(count);
+    let result = lines_with_offsets[start..].to_vec();
+
+    Ok(result)
+}
+
+/// Read `count` data lines forward from a file starting at `start_offset`.
+///
+/// Returns lines in chronological order with their byte offsets.
+/// Skips the metadata line.
+fn read_lines_forward(
+    file: &mut std::fs::File,
+    start_offset: u64,
+    count: usize,
+) -> std::io::Result<Vec<LineWithOffset>> {
+    file.seek(SeekFrom::Start(start_offset))?;
+    let reader = BufReader::new(file.try_clone()?);
+
+    let mut lines = Vec::new();
+    let mut byte_pos = start_offset;
+
+    for line_result in reader.lines() {
+        if lines.len() >= count {
+            break;
+        }
+        let line = line_result?;
+        let line_start = byte_pos;
+        byte_pos += line.len() as u64 + 1; // +1 for '\n'
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Skip metadata line
+        if trimmed.contains("\"version\"") && trimmed.contains("\"session_id\"") {
+            continue;
+        }
+
+        lines.push(LineWithOffset {
+            content: trimmed.to_string(),
+            offset: line_start,
+        });
+    }
+
+    Ok(lines)
+}
+
+/// Parse a cursor string in the format `"offset:<bytes>"`.
+///
+/// Returns the byte offset, or `None` if the cursor format is invalid.
+fn parse_offset_cursor(cursor: &str) -> Option<u64> {
+    cursor.strip_prefix("offset:").and_then(|s| s.parse::<u64>().ok())
+}
+
+/// Get the byte offset where message data begins (after metadata line).
+fn metadata_end_offset(file: &mut std::fs::File) -> std::io::Result<u64> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut reader = BufReader::new(file.try_clone()?);
+    let mut first_line = String::new();
+    reader.read_line(&mut first_line)?;
+    Ok(first_line.len() as u64 + 1) // +1 for '\n'
 }
 
 /// Find the latest session in the conversations directory.
@@ -571,12 +718,15 @@ pub fn read_session_metadata(path: &Path) -> Result<SessionMetadata> {
     }
 }
 
-/// Read messages from a JSONL file with pagination.
+/// Read messages from a JSONL file with pagination using byte-offset cursors.
 ///
-/// - `cursor`: message ID of the last message from the previous page.
-///   If `None`, starts from the most recent messages.
+/// - `cursor`: byte offset in `"offset:<bytes>"` format. If `None`, starts
+///   from the most recent messages (backward) or oldest (forward).
 /// - `limit`: maximum number of messages to return.
-/// - `direction`: "backward" (older) or "forward" (newer).
+/// - `direction`: "backward" (older, default) or "forward" (newer).
+///
+/// Performance: backward reading only reads the tail of the file
+/// (O(limit) instead of O(n) for full-file scan).
 ///
 /// Returns messages in chronological order (oldest to newest within the page).
 pub fn read_messages_paginated(
@@ -585,71 +735,121 @@ pub fn read_messages_paginated(
     limit: u32,
     direction: &str,
 ) -> Result<PaginatedMessages> {
-    let file = std::fs::File::open(path)?;
-    let reader = BufReader::new(file);
+    let mut file = std::fs::File::open(path)?;
+    let file_len = file.metadata()?.len();
+    let meta_end = metadata_end_offset(&mut file)?;
 
-    let mut all_messages: Vec<ConversationEntry> = Vec::new();
-    let mut is_first_line = true;
+    if file_len <= meta_end {
+        // No messages beyond metadata
+        return Ok(PaginatedMessages {
+            messages: Vec::new(),
+            cursor: None,
+            has_more: false,
+        });
+    }
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
+    if direction == "forward" {
+        read_messages_forward(&mut file, cursor, limit, meta_end, file_len)
+    } else {
+        read_messages_backward(&mut file, cursor, limit, meta_end, file_len)
+    }
+}
 
-        // Skip first line (session metadata)
-        if is_first_line {
-            is_first_line = false;
-            continue;
-        }
+/// Backward pagination: read the most recent `limit` messages, or older
+/// messages before the cursor offset.
+fn read_messages_backward(
+    file: &mut std::fs::File,
+    cursor: Option<String>,
+    limit: u32,
+    meta_end: u64,
+    file_len: u64,
+) -> Result<PaginatedMessages> {
+    let end_offset = cursor
+        .as_deref()
+        .and_then(parse_offset_cursor)
+        .unwrap_or(file_len);
 
-        match serde_json::from_str::<ConversationEntry>(line) {
-            Ok(entry) => all_messages.push(entry),
+    let line_offsets = read_lines_backward(file, end_offset, limit as usize)?;
+
+    // Parse lines into ConversationEntry, skipping invalid JSON
+    let mut messages = Vec::new();
+    let mut first_valid_offset = None;
+    for lo in &line_offsets {
+        match serde_json::from_str::<ConversationEntry>(&lo.content) {
+            Ok(entry) => {
+                if first_valid_offset.is_none() {
+                    first_valid_offset = Some(lo.offset);
+                }
+                messages.push(entry);
+            }
             Err(e) => {
-                tracing::warn!("Skipping invalid JSONL line in {}: {}", path.display(), e);
+                tracing::warn!("Skipping invalid JSONL line: {}", e);
             }
         }
     }
 
-    // Pagination logic
-    let limit = limit as usize;
-    let mut start_idx = all_messages.len();
+    let first_offset = first_valid_offset.unwrap_or(meta_end);
 
-    if let Some(cursor_id) = cursor
-        && let Some(pos) = all_messages.iter().position(|m| m.id == cursor_id)
-    {
-        if direction == "forward" {
-            start_idx = pos + 1;
-        } else {
-            // backward: read messages before cursor
-            start_idx = pos;
+    // has_more: the first message's offset is still after metadata,
+    // meaning there are older messages beyond this page
+    let has_more = first_offset > meta_end;
+
+    // next_cursor: byte offset of the first (oldest) message in this page
+    let next_cursor = if has_more {
+        Some(format!("offset:{}", first_offset))
+    } else {
+        None
+    };
+
+    Ok(PaginatedMessages {
+        messages,
+        cursor: next_cursor,
+        has_more,
+    })
+}
+
+/// Forward pagination: read `limit` messages starting from cursor offset.
+fn read_messages_forward(
+    file: &mut std::fs::File,
+    cursor: Option<String>,
+    limit: u32,
+    meta_end: u64,
+    file_len: u64,
+) -> Result<PaginatedMessages> {
+    let start_offset = cursor
+        .as_deref()
+        .and_then(parse_offset_cursor)
+        .unwrap_or(meta_end);
+
+    let line_offsets = read_lines_forward(file, start_offset, limit as usize)?;
+
+    // Parse lines into ConversationEntry
+    let mut messages = Vec::new();
+    let mut last_line_end = start_offset;
+    for lo in &line_offsets {
+        match serde_json::from_str::<ConversationEntry>(&lo.content) {
+            Ok(entry) => {
+                // End of this line = offset + content length + newline
+                last_line_end = lo.offset + lo.content.len() as u64 + 1u64;
+                messages.push(entry);
+            }
+            Err(e) => {
+                tracing::warn!("Skipping invalid JSONL line: {}", e);
+            }
         }
     }
 
-    let page_messages: Vec<ConversationEntry>;
-    let has_more: bool;
-    let next_cursor: Option<String>;
+    let has_more = last_line_end < file_len;
 
-    if direction == "forward" {
-        let end_idx = (start_idx + limit).min(all_messages.len());
-        page_messages = all_messages[start_idx..end_idx].to_vec();
-        has_more = end_idx < all_messages.len();
-        next_cursor = page_messages.last().map(|m| m.id.clone());
+    // next_cursor: byte offset at the end of the last message
+    let next_cursor = if has_more {
+        Some(format!("offset:{}", last_line_end))
     } else {
-        // backward (default): read most recent messages, or older messages before cursor
-        let end_idx = start_idx;
-        let actual_start = end_idx.saturating_sub(limit);
-        page_messages = all_messages[actual_start..end_idx].to_vec();
-        has_more = actual_start > 0;
-        next_cursor = page_messages.first().map(|m| m.id.clone());
-    }
+        None
+    };
 
     Ok(PaginatedMessages {
-        messages: page_messages,
+        messages,
         cursor: next_cursor,
         has_more,
     })
@@ -812,19 +1012,41 @@ mod tests {
         assert_eq!(page.messages[0].content, "Message 3");
         assert_eq!(page.messages[1].content, "Message 4");
 
-        // Continue backward from cursor
+        // Verify cursor format is "offset:<bytes>"
         let cursor = page.cursor.unwrap();
+        assert!(cursor.starts_with("offset:"), "Cursor should be offset format, got: {}", cursor);
+
+        // Continue backward from cursor
         let page2 = read_messages_paginated(&file_path, Some(cursor), 2, "backward").unwrap();
         assert_eq!(page2.messages.len(), 2);
         assert!(page2.has_more);
         assert_eq!(page2.messages[0].content, "Message 1");
         assert_eq!(page2.messages[1].content, "Message 2");
 
-        // Read forward from msg-1
-        let page3 = read_messages_paginated(&file_path, Some("msg-1".to_string()), 10, "forward").unwrap();
-        assert_eq!(page3.messages.len(), 3);
-        assert!(!page3.has_more);
-        assert_eq!(page3.messages[0].content, "Message 2");
+        // Continue backward to the last page
+        let cursor2 = page2.cursor.unwrap();
+        assert!(cursor2.starts_with("offset:"));
+        let page3 = read_messages_paginated(&file_path, Some(cursor2), 2, "backward").unwrap();
+        assert_eq!(page3.messages.len(), 1);
+        assert!(!page3.has_more, "No more messages after reaching the beginning");
+        assert_eq!(page3.messages[0].content, "Message 0");
+
+        // Read forward from beginning (no cursor)
+        let fwd = read_messages_paginated(&file_path, None, 3, "forward").unwrap();
+        assert_eq!(fwd.messages.len(), 3);
+        assert!(fwd.has_more);
+        assert_eq!(fwd.messages[0].content, "Message 0");
+        assert_eq!(fwd.messages[1].content, "Message 1");
+        assert_eq!(fwd.messages[2].content, "Message 2");
+
+        // Continue forward from cursor
+        let fwd_cursor = fwd.cursor.unwrap();
+        assert!(fwd_cursor.starts_with("offset:"));
+        let fwd2 = read_messages_paginated(&file_path, Some(fwd_cursor), 10, "forward").unwrap();
+        assert_eq!(fwd2.messages.len(), 2);
+        assert!(!fwd2.has_more);
+        assert_eq!(fwd2.messages[0].content, "Message 3");
+        assert_eq!(fwd2.messages[1].content, "Message 4");
     }
 
     #[test]
