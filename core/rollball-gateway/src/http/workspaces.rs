@@ -157,6 +157,9 @@ pub async fn add_workspace(
     save_workspace_config(&install_path, &config)
         .map_err(|e| ApiError::internal(&e))?;
 
+    // Push workspace context update to Runtime
+    push_workspace_context_update(&state, &agent_id, &install_path);
+
     Ok((StatusCode::CREATED, Json(new_dir)))
 }
 
@@ -253,22 +256,37 @@ pub async fn set_current_workspace(
     save_workspace_config(&install_path, &config)
         .map_err(|e| ApiError::internal(&e))?;
 
-    // Push WorkspaceContextUpdate to the Agent Runtime via IPC.
-    // This is a best-effort push — failure should not block the HTTP response.
-    // We spawn a separate task to avoid holding async state across the handler boundary.
+    // Push workspace context update to Runtime
+    push_workspace_context_update(&state, &agent_id, &install_path);
+
+    Ok(Json(WorkspaceListResponse {
+        agent_id,
+        workspaces: config.additional_dirs,
+    }))
+}
+
+/// Push a WorkspaceContextUpdate to the Agent Runtime after any workspace change.
+///
+/// Best-effort — failure does NOT block the HTTP response. Spawns a tokio task
+/// to avoid holding async state across the handler boundary.
+fn push_workspace_context_update(
+    state: &AppState,
+    agent_id: &str,
+    install_path: &str,
+) {
     if let Some(ref session_mgr) = state.session_mgr {
         let session_mgr = session_mgr.clone();
-        let agent_id_clone = agent_id.clone();
-        let install_path_clone = install_path.clone();
+        let agent_id = agent_id.to_string();
+        let install_path = install_path.to_string();
         tokio::spawn(async move {
             let push_tx = {
                 let mgr = session_mgr.lock().await;
-                mgr.find_by_agent_id(&agent_id_clone)
+                mgr.find_by_agent_id(&agent_id)
                     .and_then(|(_, session)| session.push_sender().cloned())
             };
             if let Some(push_tx) = push_tx {
                 if let Some((context_text, current_workspace_id, current_workspace_path)) =
-                    resolve_workspace_context(&install_path_clone)
+                    resolve_workspace_context(&install_path)
                 {
                     let push_msg = rollball_core::protocol::GatewayResponse::WorkspaceContextUpdate {
                         context_text,
@@ -278,28 +296,23 @@ pub async fn set_current_workspace(
                     if push_tx.send(push_msg).await.is_err() {
                         tracing::warn!(
                             "Failed to push WorkspaceContextUpdate to agent={} (channel closed)",
-                            agent_id_clone
+                            agent_id
                         );
                     } else {
                         tracing::info!(
-                            "Pushed WorkspaceContextUpdate to agent={} after workspace switch",
-                            agent_id_clone
+                            "Pushed WorkspaceContextUpdate to agent={} after workspace change",
+                            agent_id
                         );
                     }
                 }
             } else {
                 tracing::debug!(
                     "Agent {} has no active IPC session, skipping WorkspaceContextUpdate push",
-                    agent_id_clone
+                    agent_id
                 );
             }
         });
     }
-
-    Ok(Json(WorkspaceListResponse {
-        agent_id,
-        workspaces: config.additional_dirs,
-    }))
 }
 
 /// `DELETE /api/agents/{agent_id}/workspaces/{ws_id}` — remove a workspace directory
@@ -333,6 +346,9 @@ pub async fn delete_workspace(
     // Save config
     save_workspace_config(&install_path, &config)
         .map_err(|e| ApiError::internal(&e))?;
+
+    // Push workspace context update to Runtime
+    push_workspace_context_update(&state, &agent_id, &install_path);
 
     Ok(StatusCode::NO_CONTENT)
 }
