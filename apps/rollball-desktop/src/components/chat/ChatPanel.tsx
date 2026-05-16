@@ -998,7 +998,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
             {liveUserName && (
               <span className="mt-[2px] text-xs text-zinc-400 dark:text-zinc-500">{liveUserName}</span>
             )}
-            <div className="mt-[6px] max-w-[85%] rounded-lg rounded-br-sm bg-accent-green/15 px-4 py-2.5 text-zinc-900 dark:text-zinc-200 select-text" style={fontSizeStyle}>
+            <div className="mt-[6px] max-w-[85%] rounded-lg rounded-br-sm bg-accent-green/15 px-4 py-2.5 text-zinc-900 dark:text-zinc-200 select-text whitespace-pre-wrap break-words" style={fontSizeStyle}>
               {message.content}
             </div>
           </div>
