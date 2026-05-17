@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useUserProfileStore } from "../../stores/userProfileStore";
 import { UserAvatar, BUILTIN_ICONS, BUILTIN_ICON_IDS } from "../common/UserAvatar";
+import { cn } from "../../lib/utils";
 
 // ── Component ───────────────────────────────────────────────────────────
 
@@ -96,11 +97,10 @@ export function ProfileTab() {
             <button
               key={type}
               onClick={() => setProfile({ avatarType: type })}
-              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-                profile.avatarType === type
-                  ? "border-zinc-200 bg-zinc-200 text-zinc-800 dark:border-zinc-200 dark:bg-zinc-200 dark:text-zinc-800"
-                  : "border-zinc-300 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
-              }`}
+              className={cn(
+                "btn-option",
+                profile.avatarType === type && "btn-option-active",
+              )}
             >
               {type === "icon" ? "Built-in Icon" : "Letter"}
             </button>

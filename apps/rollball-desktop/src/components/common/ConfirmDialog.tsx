@@ -48,10 +48,10 @@ export function ConfirmDialog({
         aria-labelledby="confirm-title"
         aria-describedby="confirm-desc"
       >
-        <h3 id="confirm-title" className="text-base font-semibold">
+        <h3 id="confirm-title" className="text-sm font-semibold">
           {title}
         </h3>
-        <p id="confirm-desc" className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+        <p id="confirm-desc" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
           {message}
         </p>
 
@@ -59,17 +59,15 @@ export function ConfirmDialog({
           <button
             ref={cancelRef}
             onClick={onCancel}
-            className="rounded-md border border-zinc-200 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
             className={cn(
-              "rounded-md px-4 py-1.5 text-sm font-medium text-white",
-              destructive
-                ? "bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600"
-                : "btn-solid",
+              "rounded-md px-3 py-1.5 text-xs font-medium",
+              destructive ? "btn-accent" : "btn-solid",
             )}
           >
             {confirmLabel}

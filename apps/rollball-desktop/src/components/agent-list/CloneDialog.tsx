@@ -100,7 +100,7 @@ export function CloneDialog({
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-700">
           <Copy className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />
-          <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-100">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
             Clone Agent
           </h2>
         </div>
@@ -108,7 +108,7 @@ export function CloneDialog({
         {/* Body */}
         <div className="space-y-4 px-5 py-4">
           {/* Source info */}
-          <div className="flex items-center gap-2 rounded-md bg-zinc-50 px-3 py-2 text-sm dark:bg-zinc-700/50">
+          <div className="flex items-center gap-2 rounded-md bg-zinc-50 px-3 py-2 text-xs dark:bg-zinc-700/50">
             <Info className="h-4 w-4 text-zinc-400" />
             <span className="text-zinc-500 dark:text-zinc-400">
               Cloning from:{" "}
@@ -136,7 +136,7 @@ export function CloneDialog({
                 if (e.key === "Enter") void handleClone();
               }}
               placeholder="com.example.myagent"
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
             />
           </div>
 
@@ -151,7 +151,7 @@ export function CloneDialog({
                   key={m}
                   onClick={() => setMode(m)}
                   className={cn(
-                    "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
+                    "flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
                     mode === m
                       ? "border-zinc-200 bg-zinc-200 text-zinc-800 dark:border-zinc-300 dark:bg-zinc-300 dark:text-zinc-900"
                       : "border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700",
@@ -179,14 +179,14 @@ export function CloneDialog({
           <button
             onClick={onClose}
             disabled={cloning}
-            className="rounded-md border border-zinc-200 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
             Cancel
           </button>
           <button
             onClick={handleClone}
             disabled={cloning || !newAgentId.trim()}
-            className="flex items-center gap-2 rounded-md btn-solid px-4 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-2 rounded-md btn-solid px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
           >
             {cloning ? (
               <>

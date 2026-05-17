@@ -61,7 +61,7 @@ export function AgentDetailDialog({ open, agentId, onClose }: AgentDetailDialogP
       {/* Dialog */}
       <div className="relative z-10 w-full max-w-md rounded-lg border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-800">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-base font-semibold">Agent Details</h3>
+          <h3 className="text-sm font-semibold">Agent Details</h3>
           <button
             ref={closeRef}
             onClick={onClose}
@@ -85,7 +85,7 @@ export function AgentDetailDialog({ open, agentId, onClose }: AgentDetailDialogP
         )}
 
         {detail && !loading && (
-          <div className="space-y-3 text-sm">
+          <div className="space-y-3 text-xs">
             <DetailRow label="Name" value={detail.name} />
             <DetailRow label="Agent ID" value={detail.agent_id} mono />
             <DetailRow label="Version" value={detail.version} />
@@ -125,7 +125,7 @@ export function AgentDetailDialog({ open, agentId, onClose }: AgentDetailDialogP
         <div className="mt-6 flex justify-end">
           <button
             onClick={onClose}
-            className="rounded-md border border-zinc-200 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
             Close
           </button>
