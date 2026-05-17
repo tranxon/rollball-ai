@@ -1376,10 +1376,8 @@ function AppearanceTab() {
               key={cw.label}
               onClick={() => setContentWidth(cw.value)}
               className={cn(
-                "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
-                contentWidth === cw.value
-                  ? "border-accent-green bg-accent-green/10 text-accent-green dark:border-accent-green dark:bg-accent-green/20 dark:text-accent-green"
-                  : "border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                "btn-option",
+                contentWidth === cw.value && "btn-option-active",
               )}
             >
               {cw.label}
@@ -1396,10 +1394,8 @@ function AppearanceTab() {
               key={fs.label}
               onClick={() => setFontSize(fs.value)}
               className={cn(
-                "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
-                fontSize === fs.value
-                  ? "border-accent-green bg-accent-green/10 text-accent-green dark:border-accent-green dark:bg-accent-green/20 dark:text-accent-green"
-                  : "border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                "btn-option",
+                fontSize === fs.value && "btn-option-active",
               )}
             >
               {fs.label}
@@ -1545,7 +1541,7 @@ function GeneralTab() {
         <button
           onClick={() => setShowDeleteConfirm(true)}
           disabled={deleting}
-          className="btn-outline rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+          className="rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
         >
           {deleting ? "Deleting..." : "Delete all logs"}
         </button>
@@ -1569,7 +1565,7 @@ function GeneralTab() {
                 </button>
                 <button
                   onClick={handleDeleteLogs}
-                  className="rounded-md bg-red-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600"
+                  className="btn-accent rounded-md px-3 py-1.5 text-xs font-medium"
                 >
                   Confirm Delete
                 </button>

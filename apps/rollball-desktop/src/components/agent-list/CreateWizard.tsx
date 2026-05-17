@@ -167,7 +167,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-700">
           <Sparkles className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />
-          <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-100">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
             Create New Agent
           </h2>
         </div>
@@ -226,7 +226,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                   value={form.agent_id}
                   onChange={(e) => update({ agent_id: e.target.value })}
                   placeholder="com.example.myagent"
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
                 />
               </div>
               <div>
@@ -238,7 +238,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                   value={form.name}
                   onChange={(e) => update({ name: e.target.value })}
                   placeholder="My Agent"
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -251,7 +251,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                     value={form.version}
                     onChange={(e) => update({ version: e.target.value })}
                     placeholder="0.1.0"
-                    className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                    className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
                   />
                 </div>
                 <div>
@@ -263,7 +263,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                     value={form.author}
                     onChange={(e) => update({ author: e.target.value })}
                     placeholder="Your Name"
-                    className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                    className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
                   />
                 </div>
               </div>
@@ -276,7 +276,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                   onChange={(e) => update({ description: e.target.value })}
                   placeholder="Describe what this agent does..."
                   rows={3}
-                  className="w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                  className="w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
                 />
               </div>
             </div>
@@ -294,7 +294,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                   onChange={(e) =>
                     update({ suggested_provider: e.target.value })
                   }
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200"
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200"
                 >
                   <option value="openai">OpenAI</option>
                   <option value="anthropic">Anthropic</option>
@@ -312,7 +312,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                   value={form.suggested_model}
                   onChange={(e) => update({ suggested_model: e.target.value })}
                   placeholder="gpt-4o"
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
                 />
               </div>
             </div>
@@ -328,7 +328,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                 {["network", "fs_read", "fs_write", "shell"].map((perm) => (
                   <label
                     key={perm}
-                    className="flex items-center gap-2 rounded-md border border-zinc-200 px-3 py-2 text-sm transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-700"
+                    className="flex items-center gap-2 rounded-md border border-zinc-200 px-3 py-1.5 text-xs transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-700"
                   >
                     <input
                       type="checkbox"
@@ -375,11 +375,11 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                         if (tmpl.model)
                           update({ suggested_model: tmpl.model });
                       }}
-                      className="flex items-start gap-3 rounded-md border border-zinc-200 px-4 py-3 text-left transition-colors hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-600 dark:hover:border-zinc-400 dark:hover:bg-zinc-700"
+                      className="flex items-start gap-3 rounded-md border border-zinc-200 px-3 py-2 text-left transition-colors hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-600 dark:hover:border-zinc-400 dark:hover:bg-zinc-700"
                     >
                       <Icon className="mt-0.5 h-5 w-5 text-zinc-400" />
                       <div>
-                        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                        <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                           {tmpl.name}
                         </p>
                         <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -401,7 +401,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
           {/* Step 5: Preview */}
           {step === "preview" && (
             <div className="space-y-3">
-              <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              <h3 className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                 Review Your Agent
               </h3>
               <div className="rounded-md bg-zinc-50 px-4 py-3 dark:bg-zinc-700/50">
@@ -440,7 +440,7 @@ ${form.permissions.map((p) => `${p} = ["*"]`).join("\n")}
           <button
             onClick={stepIndex === 0 ? onClose : handleBack}
             disabled={busy}
-            className="rounded-md border border-zinc-200 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
             {stepIndex === 0 ? "Cancel" : "Back"}
           </button>
@@ -448,7 +448,7 @@ ${form.permissions.map((p) => `${p} = ["*"]`).join("\n")}
           <button
             onClick={handleNext}
             disabled={!canProceed}
-            className="flex items-center gap-2 rounded-md btn-solid px-4 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-2 rounded-md btn-solid px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? (
               <>

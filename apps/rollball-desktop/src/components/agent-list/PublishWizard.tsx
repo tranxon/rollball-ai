@@ -185,11 +185,11 @@ export function PublishWizard({
       />
 
       {/* Dialog */}
-      <div className="relative z-10 flex w-full max-w-2xl flex-col rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-800">
+      <div className="relative z-10 flex w-full max-w-lg flex-col rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-800">
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-700">
           <Package className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />
-          <h2 className="text-base font-semibold text-zinc-800 dark:text-zinc-100">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
             Publish: {agentName}
           </h2>
         </div>
@@ -237,7 +237,7 @@ export function PublishWizard({
           {/* Check results */}
           {checkResult && (
             <div className="space-y-2">
-              <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              <h3 className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                 Check Results
               </h3>
               {checkResult.checks.map((item, i) => (
@@ -291,7 +291,7 @@ export function PublishWizard({
           {/* Clean results */}
           {cleanResult && (
             <div className="space-y-2">
-              <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              <h3 className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                 Clean Results
               </h3>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -305,7 +305,7 @@ export function PublishWizard({
           {/* Build result */}
           {buildResult && (
             <div className="space-y-2">
-              <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              <h3 className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                 Build Result
               </h3>
               <div className="rounded-md bg-green-50 px-3 py-2 text-xs text-green-700 dark:bg-green-900/20 dark:text-green-400">
@@ -324,7 +324,7 @@ export function PublishWizard({
           {/* Sign result */}
           {signResult && (
             <div className="space-y-2">
-              <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              <h3 className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                 Sign Result
               </h3>
               <div
@@ -348,7 +348,7 @@ export function PublishWizard({
           {/* Export result */}
           {exportResult && (
             <div className="space-y-2">
-              <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              <h3 className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                 Export Result
               </h3>
               <div className="rounded-md bg-green-50 px-3 py-2 text-xs text-green-700 dark:bg-green-900/20 dark:text-green-400">
@@ -363,7 +363,7 @@ export function PublishWizard({
           {/* Distribute step - manual actions */}
           {step === "distribute" && (
             <div className="space-y-3">
-              <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              <h3 className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
                 Distribute
               </h3>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -372,7 +372,7 @@ export function PublishWizard({
               <button
                 onClick={runExport}
                 disabled={busy}
-                className="flex items-center gap-2 rounded-md border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                className="flex items-center gap-2 rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
               >
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -397,7 +397,7 @@ export function PublishWizard({
           <button
             onClick={onClose}
             disabled={busy}
-            className="rounded-md border border-zinc-200 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
             {step === "distribute" ? "Close" : "Cancel"}
           </button>
@@ -406,7 +406,7 @@ export function PublishWizard({
             <button
               onClick={currentAction.action}
               disabled={busy}
-              className="flex items-center gap-2 rounded-md btn-solid px-4 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-2 rounded-md btn-solid px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? (
                 <>
