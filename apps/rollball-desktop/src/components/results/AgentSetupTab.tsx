@@ -4,6 +4,20 @@ import { useAgentProfileStore } from "../../stores/agentProfileStore";
 import { UserAvatar, BUILTIN_ICONS, BUILTIN_ICON_IDS } from "../common/UserAvatar";
 import { getGatewayUrl } from "../../lib/config";
 
+// ── Types ───────────────────────────────────────────────────────────────
+
+interface AvailableTool {
+  name: string;
+  description: string;
+  required_permissions: string[];
+}
+
+interface ToolsResponse {
+  agent_id: string;
+  tools: AvailableTool[];
+  active_tools: string[];
+}
+
 // ── Component ───────────────────────────────────────────────────────────
 
 export function AgentSetupTab() {
@@ -18,15 +32,21 @@ export function AgentSetupTab() {
   const [configSaving, setConfigSaving] = useState(false);
   const [iconOpen, setIconOpen] = useState(false);
 
+  // Tools configuration
+  const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
+  const [activeTools, setActiveTools] = useState<string[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(false);
+
   useEffect(() => {
     if (!selectedAgentId) return;
     let cancelled = false;
     setConfigLoading(true);
+    setToolsLoading(true);
+    // Fetch config
     fetch(`${getGatewayUrl()}/api/agents/${selectedAgentId}/config`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled || !data) return;
-        // Populate profile defaults from API response
         setProfile(selectedAgentId, {
           maxTokens: data.max_output_tokens,
           maxIterations: data.max_iterations,
@@ -36,6 +56,18 @@ export function AgentSetupTab() {
       .catch(() => {})
       .finally(() => {
         if (!cancelled) setConfigLoading(false);
+      });
+    // Fetch tools
+    fetch(`${getGatewayUrl()}/api/agents/${selectedAgentId}/tools`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: ToolsResponse | null) => {
+        if (cancelled || !data) return;
+        setAvailableTools(data.tools);
+        setActiveTools(data.active_tools);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setToolsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -51,6 +83,8 @@ export function AgentSetupTab() {
       if (profile.maxTokens && profile.maxTokens > 0) body.max_output_tokens = profile.maxTokens;
       if (profile.maxIterations && profile.maxIterations > 0) body.max_iterations = profile.maxIterations;
       if (profile.temperature !== undefined) body.temperature = profile.temperature;
+      // Always send active_tools (even empty array = disable all tools)
+      if (activeTools.length >= 0) body.active_tools = activeTools;
 
       const res = await fetch(
         `${getGatewayUrl()}/api/agents/${selectedAgentId}/config`,
@@ -223,6 +257,53 @@ export function AgentSetupTab() {
           <span>0 (deterministic)</span>
           <span>2 (creative)</span>
         </div>
+      </div>
+
+      {/* Tools Configuration */}
+      <div className="mb-3 space-y-1">
+        <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+          Active Tools
+        </label>
+        {toolsLoading ? (
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">Loading...</span>
+        ) : availableTools.length === 0 ? (
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">No tools available</span>
+        ) : (
+          <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+            {availableTools.map((tool) => {
+              const checked = activeTools.includes(tool.name);
+              const toggle = () => {
+                setActiveTools((prev) =>
+                  checked ? prev.filter((n) => n !== tool.name) : [...prev, tool.name],
+                );
+              };
+              return (
+                <label
+                  key={tool.name}
+                  className="flex items-start gap-2 py-1 px-1.5 rounded hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={toggle}
+                    className="mt-0.5 h-3.5 w-3.5 rounded accent-[var(--color-accent)]"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
+                      {tool.name}
+                    </span>
+                    <span className="block text-[9px] text-zinc-400 dark:text-zinc-500 leading-tight">
+                      {tool.description}
+                    </span>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        )}
+        <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
+          Uncheck all to disable all tools; empty = use manifest defaults
+        </p>
       </div>
 
       {/* Action buttons */}

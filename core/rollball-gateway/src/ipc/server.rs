@@ -1639,6 +1639,7 @@ mod tests {
                 started_at: chrono::Utc::now(),
                 workspace: "/tmp/test".to_string(),
                 connected: false,
+                ready: false,
                 dev_mode: false,
                 debug_port: None,
             });

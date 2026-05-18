@@ -595,6 +595,10 @@ pub enum GatewayResponse {
         /// System prompt override
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system_prompt_override: Option<String>,
+        /// Active tool names (overrides manifest [[tools]] declarations).
+        /// Some(vec![]) means no tools active; None means keep current.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active_tools: Option<Vec<String>>,
     },
     /// Unknown or unrecognized message from Gateway.
     ///
@@ -643,6 +647,34 @@ pub struct ConversationEntryDto {
     /// Optional metadata (e.g. tool_call_id, tool_name)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+/// Available tool information returned by GET /api/agents/{id}/tools.
+///
+/// Describes a built-in tool that the agent can activate, including
+/// its name, description, and the permissions required to use it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableTool {
+    /// Tool name (e.g. "file_read", "http_request")
+    pub name: String,
+    /// Human-readable description
+    pub description: String,
+    /// Permission strings required to use this tool
+    /// (e.g. ["filesystem:read:<path>", "network:<url>"])
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_permissions: Vec<String>,
+}
+
+/// Response for GET /api/agents/{id}/tools.
+///
+/// Returns all available built-in tools plus the current active set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableToolsResponse {
+    pub agent_id: String,
+    /// All available built-in tools
+    pub tools: Vec<AvailableTool>,
+    /// Currently active tool names (from manifest + config overrides)
+    pub active_tools: Vec<String>,
 }
 
 /// Cron entry info (for IPC responses, S5.8 enhanced)

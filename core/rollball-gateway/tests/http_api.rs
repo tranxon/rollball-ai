@@ -8,7 +8,7 @@ use tower::ServiceExt; // for oneshot()
 
 use rollball_gateway::http::routes::{AppState, build_router, BridgeEvent, BridgeEventType, SharedSessionMgr};
 use rollball_gateway::http::auth::HttpAuth;
-use rollball_gateway::gateway::state::GatewayState;
+use rollball_gateway::gateway::state::{AgentInfo, GatewayState};
 use rollball_gateway::ipc::session::SessionManager;
 
 fn create_test_app() -> axum::Router {
@@ -30,6 +30,67 @@ fn create_test_app() -> axum::Router {
         None,
     );
     build_router(state)
+}
+
+/// Create a test app with a pre-installed agent (for agent-specific endpoints).
+fn create_test_app_with_agent(agent_id: &str, manifest_tools: &[&str]) -> (axum::Router, String) {
+    let dir = std::env::temp_dir().join(format!(
+        "rollball-test-http-api-agent-{}-{}",
+        agent_id.replace('.', "-"),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let install_path = dir.join(agent_id);
+    std::fs::create_dir_all(&install_path).unwrap();
+
+    // Write manifest.toml with tools for the agent config/tools endpoints
+    let tools_toml: String = manifest_tools
+        .iter()
+        .map(|t| format!("[[tools]]\nname = \"{}\"\n", t))
+        .collect();
+    let mut manifest_str = format!(
+        r#"agent_id = "{}"
+version = "1.0.0"
+name = "Test Agent"
+description = "Test agent for HTTP API tests"
+author = "test"
+runtime_version = "0.1.0"
+[llm]
+provider = "openai"
+model = "gpt-4"
+{}
+"#,
+        agent_id, tools_toml
+    );
+    if manifest_tools.is_empty() {
+        manifest_str.push_str("# no tools\n");
+    }
+    std::fs::write(install_path.join("manifest.toml"), &manifest_str).unwrap();
+
+    let mut gw_state = GatewayState::new(&dir.to_string_lossy());
+    gw_state.config = Some(rollball_gateway::config::GatewayConfig {
+        data_dir: dir.to_string_lossy().to_string(),
+        ..Default::default()
+    });
+    gw_state.add_installed(AgentInfo {
+        agent_id: agent_id.to_string(),
+        version: "1.0.0".to_string(),
+        name: "Test Agent".to_string(),
+        install_path: install_path.to_string_lossy().to_string(),
+        manifest: rollball_core::AgentManifest::from_toml(&manifest_str).unwrap(),
+    });
+
+    let state = AppState::new(
+        std::sync::Arc::new(tokio::sync::RwLock::new(gw_state)),
+        std::sync::Arc::new(HttpAuth::new(false)),
+        None,
+        None,
+        None,
+    );
+    let app = build_router(state);
+    (app, dir.to_string_lossy().to_string())
 }
 
 fn create_test_app_with_session() -> (axum::Router, SharedSessionMgr, tokio::sync::broadcast::Sender<BridgeEvent>) {
@@ -484,4 +545,144 @@ async fn test_update_config_empty_body() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+// ── Agent tools list ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_get_agent_tools_returns_available() {
+    let (app, _dir) = create_test_app_with_agent("com.example.weather", &["http_request", "memory_recall"]);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents/com.example.weather/tools")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["agent_id"], "com.example.weather");
+    assert!(json["tools"].is_array());
+    assert!(json["tools"].as_array().unwrap().len() > 0);
+    // active_tools should match manifest
+    let active: Vec<&str> = json["active_tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(active.contains(&"http_request"));
+    assert!(active.contains(&"memory_recall"));
+}
+
+#[tokio::test]
+async fn test_get_agent_tools_not_found() {
+    let app = create_test_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents/com.example.nonexistent/tools")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ── Agent config with active_tools ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_get_agent_config_with_active_tools() {
+    let (app, _dir) = create_test_app_with_agent("com.example.config", &["tool_a", "tool_b"]);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents/com.example.config/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 2048)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["agent_id"], "com.example.config");
+    assert!(json["active_tools"].is_array());
+    let active: Vec<&str> = json["active_tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(active.contains(&"tool_a"));
+    assert!(active.contains(&"tool_b"));
+}
+
+#[tokio::test]
+async fn test_update_agent_config_active_tools() {
+    let (app, _dir) = create_test_app_with_agent("com.example.config2", &["tool_a"]);
+
+    // Update active_tools
+    let body = serde_json::json!({
+        "active_tools": ["tool_x", "tool_y"]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/agents/com.example.config2/config")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 2048)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let active: Vec<&str> = json["active_tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(active, vec!["tool_x", "tool_y"]);
+}
+
+#[tokio::test]
+async fn test_get_agent_config_not_found() {
+    let app = create_test_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents/com.example.nonexistent/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

@@ -791,6 +791,7 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                 max_iterations,
                 temperature,
                 system_prompt_override,
+                active_tools,
             } => {
                 Some(proto::server_message::Payload::RuntimeConfigUpdate(
                     proto::RuntimeConfigUpdate {
@@ -798,6 +799,7 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                         max_iterations: max_iterations.clone(),
                         temperature: temperature.clone(),
                         system_prompt_override: system_prompt_override.clone().unwrap_or_default(),
+                        active_tools: active_tools.clone().unwrap_or_default(),
                     },
                 ))
             }

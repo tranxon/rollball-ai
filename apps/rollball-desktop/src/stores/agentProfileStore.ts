@@ -20,6 +20,8 @@ export interface AgentProfileSettings {
   temperature?: number;
   /** System prompt override */
   systemPrompt?: string;
+  /** Active tool names (from manifest + overrides) */
+  activeTools?: string[];
 }
 
 const STORAGE_KEY = "rollball-agent-profiles";
@@ -35,6 +37,7 @@ const DEFAULT_SETTINGS: AgentProfileSettings = {
   maxIterations: 0,
   temperature: 0.7,
   systemPrompt: undefined,
+  activeTools: undefined,
 };
 
 // ── Store ──────────────────────────────────────────────────────────────
@@ -70,6 +73,7 @@ function loadProfiles(): Record<string, AgentProfileSettings> {
                 : 0,
           temperature: typeof settings.temperature === "number" ? settings.temperature : 0.7,
           systemPrompt: settings.systemPrompt,
+          activeTools: Array.isArray(settings.activeTools) ? settings.activeTools : undefined,
         };
       }
       return result;

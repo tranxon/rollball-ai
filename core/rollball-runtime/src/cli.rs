@@ -569,6 +569,7 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
             keep_full_results: config.keep_full_results,
             chunk_tx,
             tool_definitions: tool_definitions_for_session,
+            full_tool_specs: tool_specs.clone(),
             identity_context: identity_context_for_session,
             override_model,
         };
@@ -1656,11 +1657,13 @@ async fn process_gateway_recv(
                         max_iterations,
                         temperature,
                         system_prompt_override,
+                        active_tools,
                     } => {
                         tracing::info!(
                             max_output_tokens = ?max_output_tokens,
                             max_iterations = ?max_iterations,
                             temperature = ?temperature,
+                            active_tools = ?active_tools,
                             "Received RuntimeConfigUpdate from Gateway — applying to current and future sessions"
                         );
                         // Use `apply_runtime_config_override` (not raw `broadcast`)
@@ -1675,6 +1678,13 @@ async fn process_gateway_recv(
                             temperature,
                             system_prompt_override,
                         );
+                        // Hot-rebuild tool definitions when active_tools changes.
+                        // This must be called separately from apply_runtime_config_override
+                        // because tool rebuilding requires full_tool_specs which live in
+                        // SessionManagerConfig, not in the RuntimeConfigOverrides cache.
+                        if active_tools.is_some() {
+                            session_manager.apply_active_tools(active_tools);
+                        }
                         return LoopAction::Continue;
                     }
                     _ => {
