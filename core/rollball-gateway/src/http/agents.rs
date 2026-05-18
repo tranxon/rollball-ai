@@ -22,6 +22,8 @@ use crate::error::GatewayError;
 use crate::http::agent_config::{self, AgentConfigOverride, AgentConfigResponse, UpdateAgentConfigRequest};
 use crate::http::routes::{ApiError, AppState};
 use rollball_core::protocol::GatewayResponse;
+use rollball_core::protocol::{AvailableTool, AvailableToolsResponse};
+use rollball_core::AgentManifest;
 
 /// Build the agent management router
 pub fn agent_routes() -> Router<AppState> {
@@ -34,6 +36,7 @@ pub fn agent_routes() -> Router<AppState> {
         .route("/api/agents/{id}/stop", post(stop_agent))
         .route("/api/agents/{id}/model", get(get_agent_model))
         .route("/api/agents/{id}/config", get(get_agent_config).put(update_agent_config))
+        .route("/api/agents/{id}/tools", get(get_agent_tools))
 }
 
 // ── Response types ────────────────────────────────────────────────────
@@ -668,6 +671,84 @@ fn read_system_prompt(install_path: &str) -> Option<String> {
     }
 }
 
+/// Read the tool names declared in the agent's manifest.toml.
+/// Returns a Vec of tool names from the `[[tools]]` section.
+fn read_manifest_tools(install_path: &str) -> Vec<String> {
+    let manifest_path = std::path::Path::new(install_path).join("manifest.toml");
+    if !manifest_path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(&manifest_path) {
+        Ok(toml_str) => {
+            match AgentManifest::from_toml(&toml_str) {
+                Ok(manifest) => manifest.tools.iter().map(|t| t.name.clone()).collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Write updated `[[tools]]` declarations back to manifest.toml.
+///
+/// Rewrites the agent's manifest.toml with the new tool list, preserving
+/// all other sections unchanged. Uses simple line-based replacement of
+/// the `[[tools]]` block.
+fn write_manifest_tools(install_path: &str, active_tools: &[String]) {
+    let manifest_path = std::path::Path::new(install_path).join("manifest.toml");
+    let content = match std::fs::read_to_string(&manifest_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to read manifest for tools write-back: {}", e);
+            return;
+        }
+    };
+
+    // Rebuild the manifest: remove all [[tools]] lines, then append new ones
+    let mut lines: Vec<String> = Vec::new();
+    let mut skip_tools_block = false;
+    let mut changed = false;
+
+    for line in content.lines() {
+        if line.trim_start().starts_with("[[tools]]") {
+            skip_tools_block = true;
+            changed = true;
+            continue;
+        }
+        if skip_tools_block {
+            // Also skip inline table lines like `[tools.rag]`
+            if line.trim_start().starts_with('[') {
+                skip_tools_block = false;
+                lines.push(line.to_string());
+            }
+            // else: still in tools block (config sub-keys), skip
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+
+    if !changed && active_tools.is_empty() {
+        return; // No tools declared, nothing to change
+    }
+
+    // Append new [[tools]] entries
+    for tool_name in active_tools {
+        lines.push(format!("[[tools]]"));
+        lines.push(format!("name = \"{}\"", tool_name));
+    }
+
+    let new_content = lines.join("\n") + "\n";
+    if let Err(e) = std::fs::write(&manifest_path, new_content) {
+        tracing::warn!("Failed to write manifest tools: {}", e);
+    } else {
+        tracing::info!(
+            agent_install_path = %install_path,
+            tool_count = active_tools.len(),
+            "Updated manifest.toml tools section"
+        );
+    }
+}
+
 /// `GET /api/agents/{id}/config` — get agent runtime config
 ///
 /// Returns the effective config for an agent by merging per-agent overrides
@@ -704,12 +785,16 @@ pub async fn get_agent_config(
     // Read system prompt from install_path/prompts/
     let system_prompt = read_system_prompt(&info.install_path);
 
+    // Read manifest tools list
+    let manifest_active_tools = read_manifest_tools(&info.install_path);
+
     // Merge into effective config
     let effective = agent_config::get_effective_config(
         &agent_id,
         per_agent.as_ref(),
         global_max_output_tokens,
         system_prompt,
+        manifest_active_tools,
     );
 
     Ok(Json(effective))
@@ -757,6 +842,7 @@ pub async fn update_agent_config(
     // Merge update: provided values override, None means keep existing
     // Clone String fields before move so we can use them for push later
     let req_system_prompt_override = req.system_prompt_override.clone();
+    let req_active_tools = req.active_tools.clone();
     let updated = AgentConfigOverride {
         max_output_tokens: req.max_output_tokens.or(existing.max_output_tokens),
         max_iterations: req.max_iterations.or(existing.max_iterations),
@@ -764,11 +850,19 @@ pub async fn update_agent_config(
         system_prompt_override: req
             .system_prompt_override
             .or(existing.system_prompt_override),
+        active_tools: req
+            .active_tools
+            .or(existing.active_tools),
     };
 
     // Save to disk
     agent_config::save_agent_config(&data_dir, &agent_id, &updated)
         .map_err(|e| ApiError::internal(&format!("Failed to save config: {}", e)))?;
+
+    // Write back active_tools to manifest.toml if changed
+    if let Some(ref tools) = req_active_tools {
+        write_manifest_tools(&info_install_path, tools);
+    }
 
     // Push RuntimeConfigUpdate to connected agent if available
     if let Some(ref session_mgr) = state.session_mgr {
@@ -780,6 +874,7 @@ pub async fn update_agent_config(
                     max_iterations: req.max_iterations,
                     temperature: req.temperature,
                     system_prompt_override: req_system_prompt_override,
+                    active_tools: req_active_tools,
                 })
                 .await;
             if !push_result {
@@ -794,15 +889,154 @@ pub async fn update_agent_config(
     // Read system prompt for response
     let system_prompt = read_system_prompt(&info_install_path);
 
+    // Read manifest tools list
+    let manifest_active_tools = read_manifest_tools(&info_install_path);
+
     // Return updated effective config
     let effective = agent_config::get_effective_config(
         &agent_id,
         Some(&updated),
         global_max_output_tokens,
         system_prompt,
+        manifest_active_tools,
     );
 
     Ok(Json(effective))
+}
+
+/// `GET /api/agents/{id}/tools` — list available tools and current activation state.
+///
+/// Returns all built-in tools with their names, descriptions, and required
+/// permissions, plus the currently active tool names.
+pub async fn get_agent_tools(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<AvailableToolsResponse>, (StatusCode, Json<ApiError>)> {
+    let gw = state.gateway_state.read().await;
+
+    let info = gw
+        .installed_agents
+        .get(&agent_id)
+        .ok_or_else(|| ApiError::not_found(&format!("Agent not found: {}", agent_id)))?;
+
+    let data_dir = gw
+        .config
+        .as_ref()
+        .map(|c| std::path::PathBuf::from(&c.data_dir))
+        .unwrap_or_else(|| std::path::PathBuf::from("./data"));
+
+    // Get all available built-in tools with metadata
+    let available = builtin_tool_metadata();
+
+    // Determine active tools: config override > manifest
+    let per_agent = agent_config::load_agent_config(&data_dir, &agent_id).unwrap_or(None);
+    let active_tools = per_agent
+        .as_ref()
+        .and_then(|o| o.active_tools.clone())
+        .unwrap_or_else(|| read_manifest_tools(&info.install_path));
+
+    Ok(Json(AvailableToolsResponse {
+        agent_id,
+        tools: available,
+        active_tools,
+    }))
+}
+
+/// Static metadata for all built-in tools.
+/// Maps tool name to description and required permissions.
+fn builtin_tool_metadata() -> Vec<AvailableTool> {
+    vec![
+        AvailableTool {
+            name: "memory_recall".into(),
+            description: "Recall information from the agent's persistent memory".into(),
+            required_permissions: vec!["memory:read".into()],
+        },
+        AvailableTool {
+            name: "memory_store".into(),
+            description: "Store information into the agent's persistent memory".into(),
+            required_permissions: vec!["memory:write".into()],
+        },
+        AvailableTool {
+            name: "http_request".into(),
+            description: "Make HTTP requests to external APIs".into(),
+            required_permissions: vec!["network:<url>".into()],
+        },
+        AvailableTool {
+            name: "web_fetch".into(),
+            description: "Fetch and extract content from web pages".into(),
+            required_permissions: vec!["network:<url>".into()],
+        },
+        AvailableTool {
+            name: "web_search".into(),
+            description: "Search the web for information".into(),
+            required_permissions: vec!["search:web".into()],
+        },
+        AvailableTool {
+            name: "bash".into(),
+            description: "Execute commands in Git Bash (Windows)".into(),
+            required_permissions: vec!["filesystem:exec".into()],
+        },
+        AvailableTool {
+            name: "powershell".into(),
+            description: "Execute PowerShell commands (Windows)".into(),
+            required_permissions: vec!["filesystem:exec".into()],
+        },
+        AvailableTool {
+            name: "shell".into(),
+            description: "Execute shell commands (Linux/macOS)".into(),
+            required_permissions: vec!["filesystem:exec".into()],
+        },
+        AvailableTool {
+            name: "file_read".into(),
+            description: "Read file contents from the filesystem".into(),
+            required_permissions: vec!["filesystem:read:<path>".into()],
+        },
+        AvailableTool {
+            name: "file_write".into(),
+            description: "Write content to files on the filesystem".into(),
+            required_permissions: vec!["filesystem:write:<path>".into()],
+        },
+        AvailableTool {
+            name: "file_edit".into(),
+            description: "Edit existing files with search-and-replace".into(),
+            required_permissions: vec!["filesystem:write:<path>".into()],
+        },
+        AvailableTool {
+            name: "glob_search".into(),
+            description: "Search for files matching glob patterns".into(),
+            required_permissions: vec!["filesystem:read:<path>".into()],
+        },
+        AvailableTool {
+            name: "content_search".into(),
+            description: "Search file contents with regex/grep".into(),
+            required_permissions: vec!["filesystem:read:<path>".into()],
+        },
+        AvailableTool {
+            name: "intent_send".into(),
+            description: "Send an intent message to another agent".into(),
+            required_permissions: vec!["intent:send:<target>".into()],
+        },
+        AvailableTool {
+            name: "identity_store".into(),
+            description: "Store user identity information (System Agent only)".into(),
+            required_permissions: vec!["identity:write".into()],
+        },
+        AvailableTool {
+            name: "identity_query".into(),
+            description: "Query user identity fields from System Agent".into(),
+            required_permissions: vec!["identity:read".into()],
+        },
+        AvailableTool {
+            name: "identity_observe".into(),
+            description: "Subscribe to identity field changes".into(),
+            required_permissions: vec!["identity:read".into()],
+        },
+        AvailableTool {
+            name: "rag_query".into(),
+            description: "Query enterprise RAG knowledge base".into(),
+            required_permissions: vec!["rag:query".into(), "network:<rag_url>".into()],
+        },
+    ]
 }
 
 #[cfg(test)]

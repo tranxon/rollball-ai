@@ -1,8 +1,15 @@
-import { Minus, Square, X } from "lucide-react";
+import { Minus, Square, X, PanelRightOpen, PanelRightClose } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSettingsStore } from "../../stores/settingsStore";
 
-export function TitleBar() {
+interface TitleBarProps {
+  /** Whether the right panel is currently expanded */
+  panelExpanded: boolean;
+  /** Toggle the right panel */
+  onTogglePanel: () => void;
+}
+
+export function TitleBar({ panelExpanded, onTogglePanel }: TitleBarProps) {
   const { opacity, theme } = useSettingsStore();
   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   // Original gray: #E2E3E9 (light) / #292A2C (dark), modulated by opacity
@@ -47,7 +54,7 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="flex h-7 w-full items-center justify-between select-none px-3"
+      className="flex h-7 w-full items-center justify-between select-none pl-3"
       style={{
         "-webkit-app-region": "drag",
         backgroundColor: bgColor,
@@ -60,8 +67,23 @@ export function TitleBar() {
         </span>
       </div>
 
-      {/* Right: Window controls */}
+      {/* Right: Panel toggle + Window controls */}
       <div className="flex items-center gap-1">
+        {/* Right panel toggle — VS Code style, left of window controls */}
+        <button
+          className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:text-zinc-700 hover:bg-zinc-300 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-700"
+          style={{ "-webkit-app-region": "no-drag" } as React.CSSProperties}
+          onClick={onTogglePanel}
+          aria-label={panelExpanded ? "Collapse right panel" : "Expand right panel"}
+          title={panelExpanded ? "Collapse Right Panel" : "Expand Right Panel"}
+        >
+          {panelExpanded ? (
+            <PanelRightClose className="h-3.5 w-3.5" style={{ color: "var(--color-accent)" }} />
+          ) : (
+            <PanelRightOpen className="h-3.5 w-3.5" />
+          )}
+        </button>
+
         {/* Minimize */}
         <button
           className="flex h-7 w-7 items-center justify-center rounded text-zinc-600 hover:bg-zinc-300 dark:text-zinc-400 dark:hover:bg-zinc-700"

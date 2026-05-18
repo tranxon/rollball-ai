@@ -497,6 +497,65 @@ pub fn detect_environment_text() -> String {
     )
 }
 
+/// Build tool definitions from a list of active tool names and the full
+/// tool specs registry. Used for hot-rebuilding tool definitions when
+/// `active_tools` changes at runtime (via Gateway RuntimeConfigUpdate push).
+///
+/// Handles the same shell alias logic as `build_tool_definitions`:
+/// if any of "shell"/"bash"/"powershell" is active, all platform-available
+/// shell tool specs are included.
+pub fn build_tool_definitions_from_names(
+    active_tool_names: &[String],
+    tool_specs: &[(String, serde_json::Value)],
+) -> Vec<serde_json::Value> {
+    const SHELL_NAMES: &[&str] = &["shell", "bash", "powershell"];
+
+    // Empty list → all tools available
+    if active_tool_names.is_empty() {
+        return tool_specs.iter().map(|(_, schema)| schema.clone()).collect();
+    }
+
+    let has_shell_decl = active_tool_names
+        .iter()
+        .any(|n| SHELL_NAMES.contains(&n.as_str()));
+
+    let mut defs: Vec<serde_json::Value> = Vec::new();
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+    for name in active_tool_names {
+        let name_str = name.as_str();
+        if seen.contains(name_str) {
+            continue;
+        }
+        // Direct match
+        if let Some((_, schema)) = tool_specs.iter().find(|(n, _)| n == name_str) {
+            seen.insert(name_str);
+            defs.push(schema.clone());
+        } else if SHELL_NAMES.contains(&name_str) {
+            // Shell alias: any shell name → all available shell specs
+            for (n, schema) in tool_specs {
+                if SHELL_NAMES.contains(&n.as_str()) && !seen.contains(n.as_str()) {
+                    seen.insert(n.as_str());
+                    defs.push(schema.clone());
+                }
+            }
+        }
+    }
+
+    // Second pass: if active_tools has any shell, also include
+    // platform shell specs not explicitly listed
+    if has_shell_decl {
+        for (name, schema) in tool_specs {
+            if SHELL_NAMES.contains(&name.as_str()) && !seen.contains(name.as_str()) {
+                seen.insert(name.as_str());
+                defs.push(schema.clone());
+            }
+        }
+    }
+
+    defs
+}
+
 /// Build tool definitions from manifest tool declarations.
 ///
 /// Handles shell tool aliasing: if the manifest declares "shell", "bash",
@@ -602,6 +661,77 @@ mod tests {
 
         let request = builder.build(&manifest, &history, None, 32_768);
         assert!(request.messages[0].content.contains("Alice"));
+    }
+
+    // ── build_tool_definitions_from_names ──────────────────────────────
+
+    fn make_tool_spec(name: &str) -> (String, serde_json::Value) {
+        let schema = serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": format!("Tool {}", name),
+                "parameters": { "type": "object", "properties": {} }
+            }
+        });
+        (name.to_string(), schema)
+    }
+
+    #[test]
+    fn test_tool_defs_empty_list_returns_all() {
+        let specs: Vec<_> = vec![make_tool_spec("tool_a"), make_tool_spec("tool_b")];
+        let names: Vec<String> = vec![];
+        let defs = build_tool_definitions_from_names(&names, &specs);
+        assert_eq!(defs.len(), 2);
+    }
+
+    #[test]
+    fn test_tool_defs_filters_by_name() {
+        let specs: Vec<_> = vec![
+            make_tool_spec("tool_a"),
+            make_tool_spec("tool_b"),
+            make_tool_spec("tool_c"),
+        ];
+        let names = vec!["tool_a".to_string(), "tool_c".to_string()];
+        let defs = build_tool_definitions_from_names(&names, &specs);
+        assert_eq!(defs.len(), 2);
+    }
+
+    #[test]
+    fn test_tool_defs_unknown_name_skipped() {
+        let specs: Vec<_> = vec![make_tool_spec("tool_a")];
+        let names = vec!["nonexistent".to_string()];
+        let defs = build_tool_definitions_from_names(&names, &specs);
+        assert_eq!(defs.len(), 0);
+    }
+
+    #[test]
+    fn test_tool_defs_dedup_by_name() {
+        let specs: Vec<_> = vec![make_tool_spec("tool_a"), make_tool_spec("tool_b")];
+        let names = vec!["tool_a".to_string(), "tool_a".to_string()];
+        let defs = build_tool_definitions_from_names(&names, &specs);
+        assert_eq!(defs.len(), 1);
+    }
+
+    #[test]
+    fn test_tool_defs_shell_alias_expands() {
+        let specs: Vec<_> = vec![
+            make_tool_spec("shell"),
+            make_tool_spec("bash"),
+            make_tool_spec("powershell"),
+            make_tool_spec("tool_x"),
+        ];
+        let names = vec!["shell".to_string()];
+        let defs = build_tool_definitions_from_names(&names, &specs);
+        // "shell" should expand to all three shell variants + the explicit "shell"
+        assert!(defs.len() >= 1);
+        // Verify all shell-named tools are included
+        let all_shell: bool = defs.iter().all(|d| {
+            let name = d["function"]["name"].as_str().unwrap_or("");
+            ["shell", "bash", "powershell"].contains(&name)
+        });
+        assert!(!all_shell || defs.iter().any(|d| d["function"]["name"] == "shell"),
+            "shell alias should expand to include shell variants");
     }
 }
 

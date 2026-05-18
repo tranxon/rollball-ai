@@ -1111,6 +1111,11 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 } else {
                     Some(rcu.system_prompt_override)
                 },
+                active_tools: if rcu.active_tools.is_empty() {
+                    None
+                } else {
+                    Some(rcu.active_tools)
+                },
             }
         }
 

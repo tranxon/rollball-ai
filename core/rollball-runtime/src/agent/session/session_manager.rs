@@ -41,6 +41,10 @@ pub struct SessionManagerConfig {
     /// Complete tool definitions (with input_schema) for ContextBuilder.
     /// SessionTask uses these instead of building simplified ones from manifest.
     pub tool_definitions: Vec<serde_json::Value>,
+    /// Full tool specs (name, schema) for ALL registered built-in tools.
+    /// Stored so that tool definitions can be hot-rebuilt when `active_tools`
+    /// changes without requiring access to the ToolRegistry (which is behind Arc).
+    pub full_tool_specs: Vec<(String, serde_json::Value)>,
     /// Identity context string injected by Gateway for ContextBuilder.
     pub identity_context: Option<String>,
     /// Model override from Gateway (takes precedence over manifest's suggested_model)
@@ -63,6 +67,7 @@ impl Default for SessionManagerConfig {
             keep_full_results: 4,
             chunk_tx: None,
             tool_definitions: Vec::new(),
+            full_tool_specs: Vec::new(),
             identity_context: None,
             override_model: None,
         }
@@ -80,6 +85,7 @@ pub struct RuntimeConfigOverrides {
     pub max_iterations: Option<u32>,
     pub temperature: Option<f32>,
     pub system_prompt_override: Option<String>,
+    pub active_tools: Option<Vec<String>>,
 }
 
 impl RuntimeConfigOverrides {
@@ -89,6 +95,7 @@ impl RuntimeConfigOverrides {
             && self.max_iterations.is_none()
             && self.temperature.is_none()
             && self.system_prompt_override.is_none()
+            && self.active_tools.is_none()
     }
 
     /// Merge in a newer push. `Some` values replace; `None` preserves the
@@ -99,6 +106,7 @@ impl RuntimeConfigOverrides {
         max_iterations: Option<u32>,
         temperature: Option<f32>,
         system_prompt_override: Option<String>,
+        active_tools: Option<Vec<String>>,
     ) {
         if max_output_tokens.is_some() {
             self.max_output_tokens = max_output_tokens;
@@ -111,6 +119,9 @@ impl RuntimeConfigOverrides {
         }
         if system_prompt_override.is_some() {
             self.system_prompt_override = system_prompt_override;
+        }
+        if active_tools.is_some() {
+            self.active_tools = active_tools;
         }
     }
 }
@@ -253,6 +264,27 @@ impl SessionManager {
             }
         }
 
+        // Re-apply active tools override to the new session.
+        // This ensures sessions created *after* a tools config change
+        // inherit the correct tool_definitions.
+        if let Some(ref active_tools) = self.runtime_overrides.active_tools {
+            let rebuilt = crate::agent::context::build_tool_definitions_from_names(
+                active_tools,
+                &self.config.full_tool_specs,
+            );
+            tracing::info!(
+                session_id = %session_id,
+                tool_count = rebuilt.len(),
+                active_tool_names = ?active_tools,
+                "SessionManager: replaying active tools to new session"
+            );
+            if let Some(handle) = self.sessions.get(&session_id) {
+                let _ = handle.send(SessionMessage::UpdateActiveTools {
+                    tool_definitions: rebuilt,
+                });
+            }
+        }
+
         // Re-apply the cached workspace context to the new session.
         // This is separate from `runtime_overrides` because workspace
         // context is a large string (not a config override) and follows
@@ -376,12 +408,58 @@ impl SessionManager {
             max_iterations,
             temperature,
             system_prompt_override.clone(),
+            None, // active_tools handled separately via apply_active_tools
         );
         self.broadcast(SessionMessage::UpdateRuntimeConfig {
             max_output_tokens,
             max_iterations,
             temperature,
             system_prompt_override,
+        })
+    }
+
+    /// Apply active tools override from Gateway RuntimeConfigUpdate.
+    ///
+    /// This rebuilds `tool_definitions` from the full tool specs registry
+    /// (stored in `SessionManagerConfig.full_tool_specs`) filtered by the
+    /// given `active_tools` list, then broadcasts the new definitions to
+    /// all active sessions. The override is also cached so sessions created
+    /// *after* this call inherit the correct tool set.
+    ///
+    /// When `active_tools` is `None`, the override is cleared and
+    /// `tool_definitions` is NOT rebuilt (caller should send a separate
+    /// update with the full list if needed).
+    ///
+    /// Returns the list of session IDs that failed to receive the update.
+    pub fn apply_active_tools(
+        &mut self,
+        active_tools: Option<Vec<String>>,
+    ) -> Vec<String> {
+        // Cache the override (or clear it)
+        self.runtime_overrides.active_tools = active_tools.clone();
+
+        // Build the new tool definitions
+        let tool_definitions = match active_tools.as_ref() {
+            Some(names) => crate::agent::context::build_tool_definitions_from_names(
+                names,
+                &self.config.full_tool_specs,
+            ),
+            // None = "keep current" — don't rebuild, just broadcast current
+            None => return Vec::new(),
+        };
+
+        tracing::info!(
+            tool_count = tool_definitions.len(),
+            active_tool_names = ?active_tools,
+            "SessionManager: applying active tools override"
+        );
+
+        // Update the config so new sessions inherit the rebuilt definitions
+        self.config.tool_definitions = tool_definitions.clone();
+
+        // Broadcast to all active sessions
+        self.broadcast(SessionMessage::UpdateActiveTools {
+            tool_definitions,
         })
     }
 
@@ -529,5 +607,153 @@ impl SessionManager {
             tracing::debug!(session_id = %id, "Reaping finished session handle");
             self.sessions.remove(&id);
         }
+    }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::RuntimeConfig;
+    use rollball_core::providers::mock::MockProvider;
+
+    fn make_tool_spec(name: &str) -> (String, serde_json::Value) {
+        let schema = serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": format!("Tool {}", name),
+                "parameters": { "type": "object", "properties": {} }
+            }
+        });
+        (name.to_string(), schema)
+    }
+
+    // ── RuntimeConfigOverrides ─────────────────────────────────────────
+
+    #[test]
+    fn test_overrides_is_empty() {
+        let ov = RuntimeConfigOverrides::default();
+        assert!(ov.is_empty());
+    }
+
+    #[test]
+    fn test_overrides_merge_active_tools() {
+        let mut ov = RuntimeConfigOverrides::default();
+        ov.merge(None, None, None, None, Some(vec!["tool_a".into()]));
+        assert!(!ov.is_empty());
+        assert_eq!(ov.active_tools.as_deref(), Some(&["tool_a".to_string()][..]));
+
+        // Re-merge with Some replaces
+        ov.merge(None, None, None, None, Some(vec!["tool_b".into()]));
+        assert_eq!(ov.active_tools.as_deref(), Some(&["tool_b".to_string()][..]));
+
+        // None preserves
+        ov.merge(None, None, None, None, None);
+        assert_eq!(ov.active_tools.as_deref(), Some(&["tool_b".to_string()][..]));
+    }
+
+    #[test]
+    fn test_overrides_empty_vec_clears_tools() {
+        let mut ov = RuntimeConfigOverrides::default();
+        ov.merge(None, None, None, None, Some(vec!["tool_a".into()]));
+        ov.merge(None, None, None, None, Some(vec![]));
+        assert_eq!(ov.active_tools, Some(vec![]));
+    }
+
+    // ── apply_active_tools ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_apply_active_tools_with_sessions() {
+        let manifest = rollball_core::AgentManifest::from_toml(
+            r#"
+            agent_id = "com.test.tools"
+            version = "1.0.0"
+            name = "Test Agent"
+            description = "Test"
+            author = "test"
+            runtime_version = "0.1.0"
+            [llm]
+            provider = "mock"
+            model = "mock-model"
+            "#
+        ).unwrap();
+
+        let config = RuntimeConfig::default();
+        let provider = Arc::new(MockProvider::single_text("OK"));
+        let core = Arc::new(AgentCore::new(config, manifest, provider, vec![], None));
+
+        let mut mgr_config = SessionManagerConfig::default();
+        mgr_config.full_tool_specs = vec![make_tool_spec("tool_a"), make_tool_spec("tool_b")];
+
+        let mut mgr = SessionManager::new(core, mgr_config);
+
+        // Apply active_tools
+        let failed = mgr.apply_active_tools(Some(vec!["tool_a".to_string()]));
+        assert!(failed.is_empty());
+        assert_eq!(mgr.config.tool_definitions.len(), 1);
+        assert_eq!(mgr.runtime_overrides.active_tools, Some(vec!["tool_a".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn test_apply_active_tools_none_noop() {
+        let manifest = rollball_core::AgentManifest::from_toml(
+            r#"
+            agent_id = "com.test.tools"
+            version = "1.0.0"
+            name = "Test Agent"
+            description = "Test"
+            author = "test"
+            runtime_version = "0.1.0"
+            [llm]
+            provider = "mock"
+            model = "mock-model"
+            "#
+        ).unwrap();
+
+        let config = RuntimeConfig::default();
+        let provider = Arc::new(MockProvider::single_text("OK"));
+        let core = Arc::new(AgentCore::new(config, manifest, provider, vec![], None));
+
+        let mgr_config = SessionManagerConfig::default();
+        let mut mgr = SessionManager::new(core, mgr_config);
+
+        // apply_active_tools(None) should return empty and not crash
+        let failed = mgr.apply_active_tools(None);
+        assert!(failed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_apply_active_tools_broadcasts_to_sessions() {
+        let manifest = rollball_core::AgentManifest::from_toml(
+            r#"
+            agent_id = "com.test.broadcast"
+            version = "1.0.0"
+            name = "Test Agent"
+            description = "Test"
+            author = "test"
+            runtime_version = "0.1.0"
+            [llm]
+            provider = "mock"
+            model = "mock-model"
+            "#
+        ).unwrap();
+
+        let config = RuntimeConfig::default();
+        let provider = Arc::new(MockProvider::single_text("OK"));
+        let core = Arc::new(AgentCore::new(config, manifest, provider, vec![], None));
+
+        let mut mgr_config = SessionManagerConfig::default();
+        mgr_config.full_tool_specs = vec![make_tool_spec("tool_x")];
+        let mut mgr = SessionManager::new(core, mgr_config);
+
+        // Create a session first
+        let sid = mgr.create_session_with_id("s1".to_string()).await.unwrap();
+        assert_eq!(sid, "s1");
+
+        // Apply active_tools — should broadcast to s1
+        let failed = mgr.apply_active_tools(Some(vec!["tool_x".to_string()]));
+        assert!(failed.is_empty());
     }
 }

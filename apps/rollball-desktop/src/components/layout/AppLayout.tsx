@@ -10,7 +10,6 @@ import { useGatewayStore } from "../../stores/gatewayStore";
 import { useAgentStore } from "../../stores/agentStore";
 import { SettingsPage } from "../settings/SettingsPage";
 import { ToolApprovalModal } from "../tools/ToolApprovalModal";
-import { PanelRightClose } from "lucide-react";
 
 /** Settings tab type — keep in sync with SettingsPage */
 type SettingsTab = "gateway" | "providers" | "appearance" | "general" | "profile";
@@ -137,7 +136,7 @@ export function AppLayout() {
   return (
     <div className="flex h-full w-full flex-col">
       {/* Custom title bar */}
-      <TitleBar />
+      <TitleBar panelExpanded={!resultsCollapsed} onTogglePanel={toggleResults} />
 
       {/* Gateway disconnected banner */}
       {gatewayStatus !== "connected" && <GatewayBanner />}
@@ -183,16 +182,8 @@ export function AppLayout() {
             </div>
 
             {/* Results panel / Debug panel — unified tabs, collapsible, resizable */}
-            {!resultsCollapsed ? (
+            {!resultsCollapsed && (
               <ResultsPanel width={rightWidth} onCollapse={toggleResults} isDebugMode={isDebugMode} />
-            ) : (
-              <button
-                onClick={toggleResults}
-                className="flex w-8 items-center justify-center border-l border-zinc-200 bg-zinc-50 text-zinc-400 hover:text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-300"
-                aria-label="Expand right panel"
-              >
-                <PanelRightClose className="h-4 w-4" />
-              </button>
             )}
           </div>
         )}

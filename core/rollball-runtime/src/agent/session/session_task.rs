@@ -55,6 +55,11 @@ pub enum SessionMessage {
     },
     /// Update workspace context text
     UpdateWorkspaceContext { context_text: String },
+    /// Update active tools (hot-push from Gateway RuntimeConfigUpdate).
+    /// Carries the rebuilt tool_definitions JSON to replace in ContextBuilder.
+    UpdateActiveTools {
+        tool_definitions: Vec<serde_json::Value>,
+    },
     /// Update the title of the session's conversation
     UpdateSessionTitle { title: String },
     /// Interrupt signal to stop the current agent loop iteration
@@ -493,6 +498,14 @@ impl SessionTask {
                         "SessionTask: updating workspace context"
                     );
                     context_builder.set_workspace_context(context_text);
+                }
+                Some(SessionMessage::UpdateActiveTools { tool_definitions }) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        tool_count = tool_definitions.len(),
+                        "SessionTask: updating active tools"
+                    );
+                    context_builder.set_tool_definitions(tool_definitions);
                 }
                 Some(SessionMessage::UpdateSessionTitle { title }) => {
                     tracing::info!(

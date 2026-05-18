@@ -29,6 +29,10 @@ pub struct AgentConfigOverride {
     /// System prompt override (None = use manifest-compiled prompt)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt_override: Option<String>,
+    /// Active tool names (None = use manifest [[tools]] declarations).
+    /// Some(vec![]) means no tools active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tools: Option<Vec<String>>,
 }
 
 /// Effective (merged) config returned to API consumers.
@@ -47,6 +51,8 @@ pub struct AgentConfigResponse {
     /// User's system prompt override (None = use manifest default)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt_override: Option<String>,
+    /// Active tool names (from manifest + config overrides)
+    pub active_tools: Vec<String>,
 }
 
 /// PUT request body for updating agent config.
@@ -60,6 +66,8 @@ pub struct UpdateAgentConfigRequest {
     pub temperature: Option<f32>,
     #[serde(default)]
     pub system_prompt_override: Option<String>,
+    #[serde(default)]
+    pub active_tools: Option<Vec<String>>,
 }
 
 /// Default global values used as fallback when no override exists.
@@ -130,6 +138,7 @@ pub fn get_effective_config(
     per_agent: Option<&AgentConfigOverride>,
     global_max_output_tokens: u64,
     system_prompt: Option<String>,
+    manifest_active_tools: Vec<String>,
 ) -> AgentConfigResponse {
     let over = per_agent;
     AgentConfigResponse {
@@ -143,5 +152,8 @@ pub fn get_effective_config(
             .unwrap_or(DEFAULT_TEMPERATURE),
         system_prompt,
         system_prompt_override: over.and_then(|o| o.system_prompt_override.clone()),
+        active_tools: over
+            .and_then(|o| o.active_tools.clone())
+            .unwrap_or(manifest_active_tools),
     }
 }

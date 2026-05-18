@@ -97,6 +97,7 @@ fn mark_agent_running(state: &mut GatewayState, agent_id: &str) {
         started_at: chrono::Utc::now(),
         workspace: format!("/tmp/{agent_id}-workspace"),
         connected: false,
+        ready: false,
         dev_mode: false,
         debug_port: None,
     });

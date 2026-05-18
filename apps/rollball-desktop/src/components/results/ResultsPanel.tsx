@@ -5,7 +5,6 @@ import { useDebugStore } from "../../stores/debugStore";
 import type { ChatMessage } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import {
-  PanelRight,
   Bug,
   WifiOff,
   Loader,
@@ -158,7 +157,7 @@ export function ResultsPanel({ width, onCollapse, isDebugMode = false }: Results
     <div className="flex flex-col border-l border-zinc-200 bg-zinc-50 transition-[width] duration-250 ease-in-out dark:border-zinc-800 dark:bg-zinc-900" style={{ width }}>
       {/* Header with tabs */}
       <div className="border-b border-zinc-200 dark:border-zinc-800">
-        <div className="flex items-center justify-between px-3 pt-2">
+        <div className="flex items-center px-3 pt-2">
           <div className="flex gap-0">
             {isDebugMode && (
               <TabButton
@@ -201,13 +200,6 @@ export function ResultsPanel({ width, onCollapse, isDebugMode = false }: Results
               Setup
             </TabButton>
           </div>
-          <button
-            onClick={onCollapse}
-            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-            aria-label="Collapse right panel"
-          >
-            <PanelRight className="h-4 w-4" />
-          </button>
         </div>
       </div>
 

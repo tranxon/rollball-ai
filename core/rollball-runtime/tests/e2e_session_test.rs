@@ -81,6 +81,7 @@ fn make_session_config(budget: Budget) -> SessionManagerConfig {
         keep_full_results: 4,
         chunk_tx: None,
         tool_definitions: Vec::new(),
+        full_tool_specs: Vec::new(),
         identity_context: None,
         override_model: None,
     }
@@ -97,6 +98,7 @@ fn make_small_history_config() -> SessionManagerConfig {
         keep_full_results: 2,
         chunk_tx: None,
         tool_definitions: Vec::new(),
+        full_tool_specs: Vec::new(),
         identity_context: None,
         override_model: None,
     }
@@ -114,6 +116,7 @@ fn make_streaming_config(
         keep_full_results: 4,
         chunk_tx: Some(chunk_tx),
         tool_definitions: Vec::new(),
+        full_tool_specs: Vec::new(),
         identity_context: None,
         override_model: None,
     }
@@ -130,6 +133,7 @@ fn make_limited_session_config(max_sessions: usize) -> (SessionManagerConfig, us
             keep_full_results: 4,
             chunk_tx: None,
             tool_definitions: Vec::new(),
+            full_tool_specs: Vec::new(),
             identity_context: None,
             override_model: None,
         },
