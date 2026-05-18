@@ -13,6 +13,104 @@
 //! - `"rag:query"` — RAG tool query permission (Phase 4 S4.6)
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::HashMap;
+
+// ── Permission binary encoding helpers (S5.5) ────────────────────────────
+
+/// Permission type tags for compact binary encoding.
+/// Each variant gets a unique 1-byte tag for efficient IPC transport.
+#[repr(u8)]
+enum PermissionTag {
+    Network = 0,
+    FilesystemRead = 1,
+    FilesystemWrite = 2,
+    MemoryRead = 3,
+    MemoryWrite = 4,
+    IntentSend = 5,
+    IntentReceive = 6,
+    IdentityRead = 7,
+    IdentityWrite = 8,
+    Shell = 9,
+    Wasm = 10,
+    RagQuery = 11,
+}
+
+impl Permission {
+    fn tag(&self) -> u8 {
+        match self {
+            Permission::Network(_) => PermissionTag::Network as u8,
+            Permission::FilesystemRead(_) => PermissionTag::FilesystemRead as u8,
+            Permission::FilesystemWrite(_) => PermissionTag::FilesystemWrite as u8,
+            Permission::MemoryRead => PermissionTag::MemoryRead as u8,
+            Permission::MemoryWrite => PermissionTag::MemoryWrite as u8,
+            Permission::IntentSend(_) => PermissionTag::IntentSend as u8,
+            Permission::IntentReceive(_) => PermissionTag::IntentReceive as u8,
+            Permission::IdentityRead => PermissionTag::IdentityRead as u8,
+            Permission::IdentityWrite => PermissionTag::IdentityWrite as u8,
+            Permission::Shell => PermissionTag::Shell as u8,
+            Permission::Wasm => PermissionTag::Wasm as u8,
+            Permission::RagQuery(_) => PermissionTag::RagQuery as u8,
+        }
+    }
+}
+
+// ── S5.5: Compact binary encoding for Permission ─────────────────────────
+
+impl Permission {
+    /// Encode this permission into a compact binary format.
+    /// Format: [1 byte tag] [optional: 4 bytes len + UTF-8 value]
+    pub fn encode_binary(&self, buf: &mut Vec<u8>) {
+        buf.push(self.tag());
+        if let Some(val) = self.type_value() {
+            let len = val.len() as u32;
+            buf.extend_from_slice(&len.to_le_bytes());
+            buf.extend_from_slice(val.as_bytes());
+        } else {
+            buf.extend_from_slice(&0u32.to_le_bytes());
+        }
+    }
+
+    /// Decode a permission from compact binary format.
+    pub fn decode_binary(data: &[u8]) -> Result<(Self, usize), String> {
+        if data.is_empty() {
+            return Err("empty data".to_string());
+        }
+        let tag = data[0];
+        if data.len() < 5 {
+            return Err("truncated data".to_string());
+        }
+        let val_len = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+        let value = if val_len > 0 {
+            if data.len() < 5 + val_len {
+                return Err("truncated value".to_string());
+            }
+            Some(String::from_utf8(data[5..5 + val_len].to_vec())
+                .map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let consumed = 5 + val_len;
+        Ok((Permission::from_tag_simple(tag, value)?, consumed))
+    }
+
+    fn from_tag_simple(tag: u8, value: Option<String>) -> Result<Self, String> {
+        match tag {
+            0 => Ok(Permission::Network(value)),
+            1 => Ok(Permission::FilesystemRead(value)),
+            2 => Ok(Permission::FilesystemWrite(value)),
+            3 => Ok(Permission::MemoryRead),
+            4 => Ok(Permission::MemoryWrite),
+            5 => Ok(Permission::IntentSend(value)),
+            6 => Ok(Permission::IntentReceive(value)),
+            7 => Ok(Permission::IdentityRead),
+            8 => Ok(Permission::IdentityWrite),
+            9 => Ok(Permission::Shell),
+            10 => Ok(Permission::Wasm),
+            11 => Ok(Permission::RagQuery(value)),
+            _ => Err(format!("Unknown permission tag: {tag}")),
+        }
+    }
+}
 
 /// Permission types that Agents can declare in manifest
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -419,6 +517,126 @@ impl PermissionGrant {
     pub fn matches_request(&self, requested: &Permission) -> bool {
         !self.is_expired() && self.permission.matches(requested)
     }
+
+    // ── S5.5: Compact binary serialization for IPC ─────────────────────
+
+    /// Serialize this grant to compact binary bytes for IPC transport.
+    /// Format: agent_id(str) + permission(binary) + authorized_by(str)
+    ///          + granted_at(i64 LE) + expires_at(opt i64 LE) + scope(opt str)
+    pub fn to_bincode(&self) -> Result<Vec<u8>, String> {
+        let mut buf = Vec::new();
+        // agent_id
+        write_str(&mut buf, &self.agent_id);
+        // permission
+        self.permission.encode_binary(&mut buf);
+        // authorized_by
+        write_str(&mut buf, &self.authorized_by);
+        // granted_at (i64 in little-endian)
+        buf.extend_from_slice(&self.granted_at.to_le_bytes());
+        // expires_at (Option<i64>): 1 byte present + 8 bytes value
+        match self.expires_at {
+            Some(v) => {
+                buf.push(1u8);
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+            None => buf.push(0u8),
+        }
+        // scope (Option<String>)
+        match &self.scope {
+            Some(s) => {
+                buf.push(1u8);
+                write_str(&mut buf, s);
+            }
+            None => buf.push(0u8),
+        }
+        Ok(buf)
+    }
+
+    /// Deserialize a grant from compact binary bytes (IPC transport).
+    pub fn from_bincode(data: &[u8]) -> Result<Self, String> {
+        let mut pos = 0;
+        let agent_id = read_str(data, &mut pos)?;
+        let (permission, consumed) = Permission::decode_binary(&data[pos..])?;
+        pos += consumed;
+        let authorized_by = read_str(data, &mut pos)?;
+        if data.len() < pos + 8 {
+            return Err("truncated grant".to_string());
+        }
+        let granted_at = i64::from_le_bytes([
+            data[pos], data[pos+1], data[pos+2], data[pos+3],
+            data[pos+4], data[pos+5], data[pos+6], data[pos+7],
+        ]);
+        pos += 8;
+        if data.len() < pos + 1 {
+            return Err("truncated expires_at".to_string());
+        }
+        let expires_at = if data[pos] == 1 {
+            pos += 1;
+            if data.len() < pos + 8 {
+                return Err("truncated expires_at value".to_string());
+            }
+            let v = i64::from_le_bytes([
+                data[pos], data[pos+1], data[pos+2], data[pos+3],
+                data[pos+4], data[pos+5], data[pos+6], data[pos+7],
+            ]);
+            pos += 8;
+            Some(v)
+        } else {
+            pos += 1;
+            None
+        };
+        if data.len() < pos + 1 {
+            return Err("truncated scope".to_string());
+        }
+        let scope = if data[pos] == 1 {
+            pos += 1;
+            Some(read_str(data, &mut pos)?)
+        } else {
+            pos += 1; // skip scope-present byte
+            None
+        };
+        Ok(PermissionGrant {
+            agent_id,
+            permission,
+            authorized_by,
+            granted_at,
+            expires_at,
+            scope,
+        })
+    }
+
+    /// Serialize this grant to JSON (backward-compatible format).
+    pub fn to_json(&self) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(self).map_err(|e| e.to_string())
+    }
+
+    /// Deserialize a grant from JSON bytes (backward-compatible).
+    pub fn from_json(data: &[u8]) -> Result<Self, String> {
+        serde_json::from_slice(data).map_err(|e| e.to_string())
+    }
+}
+
+/// Write a length-prefixed UTF-8 string to a buffer.
+fn write_str(buf: &mut Vec<u8>, s: &str) {
+    let len = s.len() as u32;
+    buf.extend_from_slice(&len.to_le_bytes());
+    buf.extend_from_slice(s.as_bytes());
+}
+
+/// Read a length-prefixed UTF-8 string from a buffer at position.
+fn read_str(data: &[u8], pos: &mut usize) -> Result<String, String> {
+    if data.len() < *pos + 4 {
+        return Err("truncated string length".to_string());
+    }
+    let len = u32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]) as usize;
+    *pos += 4;
+    if data.len() < *pos + len {
+        return Err("truncated string body".to_string());
+    }
+    let s = String::from_utf8(data[*pos..*pos + len].to_vec())
+        .map_err(|e| e.to_string())?;
+    *pos += len;
+    Ok(s)
 }
 
 /// Policy for how a permission category should be handled by default.
@@ -456,6 +674,128 @@ impl PermissionPolicy {
             Permission::MemoryWrite => PermissionPolicy::Default,
             Permission::IntentSend(_) => PermissionPolicy::Default,
         }
+    }
+
+    /// Get the policy for a permission, optionally overridden by user config.
+    /// When `config` provides a policy for this permission's category, that
+    /// overrides the built-in default. When the configured policy is `Default`,
+    /// falls back to the built-in default.
+    pub fn for_permission_with_config(perm: &Permission, config: Option<&PermissionPolicyConfig>) -> Self {
+        if let Some(cfg) = config {
+            if let Some(policy) = cfg.get_policy(perm) {
+                if policy != PermissionPolicy::Default {
+                    return policy;
+                }
+            }
+        }
+        Self::for_permission(perm)
+    }
+}
+
+/// Runtime-configurable permission policy overrides.
+///
+/// Stores per-category policy overrides loaded from config.
+/// Categories are permission category names (e.g. "network", "filesystem", "shell").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionPolicyConfig {
+    /// Per-category policy overrides.
+    /// Key is the permission category name (e.g. "network", "shell").
+    /// Value is the policy to apply for that category.
+    #[serde(default)]
+    pub policies: HashMap<String, PermissionPolicy>,
+}
+
+impl PermissionPolicyConfig {
+    /// Create an empty policy config (all defaults).
+    pub fn new() -> Self {
+        Self {
+            policies: HashMap::new(),
+        }
+    }
+
+    /// Get the configured policy for a permission, if any.
+    /// Returns None if no override is configured for this permission's category.
+    pub fn get_policy(&self, perm: &Permission) -> Option<PermissionPolicy> {
+        self.policies.get(perm.category()).copied()
+    }
+
+    /// Set a policy override for a category.
+    pub fn set_policy(&mut self, category: &str, policy: PermissionPolicy) {
+        if policy == PermissionPolicy::Default {
+            self.policies.remove(category);
+        } else {
+            self.policies.insert(category.to_string(), policy);
+        }
+    }
+
+    /// Check if this config has any overrides.
+    pub fn is_empty(&self) -> bool {
+        self.policies.is_empty()
+    }
+}
+
+impl Default for PermissionPolicyConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Permission monitoring metrics (S5.7).
+///
+/// Tracks cache hit rates, request latency, and per-category statistics
+/// for the Gateway's permission checking system.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PermissionMetrics {
+    /// Total number of permission check requests processed
+    pub total_checks: u64,
+    /// Number of checks resolved from cache (without DB query)
+    pub cache_hits: u64,
+    /// Number of checks that required DB lookup
+    pub cache_misses: u64,
+    /// Cumulative check latency in microseconds
+    pub total_latency_us: u64,
+    /// Per-category check counts (e.g. "network" → 42)
+    #[serde(default)]
+    pub by_category: HashMap<String, u64>,
+}
+
+impl PermissionMetrics {
+    /// Create an empty metrics instance.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a permission check result.
+    pub fn record_check(&mut self, perm: &Permission, cache_hit: bool, latency_us: u64) {
+        self.total_checks += 1;
+        if cache_hit {
+            self.cache_hits += 1;
+        } else {
+            self.cache_misses += 1;
+        }
+        self.total_latency_us += latency_us;
+        *self.by_category.entry(perm.category().to_string()).or_insert(0) += 1;
+    }
+
+    /// Cache hit rate (0.0 to 1.0). Returns 0.0 if no checks recorded.
+    pub fn cache_hit_rate(&self) -> f64 {
+        if self.total_checks == 0 {
+            return 0.0;
+        }
+        self.cache_hits as f64 / self.total_checks as f64
+    }
+
+    /// Average check latency in microseconds.
+    pub fn avg_latency_us(&self) -> f64 {
+        if self.total_checks == 0 {
+            return 0.0;
+        }
+        self.total_latency_us as f64 / self.total_checks as f64
+    }
+
+    /// Reset all metrics to zero.
+    pub fn reset(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -652,6 +992,69 @@ mod tests {
         assert_eq!(PermissionPolicy::for_permission(&Permission::FilesystemWrite(None)), PermissionPolicy::Default);
     }
 
+    // ── S5.6: PermissionPolicyConfig tests ─────────────────────────────
+
+    #[test]
+    fn test_policy_config_override_category() {
+        let mut config = PermissionPolicyConfig::new();
+        assert!(config.is_empty());
+
+        // Override shell category to Deny
+        config.set_policy("shell", PermissionPolicy::Deny);
+        assert!(!config.is_empty());
+        assert_eq!(
+            config.get_policy(&Permission::Shell),
+            Some(PermissionPolicy::Deny)
+        );
+    }
+
+    #[test]
+    fn test_for_permission_with_config_respects_override() {
+        let mut config = PermissionPolicyConfig::new();
+
+        // Without override: Shell defaults to AskAlways
+        assert_eq!(
+            PermissionPolicy::for_permission_with_config(&Permission::Shell, Some(&config)),
+            PermissionPolicy::AskAlways
+        );
+
+        // With override: Shell becomes Deny
+        config.set_policy("shell", PermissionPolicy::Deny);
+        assert_eq!(
+            PermissionPolicy::for_permission_with_config(&Permission::Shell, Some(&config)),
+            PermissionPolicy::Deny
+        );
+
+        // No config: falls back to built-in default
+        assert_eq!(
+            PermissionPolicy::for_permission_with_config(&Permission::Shell, None),
+            PermissionPolicy::AskAlways
+        );
+    }
+
+    #[test]
+    fn test_policy_config_set_default_removes_override() {
+        let mut config = PermissionPolicyConfig::new();
+
+        // Set an override
+        config.set_policy("network", PermissionPolicy::Deny);
+        assert!(!config.is_empty());
+
+        // Setting to Default removes the override (hot-reload behavior)
+        config.set_policy("network", PermissionPolicy::Default);
+        assert!(config.is_empty());
+        assert_eq!(config.get_policy(&Permission::Network(None)), None);
+
+        // Now falls back to built-in
+        assert_eq!(
+            PermissionPolicy::for_permission_with_config(
+                &Permission::Network(None),
+                Some(&config)
+            ),
+            PermissionPolicy::Default
+        );
+    }
+
     // ── New Permission type tests ─────────────────────────────────────
 
     #[test]
@@ -765,5 +1168,104 @@ mod tests {
         let display = format!("{}", err);
         assert!(display.contains("foobar:baz"));
         assert!(display.contains("unknown category"));
+    }
+
+    // ── S5.7: PermissionMetrics tests ──────────────────────────────────
+
+    #[test]
+    fn test_metrics_record_and_calculate() {
+        let mut metrics = PermissionMetrics::new();
+        assert_eq!(metrics.total_checks, 0);
+        assert_eq!(metrics.cache_hit_rate(), 0.0);
+        assert_eq!(metrics.avg_latency_us(), 0.0);
+
+        // Record two cache hits, one cache miss
+        metrics.record_check(&Permission::Network(None), true, 100);
+        metrics.record_check(&Permission::MemoryRead, false, 250);
+        metrics.record_check(&Permission::Network(None), true, 50);
+
+        assert_eq!(metrics.total_checks, 3);
+        assert_eq!(metrics.cache_hits, 2);
+        assert_eq!(metrics.cache_misses, 1);
+        assert!((metrics.cache_hit_rate() - 2.0 / 3.0).abs() < 0.001);
+        assert!((metrics.avg_latency_us() - 400.0 / 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_metrics_by_category() {
+        let mut metrics = PermissionMetrics::new();
+
+        metrics.record_check(&Permission::Network(None), true, 10);
+        metrics.record_check(&Permission::Network(None), false, 20);
+        metrics.record_check(&Permission::Shell, true, 5);
+        metrics.record_check(&Permission::MemoryRead, false, 15);
+
+        assert_eq!(metrics.by_category.get("network"), Some(&2));
+        assert_eq!(metrics.by_category.get("shell"), Some(&1));
+        assert_eq!(metrics.by_category.get("memory"), Some(&1));
+        assert_eq!(metrics.by_category.len(), 3);
+    }
+
+    #[test]
+    fn test_metrics_reset() {
+        let mut metrics = PermissionMetrics::new();
+        metrics.record_check(&Permission::Shell, true, 100);
+        metrics.record_check(&Permission::Network(None), false, 200);
+
+        assert_eq!(metrics.total_checks, 2);
+
+        metrics.reset();
+        assert_eq!(metrics.total_checks, 0);
+        assert_eq!(metrics.cache_hits, 0);
+        assert_eq!(metrics.cache_misses, 0);
+        assert_eq!(metrics.total_latency_us, 0);
+        assert!(metrics.by_category.is_empty());
+    }
+
+    // ── S5.5: Bincode serialization tests ───────────────────────────────
+
+    #[test]
+    fn test_permission_grant_bincode_roundtrip() {
+        let grant = PermissionGrant::new(
+            "com.example.weather",
+            Permission::Network(Some("https://api.weather.com".into())),
+            "user",
+        );
+        let bin = grant.to_bincode().unwrap();
+        let decoded = PermissionGrant::from_bincode(&bin).unwrap();
+        assert_eq!(grant, decoded);
+    }
+
+    #[test]
+    fn test_permission_grant_bincode_smaller_than_json() {
+        let grant = PermissionGrant::new(
+            "com.example.weather",
+            Permission::Network(Some("https://api.weather.com".into())),
+            "user",
+        );
+        let bin = grant.to_bincode().unwrap();
+        let json = grant.to_json().unwrap();
+        // Bincode should be more compact than JSON for structured data
+        assert!(bin.len() <= json.len(),
+            "bincode size {} > json size {}", bin.len(), json.len());
+    }
+
+    #[test]
+    fn test_permission_grant_json_backward_compat() {
+        let grant = PermissionGrant::with_expiry(
+            "com.example.agent",
+            Permission::Shell,
+            "admin",
+            1700000000000,
+        );
+        // JSON roundtrip still works (backward compatibility)
+        let json = grant.to_json().unwrap();
+        let decoded = PermissionGrant::from_json(&json).unwrap();
+        assert_eq!(grant, decoded);
+        
+        // Bincode also works for the same grant
+        let bin = grant.to_bincode().unwrap();
+        let decoded_bin = PermissionGrant::from_bincode(&bin).unwrap();
+        assert_eq!(grant, decoded_bin);
     }
 }

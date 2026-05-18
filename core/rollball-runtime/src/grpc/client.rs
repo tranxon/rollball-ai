@@ -859,6 +859,11 @@ impl GatewayGrpcClient {
             schedule: schedule.to_string(),
             action: action.to_string(),
             params,
+            timezone: None,
+            retry_count: 0,
+            retry_interval_secs: 60,
+            max_runs: None,
+            expires_at: None,
         };
 
         let resp = self.send_gateway_request(request).await?;

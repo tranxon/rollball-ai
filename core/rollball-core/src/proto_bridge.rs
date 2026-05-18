@@ -263,6 +263,12 @@ impl From<proto::CronEntryInfo> for protocol::CronEntryInfo {
             schedule: c.schedule,
             action: c.action,
             params: serde_json::from_str(&c.params_json).unwrap_or(serde_json::Value::Null),
+            timezone: None,
+            retry_count: 0,
+            retry_interval_secs: 60,
+            max_runs: None,
+            run_count: 0,
+            expires_at: None,
         }
     }
 }
@@ -413,6 +419,7 @@ impl GatewayRequestToProto for protocol::GatewayRequest {
                 schedule,
                 action,
                 params,
+                ..
             } => {
                 Some(proto::client_message::Payload::CronRegister(
                     proto::CronRegisterRequest {

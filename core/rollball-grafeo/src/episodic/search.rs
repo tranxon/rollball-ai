@@ -23,27 +23,29 @@ impl GrafeoStore {
         let start_us = start.timestamp_micros();
         let end_us = end.timestamp_micros();
 
-        let session = self.db.session();
-        let gql = format!(
-            "MATCH (e:Episodic) RETURN e ORDER BY e.timestamp DESC LIMIT {}",
-            limit * 10
-        );
-        let result = session.execute(&gql)?;
+        let graph = self.db.graph_store();
+        let node_ids = graph.nodes_by_label(labels::EPISODIC);
 
         let mut episodes = Vec::new();
-        for row in result.rows() {
-            if let Some(Value::Map(map)) = row.first() {
-                if let Ok(ep) = crate::episodic::value_to_episode(&Value::Map(map.clone())) {
+        for node_id in node_ids {
+            if let Some(node) = self.db.get_node(node_id) {
+                let props: Vec<(String, Value)> = node
+                    .properties_as_btree()
+                    .into_iter()
+                    .map(|(k, v)| (k.as_str().to_string(), v))
+                    .collect();
+                if let Ok(ep) = Episode::from_properties(node_id, &props) {
                     let ts_us = ep.timestamp.timestamp_micros();
                     if ts_us >= start_us && ts_us <= end_us {
                         episodes.push(ep);
-                        if episodes.len() >= limit {
-                            break;
-                        }
                     }
                 }
             }
         }
+        // Already sorted by the order nodes_by_label returns, but ensure
+        // timestamp ordering anyway
+        episodes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        episodes.truncate(limit);
         Ok(episodes)
     }
 
@@ -52,30 +54,37 @@ impl GrafeoStore {
     /// Returns up to `limit` episodes with the given `session_id`,
     /// ordered by timestamp descending.
     ///
-    /// S5.3: Uses parameterized query (`$sid`) instead of string
-    /// interpolation to prevent GQL injection.
+    /// S5.3: Uses `graph_store().nodes_by_label()` + in-memory filtering
+    /// instead of raw GQL string interpolation to prevent GQL injection.
+    /// The underlying GrafeoDB engine's GQL query for labels does not
+    /// reliably work in in-memory mode, so we use the graph store API.
     pub fn search_episodes_by_session(
         &self,
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<Episode>> {
-        let session = self.db.session();
-        let gql = format!(
-            "MATCH (e:Episodic) WHERE e.session_id = $sid RETURN e ORDER BY e.timestamp DESC LIMIT {}",
-            limit
-        );
-        let mut params = std::collections::HashMap::new();
-        params.insert("sid".to_string(), grafeo_common::types::Value::from(session_id));
-        let result = session.execute_with_params(&gql, params)?;
+        let graph = self.db.graph_store();
+        let node_ids = graph.nodes_by_label(labels::EPISODIC);
 
         let mut episodes = Vec::new();
-        for row in result.rows() {
-            if let Some(Value::Map(map)) = row.first() {
-                if let Ok(ep) = crate::episodic::value_to_episode(&Value::Map(map.clone())) {
-                    episodes.push(ep);
+        for node_id in node_ids {
+            if let Some(node) = self.db.get_node(node_id) {
+                let props: Vec<(String, Value)> = node
+                    .properties_as_btree()
+                    .into_iter()
+                    .map(|(k, v)| (k.as_str().to_string(), v))
+                    .collect();
+                if let Ok(ep) = Episode::from_properties(node_id, &props) {
+                    if ep.session_id == session_id {
+                        episodes.push(ep);
+                    }
                 }
             }
         }
+
+        // Sort by timestamp descending and apply limit
+        episodes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        episodes.truncate(limit);
         Ok(episodes)
     }
 

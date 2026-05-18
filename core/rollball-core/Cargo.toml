@@ -10,6 +10,7 @@ description = "Shared types, protocols, and traits for Rollball.AI"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+bincode.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 chrono.workspace = true

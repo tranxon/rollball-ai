@@ -1,6 +1,7 @@
 //! Gateway global state
 
 use std::collections::HashMap;
+use std::sync::RwLock;
 use crate::vault::VaultFacade;
 use crate::budget::tracker::BudgetTracker;
 use crate::rate::bucket::RateLimiter;
@@ -8,6 +9,7 @@ use crate::capability::registry::CapabilityRegistry;
 use crate::cron::CronScheduler;
 use crate::cron::store::CronStore;
 use crate::permission_store::PermissionStore;
+use rollball_core::permission::{PermissionMetrics, PermissionPolicyConfig};
 
 /// Information about an installed agent
 #[derive(Debug, Clone)]
@@ -67,6 +69,12 @@ pub struct GatewayState {
     /// Shared models.dev cache (set during Gateway::run before IPC/HTTP start).
     /// Allows IPC server to look up model capabilities with cache freshness.
     pub(crate) models_cache: Option<crate::http::models_api::ModelsCache>,
+    /// Runtime-configurable permission policy overrides (S5.6).
+    /// Shared between HTTP API and permission checker.
+    pub permission_policy_config: std::sync::Arc<RwLock<PermissionPolicyConfig>>,
+    /// Permission monitoring metrics (S5.7).
+    /// Tracks cache hit rate, request latency, per-category stats.
+    pub permission_metrics: std::sync::Arc<RwLock<PermissionMetrics>>,
 }
 
 impl GatewayState {
@@ -85,6 +93,8 @@ impl GatewayState {
             config: None,
             ipc_sessions: None,
             models_cache: None,
+            permission_policy_config: std::sync::Arc::new(RwLock::new(PermissionPolicyConfig::new())),
+            permission_metrics: std::sync::Arc::new(RwLock::new(PermissionMetrics::new())),
         }
     }
 

@@ -133,6 +133,12 @@ pub fn install_package(
                                 schedule: schedule.clone(),
                                 action: action.to_string(),
                                 params: serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string()),
+                                timezone: None,
+                                retry_count: 0,
+                                retry_interval_secs: 60,
+                                max_runs: None,
+                                run_count: 0,
+                                expires_at: None,
                             };
                             if let Err(e) = store.insert(&entry) {
                                 tracing::warn!("Failed to persist cron entry {}: {}", cron_id, e);
