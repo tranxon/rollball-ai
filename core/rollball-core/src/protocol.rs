@@ -212,7 +212,7 @@ pub enum GatewayRequest {
         /// Optional agent ID filter (None = all agents)
         agent_id: Option<String>,
     },
-    /// Register a cron entry (S3.4)
+    /// Register a cron entry (S3.4, S5.8 enhanced)
     CronRegister {
         /// Agent ID that owns this cron entry
         agent_id: String,
@@ -222,6 +222,21 @@ pub enum GatewayRequest {
         action: String,
         /// Params to include in the IntentReceived
         params: Value,
+        /// Timezone for schedule interpretation (None = UTC, Some("local") = system local)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timezone: Option<String>,
+        /// Max retry count on failure (0 = no retry, default 0)
+        #[serde(default)]
+        retry_count: u32,
+        /// Retry backoff interval in seconds (default 60)
+        #[serde(default = "default_retry_interval")]
+        retry_interval_secs: u64,
+        /// Max total executions (None = unlimited)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_runs: Option<u32>,
+        /// Expiry timestamp in Unix millis (None = never expires)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at: Option<i64>,
     },
     /// Unregister a cron entry (S3.4)
     CronUnregister {
@@ -630,7 +645,7 @@ pub struct ConversationEntryDto {
     pub metadata: Option<serde_json::Value>,
 }
 
-/// Cron entry info (for IPC responses)
+/// Cron entry info (for IPC responses, S5.8 enhanced)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronEntryInfo {
     /// Unique ID for this cron entry
@@ -643,6 +658,29 @@ pub struct CronEntryInfo {
     pub action: String,
     /// Params for the IntentReceived
     pub params: Value,
+    /// Timezone for schedule interpretation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    /// Max retry count on failure
+    #[serde(default)]
+    pub retry_count: u32,
+    /// Retry backoff interval in seconds
+    #[serde(default = "default_retry_interval")]
+    pub retry_interval_secs: u64,
+    /// Max total executions (None = unlimited)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_runs: Option<u32>,
+    /// Current execution count
+    #[serde(default)]
+    pub run_count: u32,
+    /// Expiry timestamp in Unix millis
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+}
+
+/// Default retry interval: 60 seconds
+fn default_retry_interval() -> u64 {
+    60
 }
 
 

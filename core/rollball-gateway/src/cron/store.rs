@@ -12,9 +12,9 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection};
 
 /// Current schema version
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
-/// Persistent cron entry stored in the database
+/// Persistent cron entry stored in the database (S5.8 enhanced)
 #[derive(Debug, Clone)]
 pub struct StoredCronEntry {
     /// Unique ID for this cron entry
@@ -27,6 +27,39 @@ pub struct StoredCronEntry {
     pub action: String,
     /// Params to include in the IntentReceived (JSON)
     pub params: String,
+    /// Timezone for schedule interpretation (None = UTC)
+    pub timezone: Option<String>,
+    /// Max retry count on failure (0 = no retry)
+    pub retry_count: u32,
+    /// Retry backoff interval in seconds
+    pub retry_interval_secs: u64,
+    /// Max total executions (None = unlimited)
+    pub max_runs: Option<u32>,
+    /// Current execution count
+    pub run_count: u32,
+    /// Expiry timestamp in Unix millis (None = never expires)
+    pub expires_at: Option<i64>,
+}
+
+impl StoredCronEntry {
+    /// Create a simple StoredCronEntry with defaults for optional S5.8 fields.
+    /// timezone=None, retry_count=0, retry_interval_secs=60,
+    /// max_runs=None, run_count=0, expires_at=None.
+    pub fn simple(id: &str, agent_id: &str, schedule: &str, action: &str, params: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            agent_id: agent_id.to_string(),
+            schedule: schedule.to_string(),
+            action: action.to_string(),
+            params: params.to_string(),
+            timezone: None,
+            retry_count: 0,
+            retry_interval_secs: 60,
+            max_runs: None,
+            run_count: 0,
+            expires_at: None,
+        }
+    }
 }
 
 /// Error type for CronStore operations
@@ -105,7 +138,7 @@ impl CronStore {
 
         match current_version {
             None => {
-                // Fresh database — create v1 schema
+                // Fresh database — create v2 schema with S5.8 enhanced columns
                 conn.execute_batch(
                     "CREATE TABLE cron_entries (
                         id          TEXT PRIMARY KEY,
@@ -113,11 +146,17 @@ impl CronStore {
                         schedule    TEXT NOT NULL,
                         action      TEXT NOT NULL,
                         params      TEXT NOT NULL DEFAULT '{}',
-                        created_at  INTEGER NOT NULL
+                        created_at  INTEGER NOT NULL,
+                        timezone    TEXT,
+                        retry_count INTEGER NOT NULL DEFAULT 0,
+                        retry_interval_secs INTEGER NOT NULL DEFAULT 60,
+                        max_runs    INTEGER,
+                        run_count   INTEGER NOT NULL DEFAULT 0,
+                        expires_at  INTEGER
                     );
                     CREATE INDEX idx_cron_agent ON cron_entries(agent_id);
 
-                    INSERT INTO schema_version (version) VALUES (1);"
+                    INSERT INTO schema_version (version) VALUES (2);"
                 )?;
             }
             Some(v) if v < SCHEMA_VERSION => {
@@ -134,11 +173,21 @@ impl CronStore {
 
     fn run_migrations(
         &self,
-        _conn: &Connection,
+        conn: &Connection,
         from: u32,
     ) -> Result<(), CronStoreError> {
-        // Future migrations go here
-        let _ = from;
+        // Migration v1→v2: Add S5.8 enhanced columns
+        if from < 2 {
+            conn.execute_batch(
+                "ALTER TABLE cron_entries ADD COLUMN timezone TEXT;
+                 ALTER TABLE cron_entries ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE cron_entries ADD COLUMN retry_interval_secs INTEGER NOT NULL DEFAULT 60;
+                 ALTER TABLE cron_entries ADD COLUMN max_runs INTEGER;
+                 ALTER TABLE cron_entries ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE cron_entries ADD COLUMN expires_at INTEGER;
+                 UPDATE schema_version SET version = 2;"
+            )?;
+        }
         Ok(())
     }
 
@@ -147,9 +196,14 @@ impl CronStore {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
-            "INSERT INTO cron_entries (id, agent_id, schedule, action, params, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![entry.id, entry.agent_id, entry.schedule, entry.action, entry.params, now],
+            "INSERT INTO cron_entries (id, agent_id, schedule, action, params,
+             timezone, retry_count, retry_interval_secs, max_runs, run_count, expires_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                entry.id, entry.agent_id, entry.schedule, entry.action, entry.params,
+                entry.timezone, entry.retry_count, entry.retry_interval_secs,
+                entry.max_runs, entry.run_count, entry.expires_at, now,
+            ],
         )?;
         Ok(())
     }
@@ -178,7 +232,9 @@ impl CronStore {
     pub fn list_by_agent(&self, agent_id: &str) -> Result<Vec<StoredCronEntry>, CronStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, agent_id, schedule, action, params FROM cron_entries WHERE agent_id = ?1"
+            "SELECT id, agent_id, schedule, action, params,
+                    timezone, retry_count, retry_interval_secs, max_runs, run_count, expires_at
+             FROM cron_entries WHERE agent_id = ?1"
         )?;
         let entries = stmt.query_map(params![agent_id], |row| {
             Ok(StoredCronEntry {
@@ -187,6 +243,12 @@ impl CronStore {
                 schedule: row.get(2)?,
                 action: row.get(3)?,
                 params: row.get(4)?,
+                timezone: row.get(5)?,
+                retry_count: row.get(6)?,
+                retry_interval_secs: row.get(7)?,
+                max_runs: row.get(8)?,
+                run_count: row.get(9)?,
+                expires_at: row.get(10)?,
             })
         })?.filter_map(|e| e.ok()).collect();
         Ok(entries)
@@ -196,7 +258,9 @@ impl CronStore {
     pub fn list_all(&self) -> Result<Vec<StoredCronEntry>, CronStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, agent_id, schedule, action, params FROM cron_entries"
+            "SELECT id, agent_id, schedule, action, params,
+                    timezone, retry_count, retry_interval_secs, max_runs, run_count, expires_at
+             FROM cron_entries"
         )?;
         let entries = stmt.query_map([], |row| {
             Ok(StoredCronEntry {
@@ -205,6 +269,12 @@ impl CronStore {
                 schedule: row.get(2)?,
                 action: row.get(3)?,
                 params: row.get(4)?,
+                timezone: row.get(5)?,
+                retry_count: row.get(6)?,
+                retry_interval_secs: row.get(7)?,
+                max_runs: row.get(8)?,
+                run_count: row.get(9)?,
+                expires_at: row.get(10)?,
             })
         })?.filter_map(|e| e.ok()).collect();
         Ok(entries)
@@ -214,7 +284,9 @@ impl CronStore {
     pub fn get(&self, cron_id: &str) -> Result<Option<StoredCronEntry>, CronStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, agent_id, schedule, action, params FROM cron_entries WHERE id = ?1"
+            "SELECT id, agent_id, schedule, action, params,
+                    timezone, retry_count, retry_interval_secs, max_runs, run_count, expires_at
+             FROM cron_entries WHERE id = ?1"
         )?;
         let result = stmt.query_row(params![cron_id], |row| {
             Ok(StoredCronEntry {
@@ -223,6 +295,12 @@ impl CronStore {
                 schedule: row.get(2)?,
                 action: row.get(3)?,
                 params: row.get(4)?,
+                timezone: row.get(5)?,
+                retry_count: row.get(6)?,
+                retry_interval_secs: row.get(7)?,
+                max_runs: row.get(8)?,
+                run_count: row.get(9)?,
+                expires_at: row.get(10)?,
             })
         }).ok();
         Ok(result)
@@ -240,16 +318,14 @@ mod tests {
         assert!(entries.is_empty());
     }
 
+    fn make_entry(id: &str, agent_id: &str, schedule: &str, action: &str, params: &str) -> StoredCronEntry {
+        StoredCronEntry::simple(id, agent_id, schedule, action, params)
+    }
+
     #[test]
     fn test_cron_store_insert_and_list() {
         let store = CronStore::open_in_memory().unwrap();
-        let entry = StoredCronEntry {
-            id: "cron-1".to_string(),
-            agent_id: "com.example.weather".to_string(),
-            schedule: "0 * * * *".to_string(),
-            action: "hourly_check".to_string(),
-            params: "{}".to_string(),
-        };
+        let entry = make_entry("cron-1", "com.example.weather", "0 * * * *", "hourly_check", "{}");
         store.insert(&entry).unwrap();
 
         let entries = store.list_by_agent("com.example.weather").unwrap();
@@ -261,13 +337,7 @@ mod tests {
     #[test]
     fn test_cron_store_delete() {
         let store = CronStore::open_in_memory().unwrap();
-        let entry = StoredCronEntry {
-            id: "cron-2".to_string(),
-            agent_id: "com.example.weather".to_string(),
-            schedule: "0 9 * * *".to_string(),
-            action: "morning_report".to_string(),
-            params: "{}".to_string(),
-        };
+        let entry = make_entry("cron-2", "com.example.weather", "0 9 * * *", "morning_report", "{}");
         store.insert(&entry).unwrap();
         assert!(store.delete("cron-2").unwrap());
         assert!(!store.delete("cron-2").unwrap()); // Already deleted
@@ -277,22 +347,16 @@ mod tests {
     fn test_cron_store_delete_by_agent() {
         let store = CronStore::open_in_memory().unwrap();
         for i in 1..=3 {
-            let entry = StoredCronEntry {
-                id: format!("cron-{}", i),
-                agent_id: "com.example.weather".to_string(),
-                schedule: "0 * * * *".to_string(),
-                action: format!("task-{}", i),
-                params: "{}".to_string(),
-            };
+            let entry = make_entry(
+                &format!("cron-{}", i),
+                "com.example.weather",
+                "0 * * * *",
+                &format!("task-{}", i),
+                "{}",
+            );
             store.insert(&entry).unwrap();
         }
-        let entry = StoredCronEntry {
-            id: "cron-4".to_string(),
-            agent_id: "com.example.calendar".to_string(),
-            schedule: "0 0 * * *".to_string(),
-            action: "daily".to_string(),
-            params: "{}".to_string(),
-        };
+        let entry = make_entry("cron-4", "com.example.calendar", "0 0 * * *", "daily", "{}");
         store.insert(&entry).unwrap();
 
         let count = store.delete_by_agent("com.example.weather").unwrap();
@@ -306,13 +370,7 @@ mod tests {
     #[test]
     fn test_cron_store_get() {
         let store = CronStore::open_in_memory().unwrap();
-        let entry = StoredCronEntry {
-            id: "cron-10".to_string(),
-            agent_id: "com.example.test".to_string(),
-            schedule: "*/15 * * * *".to_string(),
-            action: "health_check".to_string(),
-            params: r#"{"type":"ping"}"#.to_string(),
-        };
+        let entry = make_entry("cron-10", "com.example.test", "*/15 * * * *", "health_check", r#"{"type":"ping"}"#);
         store.insert(&entry).unwrap();
 
         let got = store.get("cron-10").unwrap().unwrap();
@@ -326,13 +384,13 @@ mod tests {
     fn test_cron_store_list_all() {
         let store = CronStore::open_in_memory().unwrap();
         for i in 1..=5 {
-            let entry = StoredCronEntry {
-                id: format!("cron-{}", i),
-                agent_id: format!("com.example.agent{}", i % 2),
-                schedule: "0 * * * *".to_string(),
-                action: format!("task-{}", i),
-                params: "{}".to_string(),
-            };
+            let entry = make_entry(
+                &format!("cron-{}", i),
+                &format!("com.example.agent{}", i % 2),
+                "0 * * * *",
+                &format!("task-{}", i),
+                "{}",
+            );
             store.insert(&entry).unwrap();
         }
         let all = store.list_all().unwrap();

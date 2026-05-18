@@ -145,6 +145,12 @@ pub async fn add_cron(
                 schedule: body.schedule.clone(),
                 action: body.action.clone(),
                 params: serde_json::to_string(&body.params).unwrap_or_else(|_| "{}".to_string()),
+                timezone: None,
+                retry_count: 0,
+                retry_interval_secs: 60,
+                max_runs: None,
+                run_count: 0,
+                expires_at: None,
             };
             tokio::task::spawn_blocking(move || {
                 if let Err(e) = store.insert(&entry) {

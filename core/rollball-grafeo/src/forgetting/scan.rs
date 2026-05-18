@@ -2,6 +2,23 @@
 //!
 //! Implements periodic scans that evaluate memory nodes against the decay
 //! formula and transition them between lifecycle states.
+//!
+//! ## Design Decision: Background Scan vs On-Demand
+//!
+//! The original PRD (MEM-04) specified on-demand decay calculation at query
+//! time. During implementation, a background scanning approach was chosen
+//! instead for the following reasons:
+//!
+//! 1. **Non-blocking reads**: Decay calculation is decoupled from retrieval
+//!    paths, so queries never wait for score computation.
+//! 2. **Proactive lifecycle management**: Nodes naturally progress through
+//!    Active → Dormant → Purged states without requiring user interaction.
+//! 3. **Configurable scheduling**: Scans are triggered by the Gateway Cron
+//!    system, allowing operators to control scan frequency.
+//! 4. **Batch efficiency**: Scanning by label allows efficient batch
+//!    processing, amortizing the cost across many nodes.
+//!
+//! The PRD has been updated (v1.2) to reflect this implementation choice.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -350,5 +367,76 @@ mod tests {
             .as_int64()
             .unwrap();
         assert_eq!(access_count, 1);
+    }
+
+    // =====================================================================
+    // S5.4: Forgetting lifecycle coordination — scan skips Dormant nodes
+    // =====================================================================
+
+    #[test]
+    fn test_decay_scan_skips_already_dormant() {
+        let store = test_store();
+        let config = DecayConfig::default();
+
+        // Create a node and manually transition it to Dormant.
+        let n1 = create_test_node(&store, labels::KNOWLEDGE, 0.2, 24.0 * 60.0, 0);
+        store.transition_to_dormant(n1).unwrap();
+
+        // Create another old, low-importance node that is still Active.
+        let n2 = create_test_node(&store, labels::KNOWLEDGE, 0.2, 24.0 * 60.0, 0);
+
+        // Run scan — should only transition n2 (Active → Dormant), skip n1 (already Dormant).
+        let count = store.run_decay_scan(&config).unwrap();
+        assert_eq!(count, 1);
+
+        // n1 should still be Dormant (not double-processed).
+        let node = store.db.get_node(n1).unwrap();
+        let status = node.properties.get(&"status".into()).unwrap().as_str().unwrap();
+        assert_eq!(status, "Dormant");
+
+        // n2 should now be Dormant.
+        let node = store.db.get_node(n2).unwrap();
+        let status = node.properties.get(&"status".into()).unwrap().as_str().unwrap();
+        assert_eq!(status, "Dormant");
+    }
+
+    // =====================================================================
+    // S5.4: Forgetting conflict — reactivate during dormancy window
+    // =====================================================================
+
+    #[test]
+    fn test_reactivate_resets_dormant_timer() {
+        let store = test_store();
+
+        // Create a node that would go Dormant.
+        let node_id = create_test_node(&store, labels::KNOWLEDGE, 0.4, 24.0 * 100.0, 0);
+
+        let config = DecayConfig::default();
+        let count = store.run_decay_scan(&config).unwrap();
+        assert_eq!(count, 1);
+
+        // Verify it's Dormant.
+        let node = store.db.get_node(node_id).unwrap();
+        let status = node.properties.get(&"status".into()).unwrap().as_str().unwrap();
+        assert_eq!(status, "Dormant");
+
+        // Reactivate (simulates user accessing a "forgotten" memory).
+        store.reactivate_node(node_id).unwrap();
+
+        // Verify it's back to Active and dormant_since is cleared.
+        let node = store.db.get_node(node_id).unwrap();
+        let status = node.properties.get(&"status".into()).unwrap().as_str().unwrap();
+        assert_eq!(status, "Active");
+        assert!(
+            node.properties
+                .get(&"dormant_since".into())
+                .map_or(true, |v| v == &Value::Null),
+            "dormant_since should be cleared after reactivation"
+        );
+
+        // Run scan again — the node should now stay Active because access_count
+        // was incremented, boosting its activity signal.
+        let count = store.run_decay_scan(&config).unwrap();
+        assert_eq!(count, 0, "reactivated node should not be re-dormanted immediately");
     }
 }

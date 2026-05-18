@@ -1,9 +1,12 @@
-//! Permission management HTTP API handlers (S2.5)
+//! Permission management HTTP API handlers (S2.5, S5.6, S5.7)
 //!
 //! Implements the Permission CRUD endpoints:
 //! - GET    /api/agents/:id/permissions           — list granted permissions
 //! - POST   /api/agents/:id/permissions/:perm/grant — grant a permission
 //! - DELETE /api/agents/:id/permissions/:perm       — revoke a permission
+//! - GET    /api/status/permissions/policy          — get permission policy config (S5.6)
+//! - PUT    /api/status/permissions/policy          — update permission policy config (S5.6)
+//! - GET    /api/status/permissions                 — permission monitoring stats (S5.7)
 
 use axum::{
     extract::{Path, State},
@@ -16,15 +19,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::http::routes::{ApiError, AppState};
 use crate::permission_store::PermissionStore;
-use rollball_core::permission::{Permission, PermissionGrant};
+use rollball_core::permission::{Permission, PermissionGrant, PermissionPolicy};
 
-/// Build the permission management router
+/// Build the permission management router (including status endpoints)
 pub fn permission_routes() -> Router<AppState> {
     Router::new()
         .route("/api/agents/{id}/permissions", get(list_permissions))
         .route("/api/agents/{id}/permissions/{perm}/grant", post(grant_permission))
         .route("/api/agents/{id}/permissions/{perm}", delete(revoke_permission))
         .route("/api/agents/{id}/permissions/approve", post(approve_permission_request))
+        // S5.6: Permission policy runtime config
+        .route("/api/status/permissions/policy", get(get_policy).put(update_policy))
+        // S5.7: Permission monitoring stats
+        .route("/api/status/permissions", get(permission_status))
 }
 
 // ── Response types ────────────────────────────────────────────────────
@@ -289,6 +296,125 @@ pub async fn approve_permission_request(
         }
         _ => unreachable!(), // Already validated above
     }
+}
+
+// ── S5.6: Permission policy config handlers ────────────────────────────
+
+/// Response for policy config query
+#[derive(Serialize)]
+pub struct PolicyConfigResponse {
+    /// Per-category policy overrides
+    pub policies: std::collections::HashMap<String, String>,
+}
+
+/// `GET /api/status/permissions/policy` — get current permission policy config
+pub async fn get_policy(
+    State(state): State<AppState>,
+) -> Result<Json<PolicyConfigResponse>, (StatusCode, Json<ApiError>)> {
+    let gw = state.gateway_state.read().await;
+    let config = gw.permission_policy_config.read().unwrap();
+    let policies: std::collections::HashMap<String, String> = config
+        .policies
+        .iter()
+        .map(|(k, v)| (k.clone(), format!("{:?}", v)))
+        .collect();
+    Ok(Json(PolicyConfigResponse { policies }))
+}
+
+/// Request body for updating permission policy
+#[derive(Deserialize)]
+pub struct UpdatePolicyRequest {
+    /// Category name (e.g. "network", "shell")
+    pub category: String,
+    /// Policy to apply: "allow", "deny", "ask_always", or "default"
+    pub policy: String,
+}
+
+/// `PUT /api/status/permissions/policy` — update permission policy config
+pub async fn update_policy(
+    State(state): State<AppState>,
+    Json(body): Json<UpdatePolicyRequest>,
+) -> Result<Json<MessageResponse>, (StatusCode, Json<ApiError>)> {
+    let policy = match body.policy.as_str() {
+        "allow" => PermissionPolicy::Allow,
+        "deny" => PermissionPolicy::Deny,
+        "ask_always" => PermissionPolicy::AskAlways,
+        "default" => PermissionPolicy::Default,
+        other => {
+            return Err(ApiError::bad_request(&format!(
+                "Invalid policy '{}'. Expected one of: allow, deny, ask_always, default",
+                other
+            )));
+        }
+    };
+
+    let gw = state.gateway_state.read().await;
+    let mut config = gw.permission_policy_config.write().unwrap();
+    config.set_policy(&body.category, policy);
+
+    tracing::info!(
+        "Permission policy updated: category={}, policy={:?}",
+        body.category, policy
+    );
+
+    Ok(Json(MessageResponse {
+        message: format!(
+            "Policy for '{}' set to '{:?}'",
+            body.category, policy
+        ),
+    }))
+}
+
+// ── S5.7: Permission monitoring status handler ──────────────────────────
+
+/// Response for permission status
+#[derive(Serialize)]
+pub struct PermissionStatusResponse {
+    /// Total number of permission grants in store
+    pub total_grants: usize,
+    /// Number of configured policy overrides
+    pub policy_overrides: usize,
+    /// Whether the permission store is healthy
+    pub store_healthy: bool,
+    /// Cache hit rate (0.0 to 1.0)
+    pub cache_hit_rate: f64,
+    /// Average check latency in microseconds
+    pub avg_latency_us: f64,
+    /// Total number of checks performed
+    pub total_checks: u64,
+    /// Per-category check counts
+    pub by_category: std::collections::HashMap<String, u64>,
+}
+
+/// `GET /api/status/permissions` — get permission monitoring stats
+pub async fn permission_status(
+    State(state): State<AppState>,
+) -> Result<Json<PermissionStatusResponse>, (StatusCode, Json<ApiError>)> {
+    let gw = state.gateway_state.read().await;
+
+    let policy_overrides = gw.permission_policy_config.read().unwrap().policies.len();
+
+    // Try health check on the store if available
+    let (total_grants, store_healthy) = if let Some(store) = &gw.permission_store {
+        let healthy = store.health_check().is_ok();
+        // Count grants across all agents (approximate)
+        let grants = store.query_grants("").unwrap_or_default().len();
+        (grants, healthy)
+    } else {
+        (0, false)
+    };
+
+    let metrics = gw.permission_metrics.read().unwrap();
+
+    Ok(Json(PermissionStatusResponse {
+        total_grants,
+        policy_overrides,
+        store_healthy,
+        cache_hit_rate: metrics.cache_hit_rate(),
+        avg_latency_us: metrics.avg_latency_us(),
+        total_checks: metrics.total_checks,
+        by_category: metrics.by_category.clone(),
+    }))
 }
 
 #[cfg(test)]

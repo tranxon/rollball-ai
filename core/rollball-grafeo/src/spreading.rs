@@ -284,16 +284,29 @@ impl GrafeoStore {
 // S2.8.3: PageRank integration
 // ---------------------------------------------------------------------------
 
+/// Default node count threshold for switching to sampled PageRank.
+/// Graphs with more than this many nodes use the sampled approximation.
+const PAGERANK_SAMPLING_THRESHOLD: usize = 1000;
+
+/// Fraction of nodes to sample per walk in sampled PageRank.
+const PAGERANK_SAMPLE_FRACTION: f64 = 0.3;
+
 impl GrafeoStore {
     /// Compute PageRank scores for all nodes in the graph.
     ///
-    /// Uses grafeo-engine's built-in PageRank algorithm via GQL CALL procedure.
-    /// Falls back to a simplified iterative PageRank if the procedure fails.
+    /// Automatically selects between full iterative PageRank (small graphs)
+    /// and random-walk sampling (large graphs, >1000 nodes) for performance.
     pub fn compute_pagerank(
         &self,
         iterations: usize,
         damping: f64,
     ) -> Result<Vec<(NodeId, f64)>> {
+        // Check graph size to decide strategy
+        let node_count = self.count_nodes()?;
+        if node_count > PAGERANK_SAMPLING_THRESHOLD {
+            return self.compute_pagerank_sampled(iterations, damping, node_count);
+        }
+
         let session = self.db.session();
         let gql = format!(
             "CALL grafeo.pagerank({{damping: {damping}, max_iterations: {iterations}}})"
@@ -312,10 +325,126 @@ impl GrafeoStore {
                 Ok(scores)
             }
             Err(_) => {
-                // Fallback: simplified iterative PageRank.
                 self.compute_pagerank_fallback(iterations, damping)
             }
         }
+    }
+
+    /// Count total nodes in the graph (lightweight query).
+    fn count_nodes(&self) -> Result<usize> {
+        let session = self.db.session();
+        match session.execute("MATCH (n) RETURN count(n)") {
+            Ok(result) => {
+                if let Some(row) = result.rows().first() {
+                    if let Some(Value::Int64(count)) = row.first() {
+                        return Ok(*count as usize);
+                    }
+                }
+                Ok(0)
+            }
+            Err(e) => Err(crate::error::GrafeoError::Memory(format!(
+                "count_nodes GQL failed: {e}"
+            ))),
+        }
+    }
+
+    /// Sampled PageRank: uses random-walk sampling for large graphs.
+    ///
+    /// Instead of O(V²) full iteration, runs random walks from sampled
+    /// seed nodes and aggregates visit counts into approximate PageRank scores.
+    pub fn compute_pagerank_sampled(
+        &self,
+        iterations: usize,
+        damping: f64,
+        node_count: usize,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        let graph = self.db.graph_store();
+
+        // Collect all node IDs
+        let session = self.db.session();
+        let mut node_ids: Vec<NodeId> = Vec::new();
+        if let Ok(result) = session.execute("MATCH (n) RETURN id(n)") {
+            for row in result.rows() {
+                if let Some(Value::Int64(id)) = row.first() {
+                    node_ids.push(NodeId::new(*id as u64));
+                }
+            }
+        }
+
+        if node_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Sample fraction of nodes as random walk seeds
+        let sample_size = ((node_count as f64) * PAGERANK_SAMPLE_FRACTION).ceil() as usize;
+        let sample_size = sample_size.min(node_ids.len()).max(1);
+
+        // Use deterministic sampling (every Nth node) for reproducibility
+        let step = node_ids.len() / sample_size;
+        let seeds: Vec<NodeId> = node_ids
+            .iter()
+            .step_by(step.max(1))
+            .take(sample_size)
+            .copied()
+            .collect();
+
+        // Run random walks and count visits.
+        // Uses a deterministic PCG-style PRNG instead of the `rand` crate
+        // for reproducibility and to avoid extra dependencies.
+        let mut visit_counts: HashMap<NodeId, f64> = HashMap::new();
+        let steps_per_walk = iterations.max(10);
+
+        let mut rng_state: u64 = 0x853c49e6748fea9b; // Arbitrary seed for reproducibility
+        for &seed in &seeds {
+            let mut current = seed;
+            for _ in 0..steps_per_walk {
+                *visit_counts.entry(current).or_insert(0.0) += 1.0;
+
+                // With probability (1 - damping), teleport to a random seed
+                // (standard PageRank random surfer model)
+                rng_state = rng_state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let coin = (rng_state as f64) / (u64::MAX as f64);
+                if coin < 1.0 - damping {
+                    let idx = (rng_state as usize) % seeds.len();
+                    current = seeds[idx];
+                    continue;
+                }
+
+                // Get outgoing edges
+                let edge_refs = graph.edges_from(current, Direction::Outgoing);
+                if edge_refs.is_empty() {
+                    // Dead-end: teleport to a deterministic "random" seed
+                    rng_state = rng_state
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    let idx = (rng_state as usize) % seeds.len();
+                    current = seeds[idx];
+                } else {
+                    // Follow a deterministic "random" outgoing edge
+                    rng_state = rng_state
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    let idx = (rng_state as usize) % edge_refs.len();
+                    current = edge_refs[idx].0;
+                }
+            }
+        }
+
+        // Normalize visit counts to score distribution
+        let total_visits: f64 = visit_counts.values().sum();
+        let mut scores: Vec<(NodeId, f64)> = if total_visits > 0.0 {
+            visit_counts
+                .into_iter()
+                .map(|(id, count)| (id, count / total_visits))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(scores)
     }
 
     /// Fallback PageRank: simplified iterative computation using graph_store.
@@ -1073,5 +1202,107 @@ mod tests {
         assert_eq!(get_expand_thresholds("s"), vec![0.15, 0.2, 0.25]);
         assert_eq!(get_expand_thresholds("r"), vec![0.1, 0.12, 0.15]);
         assert_eq!(get_expand_thresholds("f"), vec![0.15, 0.2, 0.25]);
+    }
+
+    // =====================================================================
+    // Test 15: count_nodes (indirect via compute_pagerank on empty graph)
+    // =====================================================================
+
+    #[test]
+    fn test_count_nodes_empty_graph() {
+        let store = test_store();
+        // Empty graph should produce empty PageRank.
+        let scores = store.compute_pagerank(20, 0.85).unwrap();
+        assert!(scores.is_empty(), "empty graph should have no PageRank");
+    }
+
+    // =====================================================================
+    // Test 16: sampled PageRank on a chain graph (small graph, full strategy)
+    // =====================================================================
+
+    #[test]
+    fn test_compute_pagerank_small_graph_uses_fallback() {
+        let store = test_store();
+        let a = store.store_node("Knowledge", [("k", Value::from("a"))]).unwrap();
+        let b = store.store_node("Knowledge", [("k", Value::from("b"))]).unwrap();
+        let c = store.store_node("Knowledge", [("k", Value::from("c"))]).unwrap();
+        store.create_memory_edge(a, b, "R", vec![]).unwrap();
+        store.create_memory_edge(b, c, "R", vec![]).unwrap();
+        store.create_memory_edge(c, a, "R", vec![]).unwrap();
+
+        let scores = store.compute_pagerank(20, 0.85).unwrap();
+        assert_eq!(scores.len(), 3);
+
+        // All nodes should have non-zero scores.
+        for (_id, score) in &scores {
+            assert!(*score > 0.0, "PageRank score should be positive");
+        }
+
+        // Scores should sum to approximately 1.0.
+        let total: f64 = scores.iter().map(|(_, s)| s).sum();
+        assert!((total - 1.0).abs() < 0.01, "total={total} should be ~1.0");
+    }
+
+    // =====================================================================
+    // Test 17: PageRank deterministic output (same graph → same result)
+    // =====================================================================
+
+    #[test]
+    fn test_compute_pagerank_deterministic() {
+        let store = test_store();
+        let a = store.store_node("Knowledge", [("k", Value::from("a"))]).unwrap();
+        let b = store.store_node("Knowledge", [("k", Value::from("b"))]).unwrap();
+        let c = store.store_node("Knowledge", [("k", Value::from("c"))]).unwrap();
+        store.create_memory_edge(a, b, "R", vec![]).unwrap();
+        store.create_memory_edge(b, c, "R", vec![]).unwrap();
+        store.create_memory_edge(c, a, "R", vec![]).unwrap();
+
+        let first_run = store.compute_pagerank(20, 0.85).unwrap();
+        let second_run = store.compute_pagerank(20, 0.85).unwrap();
+
+        // Scores should be identical (deterministic), though ordering may differ
+        // due to HashSet-to-Vec conversion in the fallback path.
+        assert_eq!(first_run.len(), second_run.len());
+
+        // Build score maps for comparison.
+        let map1: HashMap<NodeId, f64> = first_run.iter().copied().collect();
+        let map2: HashMap<NodeId, f64> = second_run.iter().copied().collect();
+        for (id, score1) in &map1 {
+            let score2 = map2.get(id).unwrap();
+            assert!(
+                (score1 - score2).abs() < 1e-10,
+                "score for {id} differs: {score1} vs {score2}"
+            );
+        }
+    }
+
+    // =====================================================================
+    // Test 18: PageRank respects damping factor
+    // =====================================================================
+
+    #[test]
+    fn test_pagerank_damping_factor_effect() {
+        let store = test_store();
+        let a = store.store_node("Knowledge", [("k", Value::from("a"))]).unwrap();
+        let b = store.store_node("Knowledge", [("k", Value::from("b"))]).unwrap();
+        store.create_memory_edge(a, b, "R", vec![]).unwrap();
+
+        // Different damping factors should produce different score distributions.
+        let scores_low = store.compute_pagerank(10, 0.5).unwrap();
+        let scores_high = store.compute_pagerank(10, 0.99).unwrap();
+
+        // Build score maps.
+        let map_low: HashMap<NodeId, f64> = scores_low.iter().copied().collect();
+        let map_high: HashMap<NodeId, f64> = scores_high.iter().copied().collect();
+
+        // All nodes must have scores.
+        assert_eq!(map_low.len(), 2);
+        assert_eq!(map_high.len(), 2);
+
+        // Damping must have an effect — at least one node's score must differ.
+        let any_diff = map_low.iter().any(|(id, score)| {
+            (score - map_high.get(id).unwrap_or(&0.0)).abs() > 1e-10
+        });
+        assert!(any_diff, "damping factor must affect PageRank scores");
     }
 }

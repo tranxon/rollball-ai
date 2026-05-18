@@ -746,6 +746,12 @@ pub async fn handle_cron_register(
             schedule: schedule.to_string(),
             action: action.to_string(),
             params: serde_json::to_string(params).unwrap_or_else(|_| "{}".to_string()),
+            timezone: None,
+            retry_count: 0,
+            retry_interval_secs: 60,
+            max_runs: None,
+            run_count: 0,
+            expires_at: None,
         };
         let cron_id_clone = cron_id.clone();
         let _ = tokio::task::spawn_blocking(move || {
@@ -820,6 +826,12 @@ pub async fn handle_cron_list(
             schedule: e.schedule.clone(),
             action: e.action.clone(),
             params: e.params.clone(),
+            timezone: e.timezone.clone(),
+            retry_count: e.retry_count,
+            retry_interval_secs: e.retry_interval_secs,
+            max_runs: e.max_runs,
+            run_count: e.run_count,
+            expires_at: e.expires_at,
         })
         .collect();
 

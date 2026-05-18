@@ -26,20 +26,12 @@ fn test_cron_store_persistence_roundtrip() {
     let store = CronStore::open_in_memory().unwrap();
 
     // Insert entries
-    let entry1 = StoredCronEntry {
-        id: "cron-1".to_string(),
-        agent_id: "com.example.weather".to_string(),
-        schedule: "0 * * * *".to_string(),
-        action: "hourly_check".to_string(),
-        params: r#"{"type":"weather"}"#.to_string(),
-    };
-    let entry2 = StoredCronEntry {
-        id: "cron-2".to_string(),
-        agent_id: "com.example.weather".to_string(),
-        schedule: "0 9 * * 1-5".to_string(),
-        action: "weekday_report".to_string(),
-        params: "{}".to_string(),
-    };
+    let entry1 = StoredCronEntry::simple(
+        "cron-1", "com.example.weather", "0 * * * *", "hourly_check", r#"{"type":"weather"}"#,
+    );
+    let entry2 = StoredCronEntry::simple(
+        "cron-2", "com.example.weather", "0 9 * * 1-5", "weekday_report", "{}",
+    );
     store.insert(&entry1).unwrap();
     store.insert(&entry2).unwrap();
 
@@ -63,22 +55,18 @@ fn test_cron_store_delete_by_agent() {
     let store = CronStore::open_in_memory().unwrap();
 
     for i in 1..=3 {
-        let entry = StoredCronEntry {
-            id: format!("cron-{}", i),
-            agent_id: "com.example.weather".to_string(),
-            schedule: "0 * * * *".to_string(),
-            action: format!("task-{}", i),
-            params: "{}".to_string(),
-        };
+        let entry = StoredCronEntry::simple(
+            &format!("cron-{}", i),
+            "com.example.weather",
+            "0 * * * *",
+            &format!("task-{}", i),
+            "{}",
+        );
         store.insert(&entry).unwrap();
     }
-    let other = StoredCronEntry {
-        id: "cron-10".to_string(),
-        agent_id: "com.example.calendar".to_string(),
-        schedule: "0 0 * * *".to_string(),
-        action: "daily".to_string(),
-        params: "{}".to_string(),
-    };
+    let other = StoredCronEntry::simple(
+        "cron-10", "com.example.calendar", "0 0 * * *", "daily", "{}",
+    );
     store.insert(&other).unwrap();
 
     let count = store.delete_by_agent("com.example.weather").unwrap();
@@ -96,20 +84,12 @@ fn test_scheduler_load_from_store() {
     let store = CronStore::open_in_memory().unwrap();
 
     // Insert entries into store
-    let entry1 = StoredCronEntry {
-        id: "cron-1".to_string(),
-        agent_id: "com.example.weather".to_string(),
-        schedule: "0 * * * *".to_string(),
-        action: "hourly_check".to_string(),
-        params: "{}".to_string(),
-    };
-    let entry2 = StoredCronEntry {
-        id: "cron-5".to_string(),
-        agent_id: "com.example.monitor".to_string(),
-        schedule: "*/15 * * * *".to_string(),
-        action: "health_check".to_string(),
-        params: r#"{"type":"ping"}"#.to_string(),
-    };
+    let entry1 = StoredCronEntry::simple(
+        "cron-1", "com.example.weather", "0 * * * *", "hourly_check", "{}",
+    );
+    let entry2 = StoredCronEntry::simple(
+        "cron-5", "com.example.monitor", "*/15 * * * *", "health_check", r#"{"type":"ping"}"#,
+    );
     store.insert(&entry1).unwrap();
     store.insert(&entry2).unwrap();
 
@@ -132,20 +112,12 @@ fn test_scheduler_load_from_store() {
 fn test_scheduler_load_from_store_invalid_schedule_skipped() {
     let store = CronStore::open_in_memory().unwrap();
 
-    let valid = StoredCronEntry {
-        id: "cron-1".to_string(),
-        agent_id: "com.example.weather".to_string(),
-        schedule: "0 * * * *".to_string(),
-        action: "hourly_check".to_string(),
-        params: "{}".to_string(),
-    };
-    let invalid = StoredCronEntry {
-        id: "cron-2".to_string(),
-        agent_id: "com.example.bad".to_string(),
-        schedule: "invalid cron expr".to_string(),
-        action: "bad_action".to_string(),
-        params: "{}".to_string(),
-    };
+    let valid = StoredCronEntry::simple(
+        "cron-1", "com.example.weather", "0 * * * *", "hourly_check", "{}",
+    );
+    let invalid = StoredCronEntry::simple(
+        "cron-2", "com.example.bad", "invalid cron expr", "bad_action", "{}",
+    );
     store.insert(&valid).unwrap();
     store.insert(&invalid).unwrap();
 
@@ -233,6 +205,11 @@ fn test_cron_register_ipc_roundtrip() {
         schedule: "0 * * * *".to_string(),
         action: "hourly_check".to_string(),
         params: serde_json::json!({}),
+        timezone: None,
+        retry_count: 0,
+        retry_interval_secs: 60,
+        max_runs: None,
+        expires_at: None,
     };
 
     let json = serde_json::to_string(&request).unwrap();
@@ -243,6 +220,7 @@ fn test_cron_register_ipc_roundtrip() {
         schedule,
         action,
         params,
+        ..
     } = parsed
     {
         assert_eq!(agent_id, "com.example.weather");
@@ -322,6 +300,12 @@ fn test_cron_list_result_roundtrip() {
                 schedule: "0 * * * *".to_string(),
                 action: "hourly".to_string(),
                 params: serde_json::json!({}),
+                timezone: None,
+                retry_count: 0,
+                retry_interval_secs: 60,
+                max_runs: None,
+                run_count: 0,
+                expires_at: None,
             },
         ],
     };
@@ -375,13 +359,9 @@ fn test_cron_store_in_gateway_state() {
         .unwrap();
 
     if let Some(store) = &state.cron_store {
-        let entry = StoredCronEntry {
-            id: id.clone(),
-            agent_id: "com.example.weather".to_string(),
-            schedule: "0 9 * * *".to_string(),
-            action: "morning_report".to_string(),
-            params: "{}".to_string(),
-        };
+        let entry = StoredCronEntry::simple(
+            &id, "com.example.weather", "0 9 * * *", "morning_report", "{}",
+        );
         store.insert(&entry).unwrap();
 
         // Verify persistence
@@ -404,13 +384,13 @@ fn test_cron_scheduler_recovery_after_restart() {
     let id1 = scheduler1.register("com.example.weather", "0 * * * *", "hourly", serde_json::json!({})).unwrap();
     let id2 = scheduler1.register("com.example.weather", "0 9 * * *", "morning", serde_json::json!({})).unwrap();
     for entry in scheduler1.entries_for_agent("com.example.weather") {
-        let stored = StoredCronEntry {
-            id: entry.id.clone(),
-            agent_id: entry.agent_id.clone(),
-            schedule: entry.schedule.clone(),
-            action: entry.action.clone(),
-            params: serde_json::to_string(&entry.params).unwrap_or_else(|_| "{}".to_string()),
-        };
+        let stored = StoredCronEntry::simple(
+            &entry.id,
+            &entry.agent_id,
+            &entry.schedule,
+            &entry.action,
+            &serde_json::to_string(&entry.params).unwrap_or_else(|_| "{}".to_string()),
+        );
         store.insert(&stored).unwrap();
     }
 
@@ -481,13 +461,13 @@ fn test_install_agent_registers_cron_triggers() {
             let params = trigger.params.clone().unwrap_or(serde_json::json!({}));
             let cron_id = state.cron_scheduler.register(agent_id, schedule, action, params.clone()).unwrap();
             if let Some(store) = &state.cron_store {
-                let entry = StoredCronEntry {
-                    id: cron_id,
-                    agent_id: agent_id.to_string(),
-                    schedule: schedule.to_string(),
-                    action: action.to_string(),
-                    params: serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string()),
-                };
+                let entry = StoredCronEntry::simple(
+                    &cron_id,
+                    agent_id,
+                    schedule,
+                    action,
+                    &serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string()),
+                );
                 store.insert(&entry).unwrap();
             }
         }

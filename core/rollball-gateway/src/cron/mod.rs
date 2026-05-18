@@ -21,7 +21,7 @@ use chrono::{Timelike, Datelike};
 use crate::ipc::session::SessionManager;
 pub use store::{CronStore, StoredCronEntry, CronStoreError};
 
-/// A registered cron entry
+/// A registered cron entry (S5.8 enhanced)
 #[derive(Debug, Clone)]
 pub struct CronEntry {
     /// Unique ID for this cron entry
@@ -34,6 +34,18 @@ pub struct CronEntry {
     pub action: String,
     /// Params to include in the IntentReceived
     pub params: serde_json::Value,
+    /// Timezone for schedule interpretation (None = UTC)
+    pub timezone: Option<String>,
+    /// Max retry count on failure (0 = no retry)
+    pub retry_count: u32,
+    /// Retry backoff interval in seconds (default 60)
+    pub retry_interval_secs: u64,
+    /// Max total executions (None = unlimited)
+    pub max_runs: Option<u32>,
+    /// Current execution count
+    pub run_count: u32,
+    /// Expiry timestamp in Unix millis (None = never expires)
+    pub expires_at: Option<i64>,
     /// Parsed schedule fields
     parsed: CronFields,
 }
@@ -66,16 +78,36 @@ impl CronScheduler {
         }
     }
 
-    /// Register a new cron entry
+    /// Register a new cron entry with default settings.
     ///
-    /// Returns the cron entry ID on success, or an error message if the
-    /// schedule expression is invalid.
+    /// Convenience wrapper around `register_full` that uses defaults for
+    /// timezone (UTC), retry (disabled), and no expiry/max_runs.
     pub fn register(
         &mut self,
         agent_id: &str,
         schedule: &str,
         action: &str,
         params: serde_json::Value,
+    ) -> Result<String, String> {
+        self.register_full(agent_id, schedule, action, params, None, 0, 60, None, None)
+    }
+
+    /// Register a new cron entry with full options (S5.8 enhanced).
+    ///
+    /// Returns the cron entry ID on success, or an error message if the
+    /// schedule expression is invalid.
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_full(
+        &mut self,
+        agent_id: &str,
+        schedule: &str,
+        action: &str,
+        params: serde_json::Value,
+        timezone: Option<String>,
+        retry_count: u32,
+        retry_interval_secs: u64,
+        max_runs: Option<u32>,
+        expires_at: Option<i64>,
     ) -> Result<String, String> {
         let parsed = parse_cron(schedule)?;
         let id = format!("cron-{}", self.next_id);
@@ -87,6 +119,12 @@ impl CronScheduler {
             schedule: schedule.to_string(),
             action: action.to_string(),
             params,
+            timezone,
+            retry_count,
+            retry_interval_secs,
+            max_runs,
+            run_count: 0,
+            expires_at,
             parsed,
         };
 
@@ -182,6 +220,12 @@ impl CronScheduler {
                     action: entry.action.clone(),
                     params: serde_json::from_str(&entry.params)
                         .unwrap_or(serde_json::json!({})),
+                    timezone: entry.timezone.clone(),
+                    retry_count: entry.retry_count,
+                    retry_interval_secs: entry.retry_interval_secs,
+                    max_runs: entry.max_runs,
+                    run_count: entry.run_count,
+                    expires_at: entry.expires_at,
                     parsed,
                 };
                 self.entries.insert(entry.id.clone(), cron_entry);
