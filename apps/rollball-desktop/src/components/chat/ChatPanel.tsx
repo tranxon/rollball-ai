@@ -435,12 +435,25 @@ export function ChatPanel() {
     }
   };
 
-  // Tool approval: forward action to permission store then clear inline bar
-  const handleToolApprove = (action: "allow" | "deny", approval: import("../../lib/types").ToolApprovalNeededEvent) => {
-    const { approve } = usePermissionStore.getState();
-    void approve(approval.request_id, action).then(() => {
-      resolveApproval(selectedAgentId ?? "");
-    });
+  // Tool approval: send decision to Gateway API directly, then clear inline state
+  const handleToolApprove = async (action: "allow" | "deny", approval: import("../../lib/types").ToolApprovalNeededEvent) => {
+    const approvalData = approval as unknown as Record<string, unknown>;
+    const agentId = String(approvalData.agent_id ?? selectedAgentId ?? "");
+    const requestId = String(approvalData.request_id ?? "");
+    try {
+      const url = `${getGatewayUrl()}/api/agents/${encodeURIComponent(agentId)}/approval`;
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: requestId, action }),
+      });
+    } catch (err) {
+      console.error("[ChatPanel] Failed to send approval:", err);
+    }
+    // Clear inline approval state regardless of result
+    resolveApproval(selectedAgentId ?? "");
+    // Also clear permissionStore to prevent stale queue
+    usePermissionStore.getState().clearAll();
   };
 
   // ── Empty state: no agents at all ──
@@ -594,12 +607,14 @@ export function ChatPanel() {
                         isStreaming={displayItem.items.some(
                           (m: ChatMessage) => m.id === streamingMessageId || m.id === thinkingMessageId
                         )}
+                        pendingApproval={pendingApproval}
+                        onApprove={(action) => handleToolApprove(action, pendingApproval!)}
                       />
                     )}
 
                     {/* Regular message */}
                     {displayItem.type !== 'explore_group' && (
-                      <MessageBubble message={item as ChatMessage} isStreaming={(item as ChatMessage).id === streamingMessageId} agentId={selectedAgentId ?? ""} pendingApproval={pendingApproval} onApprove={(action) => handleToolApprove(action, pendingApproval!)} />
+                      <MessageBubble message={item as ChatMessage} isStreaming={(item as ChatMessage).id === streamingMessageId} agentId={selectedAgentId ?? ""} />
                     )}
                   </div>
                 );
@@ -616,7 +631,7 @@ export function ChatPanel() {
           {iterationLimitPaused && (
             <div className="flex flex-col items-start gap-1.5">
               <span
-                className="text-amber-700 dark:text-amber-300/80"
+                className="text-zinc-600 dark:text-zinc-400"
                 style={{ fontSize: "calc(var(--ui-font-size, 0.875rem) * 0.85)" }}
               >
                 {iterationLimitPaused.message}
@@ -627,8 +642,8 @@ export function ChatPanel() {
                     continueExecution(selectedAgentId);
                   }
                 }}
-                className="flex w-fit max-w-full items-center gap-2 rounded-md bg-amber-100 px-2.5 py-1.5 text-amber-800 transition-colors hover:bg-amber-200 dark:bg-amber-800/40 dark:text-amber-200 dark:hover:bg-amber-800/60"
-                style={{ fontSize: "calc(var(--ui-font-size, 0.875rem) * 0.9)" }}
+                className="flex w-fit max-w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-white transition-opacity hover:opacity-90"
+                style={{ fontSize: "calc(var(--ui-font-size, 0.875rem) * 0.9)", backgroundColor: "var(--color-accent)" }}
               >
                 <Play className="h-3.5 w-3.5" />
                 <span>
@@ -980,7 +995,7 @@ function MessageContentWrapper({ children }: { children: React.ReactNode }) {
 }
 
 /** Single message bubble */
-function MessageBubble({ message, isStreaming, agentId, pendingApproval, onApprove }: { message: ChatMessage; isStreaming: boolean; agentId: string; pendingApproval: import("../../lib/types").ToolApprovalNeededEvent | null; onApprove: (action: "allow" | "deny") => void }) {
+function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage; isStreaming: boolean; agentId: string }) {
   const [expanded, setExpanded] = useState(false);
   // Use CSS custom property for font size — set once in store, global effect
   const fontSizeStyle = { fontSize: "var(--ui-font-size, 0.875rem)" };
@@ -1103,10 +1118,9 @@ function MessageBubble({ message, isStreaming, agentId, pendingApproval, onAppro
   }
 
   if (message.type === "tool_call") {
-    const isPending = pendingApproval && pendingApproval.tool_name === message.toolName;
     return (
       <div className="flex justify-start">
-        <div className={`flex w-full items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-left text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400 ${isPending ? "" : "transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}>
+        <div className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-left text-xs text-zinc-500 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400 dark:hover:bg-zinc-800">
           <button
             className="flex flex-1 items-start gap-2 min-w-0"
             onClick={() => setExpanded(!expanded)}
@@ -1116,22 +1130,6 @@ function MessageBubble({ message, isStreaming, agentId, pendingApproval, onAppro
             <span className="min-w-0 break-all text-zinc-400 dark:text-zinc-500">{message.content}</span>
             {expanded ? <ChevronDown className="ml-auto h-3 w-3 shrink-0" /> : <ChevronRight className="ml-auto h-3 w-3 shrink-0" />}
           </button>
-          {isPending && (
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                onClick={(e) => { e.stopPropagation(); onApprove("deny"); }}
-                className="rounded px-2 py-0.5 text-[11px] font-medium text-zinc-500 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-500"
-              >
-                Deny
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); onApprove("allow"); }}
-                className="rounded px-2 py-0.5 text-[11px] font-medium text-white bg-[var(--color-accent)] hover:opacity-90"
-              >
-                Allow
-              </button>
-            </div>
-          )}
         </div>
       </div>
     );

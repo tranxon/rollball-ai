@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChatMessage, ContextUsageInfo, TokenUsage, ToolApprovalNeededEvent, PaginatedMessages, ConversationEntry } from "../lib/types";
-import { usePermissionStore } from "./permissionStore";
 import { useSessionStore } from "./sessionStore";
 import { useAgentStore } from "./agentStore";
 import { useUserProfileStore } from "./userProfileStore";
@@ -1334,8 +1333,8 @@ function handleMessageEvent(
     }
 
     case "tool_approval_needed":
-      usePermissionStore.getState().showApprovalDialog(data as unknown as ToolApprovalNeededEvent);
-      // Also set per-agent inline approval state for ChatPanel rendering
+      // Set per-agent inline approval state for ChatPanel rendering
+      // (no longer uses permissionStore queue — approval is inline in tool_call row)
       set((state) => updateAgentState(state, agentId, {
         pendingApproval: data as unknown as ToolApprovalNeededEvent,
       }));
