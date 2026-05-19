@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronRight, ChevronDown, Search, Wrench, Terminal, Check, X } from "lucide-react";
-import type { ChatMessage } from "../../lib/types";
+import type { ChatMessage, ToolApprovalNeededEvent } from "../../lib/types";
 import { ThinkBlock } from "./ThinkBlock";
 
 interface ExploreBlockProps {
   items: ChatMessage[];
   isStreaming: boolean;
+  pendingApproval?: ToolApprovalNeededEvent | null;
+  onApprove?: (action: "allow" | "deny") => void;
 }
 
 const SHELL_TOOLS = ["bash", "powershell", "shell"];
@@ -28,7 +30,7 @@ function isShellTool(name: string): boolean {
  * - Expanded: max-height 240px container with ThinkBlock and ToolCallItem.
  * - Streaming: auto-scrolls to bottom.
  */
-export function ExploreBlock({ items, isStreaming }: ExploreBlockProps) {
+export function ExploreBlock({ items, isStreaming, pendingApproval, onApprove }: ExploreBlockProps) {
   const [expanded, setExpanded] = useState(isStreaming);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -45,6 +47,16 @@ export function ExploreBlock({ items, isStreaming }: ExploreBlockProps) {
   }, [isStreaming]);
 
   const stepCount = buildPairedItems(items).length;
+
+  // Auto-expand when there's a pending approval
+  const hasPendingApproval = pendingApproval && items.some(
+    (m) => m.type === "tool_call" && m.toolName === pendingApproval.tool_name && !items.some(
+      (r) => r.type === "tool_result" && r.toolName === m.toolName
+    )
+  );
+  useEffect(() => {
+    if (hasPendingApproval) setExpanded(true);
+  }, [hasPendingApproval]);
 
   return (
     <div className="my-1 max-w-[var(--content-max-width)]">
@@ -77,7 +89,7 @@ export function ExploreBlock({ items, isStreaming }: ExploreBlockProps) {
         >
           <div className="flex flex-col gap-2">
             {buildPairedItems(items).map((paired, idx) => (
-              <PairedExploreItem key={idx} item={paired} isStreaming={isStreaming} />
+              <PairedExploreItem key={idx} item={paired} isStreaming={isStreaming} pendingApproval={pendingApproval} onApprove={onApprove} />
             ))}
           </div>
         </div>
@@ -131,7 +143,7 @@ function buildPairedItems(items: ChatMessage[]): PairedItem[] {
 }
 
 /** Render a paired item */
-function PairedExploreItem({ item, isStreaming }: { item: PairedItem; isStreaming: boolean }) {
+function PairedExploreItem({ item, isStreaming, pendingApproval, onApprove }: { item: PairedItem; isStreaming: boolean; pendingApproval?: ToolApprovalNeededEvent | null; onApprove?: (action: "allow" | "deny") => void }) {
   if (item.kind === "thought") {
     return (
       <ThinkBlock
@@ -146,7 +158,7 @@ function PairedExploreItem({ item, isStreaming }: { item: PairedItem; isStreamin
   }
 
   if (item.kind === "tool") {
-    return <ToolCallItem call={item.call} result={item.result} />;
+    return <ToolCallItem call={item.call} result={item.result} pendingApproval={pendingApproval} onApprove={onApprove} />;
   }
 
   // Fallback
@@ -158,7 +170,7 @@ function PairedExploreItem({ item, isStreaming }: { item: PairedItem; isStreamin
 }
 
 /** Tool call + result paired display: icon + tool name + status indicator + expandable details */
-function ToolCallItem({ call, result }: { call: ChatMessage; result?: ChatMessage }) {
+function ToolCallItem({ call, result, pendingApproval, onApprove }: { call: ChatMessage; result?: ChatMessage; pendingApproval?: ToolApprovalNeededEvent | null; onApprove?: (action: "allow" | "deny") => void }) {
   const [showDetails, setShowDetails] = useState(false);
   const toolName = call.toolName ?? "tool";
   const isShell = isShellTool(toolName);
@@ -167,7 +179,10 @@ function ToolCallItem({ call, result }: { call: ChatMessage; result?: ChatMessag
   // Determine status from result
   const isSuccess = result?.toolStatus === "success";
   const isError = result?.toolStatus === "error";
-  const isPending = !result;
+  const isPendingResult = !result;
+
+  // Check if this tool_call has a pending approval
+  const needsApproval = pendingApproval && pendingApproval.tool_name === toolName && isPendingResult;
 
   let summary = "";
   try {
@@ -188,32 +203,53 @@ function ToolCallItem({ call, result }: { call: ChatMessage; result?: ChatMessag
 
   return (
     <div className="min-w-0">
-      <button
-        onClick={() => setShowDetails(!showDetails)}
+      <div
         className="flex min-w-0 w-full items-center gap-2 rounded-md bg-zinc-100 px-2.5 py-1.5 text-left transition-colors hover:bg-zinc-200 dark:bg-zinc-700/50 dark:hover:bg-zinc-700"
         style={{ fontSize: EXPLORE_FONT_SIZE }}
       >
-        <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-        <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-300">{toolName}</span>
-        {summary && (
-          <span className="min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400">
-            {summary}
-          </span>
+        <button className="flex min-w-0 flex-1 items-center gap-2" onClick={() => setShowDetails(!showDetails)}>
+          <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+          <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-300">{toolName}</span>
+          {summary && (
+            <span className="min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400">
+              {summary}
+            </span>
+          )}
+        </button>
+        {/* Approval buttons — shown when this tool needs user approval */}
+        {needsApproval && onApprove && (
+          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => onApprove("deny")}
+              className="rounded-md border border-zinc-300 px-2 py-0.5 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-200 dark:border-zinc-500 dark:text-zinc-400 dark:hover:bg-zinc-600"
+            >
+              Deny
+            </button>
+            <button
+              onClick={() => onApprove("allow")}
+              className="rounded-md px-2 py-0.5 text-[11px] font-medium text-white transition-opacity hover:opacity-90"
+              style={{ backgroundColor: "var(--color-accent)" }}
+            >
+              Allow
+            </button>
+          </div>
         )}
         {/* Status indicator */}
         {isSuccess ? (
           <Check className="h-3 w-3 shrink-0" style={{ color: "var(--color-accent)" }} />
         ) : isError ? (
           <X className="h-3 w-3 shrink-0 text-red-500" />
-        ) : isPending ? (
+        ) : isPendingResult ? (
           <span className="h-3 w-3 shrink-0 animate-pulse rounded-full bg-zinc-300 dark:bg-zinc-500" />
         ) : null}
-        {showDetails ? (
-          <ChevronDown className="h-3 w-3 shrink-0 text-zinc-400" />
-        ) : (
-          <ChevronRight className="h-3 w-3 shrink-0 text-zinc-400" />
-        )}
-      </button>
+        <button onClick={() => setShowDetails(!showDetails)}>
+          {showDetails ? (
+            <ChevronDown className="h-3 w-3 shrink-0 text-zinc-400" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0 text-zinc-400" />
+          )}
+        </button>
+      </div>
       {showDetails && (
         <div className="mt-1 ml-5 space-y-1">
           {/* Call params */}
