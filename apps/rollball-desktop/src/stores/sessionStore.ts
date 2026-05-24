@@ -3,6 +3,7 @@ import type { SessionInfo, SessionStatus } from "../lib/types";
 import { isSessionActive } from "../lib/types";
 import { getGatewayUrl } from "../lib/config";
 import { useChatStore } from "./chatStore";
+import { useWorkspaceStore } from "./workspaceStore";
 
 interface SessionState {
   sessions: SessionInfo[];
@@ -100,6 +101,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
       if (mismatches.size > 0) {
         chatStore.batchUpdateSessionStatuses(agentId, mismatches);
+      }
+
+      // Populate workspaceStore.sessionWorkspaceMap from session workspace_ids
+      const wsStore = useWorkspaceStore.getState();
+      const wsMap = { ...wsStore.sessionWorkspaceMap };
+      let wsChanged = false;
+      for (const session of sessions) {
+        const wsId = session.workspace_id;
+        if (wsId && wsId !== "__agent_home__") {
+          if (wsMap[session.session_id] !== wsId) {
+            wsMap[session.session_id] = wsId;
+            wsChanged = true;
+          }
+        } else if (session.session_id in wsMap) {
+          // Session reverted to agent home — clear stale entry
+          delete wsMap[session.session_id];
+          wsChanged = true;
+        }
+      }
+      if (wsChanged) {
+        useWorkspaceStore.setState({ sessionWorkspaceMap: wsMap });
       }
     } catch (e) {
       // Discard stale error too

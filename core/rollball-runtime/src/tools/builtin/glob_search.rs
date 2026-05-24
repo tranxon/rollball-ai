@@ -76,7 +76,7 @@ impl Tool for GlobSearchTool {
 
         // Search current workspace only (respecting workspace setting)
         let resolver_ref = self.resolver.read().unwrap();
-        let search_base = Path::new(resolver_ref.current_dir());
+        let search_base = Path::new(resolver_ref.agent_home());
         if !search_base.exists() {
             return Ok(ToolResult {
                 ok: true,

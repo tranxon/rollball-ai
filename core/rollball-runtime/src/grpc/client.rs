@@ -996,6 +996,12 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 config_json: wcu.config_json,
             }
         }
+        Some(ServerPayload::SetSessionWorkspace(ssw)) => {
+            GatewayResponse::SetSessionWorkspace {
+                session_id: ssw.session_id,
+                workspace_id: ssw.workspace_id,
+            }
+        }
         Some(ServerPayload::IterationLimitPaused(ilp)) => {
             GatewayResponse::IterationLimitPaused {
                 iteration: ilp.iteration,

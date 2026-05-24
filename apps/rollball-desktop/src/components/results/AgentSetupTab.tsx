@@ -66,11 +66,11 @@ export function AgentSetupTab() {
         });
       })
       .catch((err) => {
-          if (!cancelled) {
-            // 503 = agent not ready yet, silently retry on next mount
-            console.debug("[AgentSetup] Agent not ready:", err);
-          }
-        })
+        if (!cancelled) {
+          // 503 = agent not ready yet, silently retry on next mount
+          console.debug("[AgentSetup] Agent not ready:", err);
+        }
+      })
       .finally(() => {
         if (!cancelled) setConfigLoading(false);
       });
@@ -83,11 +83,11 @@ export function AgentSetupTab() {
         setActiveTools(data.active_tools);
       })
       .catch((err) => {
-          if (!cancelled) {
-            // 503 = agent not ready yet, silently retry on next mount
-            console.debug("[AgentSetup] Agent not ready:", err);
-          }
-        })
+        if (!cancelled) {
+          // 503 = agent not ready yet, silently retry on next mount
+          console.debug("[AgentSetup] Agent not ready:", err);
+        }
+      })
       .finally(() => {
         if (!cancelled) setToolsLoading(false);
       });
@@ -121,7 +121,7 @@ export function AgentSetupTab() {
               activeProvider: data.provider,
             });
           })
-          .catch(() => {});
+          .catch(() => { });
       }
     };
     window.addEventListener('rollball:refresh-agent-config', handler);
@@ -263,25 +263,6 @@ export function AgentSetupTab() {
           Leave empty to use runtime default
         </p>
       </div>
-
-      {/* Active Model / Provider (informational) */}
-      {(profile.activeModel || profile.activeProvider) ? (
-        <div className="mb-3 space-y-1">
-          <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-            Active Model
-          </span>
-          <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 dark:border-zinc-700 dark:bg-zinc-800">
-            <span className="text-xs text-zinc-700 dark:text-zinc-300">
-              {profile.activeProvider ?? ""}{profile.activeProvider ? " / " : ""}{profile.activeModel ?? ""}
-            </span>
-            {profile.availableModels && profile.availableModels.length > 0 && (
-              <span className="ml-2 text-[9px] text-zinc-400 dark:text-zinc-500">
-                ({profile.availableModels.length} models available)
-              </span>
-            )}
-          </div>
-        </div>
-      ) : null}
 
       {/* Max Iterations */}
       <div className="mb-3 space-y-1">

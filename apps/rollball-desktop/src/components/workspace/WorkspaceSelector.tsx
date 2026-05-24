@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useAgentStore } from "../../stores/agentStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useChatStore } from "../../stores/chatStore";
 import type { WorkspaceDir } from "../../stores/workspaceStore";
 import { useToast } from "../common/ToastProvider";
-import { ChevronDown, FolderOpen, FolderPlus, Trash2, Shield, ShieldOff } from "lucide-react";
+import { ChevronDown, FolderOpen, FolderPlus, Trash2, Shield, ShieldOff, Home } from "lucide-react";
 import * as dialog from "@tauri-apps/plugin-dialog";
 import { cn } from "../../lib/utils";
 
@@ -12,13 +13,22 @@ export function WorkspaceSelector() {
   const { selectedAgentId } = useAgentStore();
   const { gatewayUrl } = useSettingsStore();
   const { addToast } = useToast();
-  const { workspaces, currentWorkspaceId, loading, fetchWorkspaces, setCurrentWorkspace } =
+  const { workspaces, sessionWorkspaceMap, loading, fetchWorkspaces, setSessionWorkspace } =
     useWorkspaceStore();
+  const activeSessionId = useChatStore((s) => {
+    if (!selectedAgentId) return null;
+    return s.getActiveSessionId(selectedAgentId);
+  });
   const [open, setOpen] = useState(false);
   const [searchQuery, _setSearchQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Current workspace ID for the active session (defaults to agent home)
+  const currentWsId = activeSessionId
+    ? (sessionWorkspaceMap[activeSessionId] ?? "__agent_home__")
+    : "__agent_home__";
 
   // Load workspaces when agent changes
   useEffect(() => {
@@ -42,8 +52,8 @@ export function WorkspaceSelector() {
   }, [open]);
 
   const handleSelect = async (dir: WorkspaceDir) => {
-    if (!selectedAgentId) return;
-    await setCurrentWorkspace(selectedAgentId, dir.id);
+    if (!selectedAgentId || !activeSessionId) return;
+    await setSessionWorkspace(selectedAgentId, activeSessionId, dir.id);
     setOpen(false);
   };
 
@@ -74,6 +84,10 @@ export function WorkspaceSelector() {
     if (!selectedAgentId || deletingId) return;
     setDeletingId(id);
     try {
+      // If the deleted workspace is the current session's workspace, fallback to agent home
+      if (currentWsId === id && activeSessionId) {
+        await setSessionWorkspace(selectedAgentId, activeSessionId, "__agent_home__");
+      }
       const response = await fetch(`${gatewayUrl}/api/agents/${selectedAgentId}/workspaces/${id}`, {
         method: "DELETE",
       });
@@ -89,7 +103,7 @@ export function WorkspaceSelector() {
       setDeletingId(null);
     }
     setConfirmDelete(null);
-  }, [selectedAgentId, gatewayUrl, addToast, fetchWorkspaces, deletingId]);
+  }, [selectedAgentId, gatewayUrl, addToast, fetchWorkspaces, deletingId, currentWsId, activeSessionId, setSessionWorkspace]);
 
   const handleToggleAccess = useCallback(async (dir: WorkspaceDir) => {
     if (!selectedAgentId) return;
@@ -134,14 +148,16 @@ export function WorkspaceSelector() {
         >
           <FolderOpen size={14} />
           <span className="max-w-[120px] truncate">
-            {currentWorkspaceId
-              ? (() => {
-                const w = workspaces.find((ws) => ws.id === currentWorkspaceId);
-                if (!w) return "Workspace";
-                const name = w.alias || w.path.split(/[\/\\]/).filter(Boolean).pop() || w.path;
-                return name.length > 24 ? name.slice(0, 24) + "..." : name;
-              })()
-              : "Workspace"}
+            {currentWsId === "__agent_home__"
+              ? "Agent Home"
+              : currentWsId
+                ? (() => {
+                  const w = workspaces.find((ws) => ws.id === currentWsId);
+                  if (!w) return "Workspace";
+                  const name = w.alias || w.path.split(/[\/\\]/).filter(Boolean).pop() || w.path;
+                  return name.length > 24 ? name.slice(0, 24) + "..." : name;
+                })()
+                : "Workspace"}
           </span>
           <ChevronDown className="h-3 w-3 text-zinc-400" />
         </button>
@@ -151,6 +167,34 @@ export function WorkspaceSelector() {
           <div className="absolute bottom-full left-0 mb-1 w-60 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800" style={{ zIndex: 100 }}>
             {/* Workspace list */}
             <div className="max-h-56 overflow-y-auto py-1">
+              {/* Agent Home — always first, cannot be deleted */}
+              <button
+                onClick={async () => {
+                  if (!selectedAgentId || !activeSessionId) return;
+                  await setSessionWorkspace(selectedAgentId, activeSessionId, "__agent_home__");
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 px-2 py-1.5 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-700/50",
+                )}
+              >
+                <Home className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                <div className="min-w-0 flex-1 text-left">
+                  <div className={cn("truncate text-xs", currentWsId === "__agent_home__" ? "font-semibold" : "text-zinc-800 dark:text-zinc-200")} style={currentWsId === "__agent_home__" ? { color: "var(--color-accent)" } : undefined}>
+                    Agent Home
+                  </div>
+                  <div className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+                    Default working directory
+                  </div>
+                </div>
+                {currentWsId === "__agent_home__" && (
+                  <span className="text-xs font-medium" style={{ color: "var(--color-accent)" }}>✓</span>
+                )}
+              </button>
+
+              {/* Divider */}
+              <div className="mx-2 my-1 border-t border-zinc-200 dark:border-zinc-700" />
+
               {loading ? (
                 <div className="py-4 text-center text-xs text-zinc-400">Loading...</div>
               ) : filteredWorkspaces.length === 0 ? (
@@ -160,7 +204,7 @@ export function WorkspaceSelector() {
               ) : (
                 <div className="space-y-0.5">
                   {filteredWorkspaces.map((dir) => {
-                    const isCurrent = dir.id === currentWorkspaceId;
+                    const isCurrent = dir.id === currentWsId;
                     const isDeleting = confirmDelete === dir.id;
                     const displayName = dir.alias || dir.path.split(/[\\/]/).filter(Boolean).pop() || dir.path;
 

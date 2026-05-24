@@ -194,6 +194,7 @@ impl From<&protocol::SessionInfoDto> for proto::SessionInfoDto {
             status_json: s.status.as_ref()
                 .map(|st| serde_json::to_string(st).unwrap_or_default())
                 .unwrap_or_default(),
+            workspace_id: s.workspace_id.clone().unwrap_or_default(),
         }
     }
 }
@@ -211,6 +212,7 @@ impl From<proto::SessionInfoDto> for protocol::SessionInfoDto {
             } else {
                 serde_json::from_str(&s.status_json).ok()
             },
+            workspace_id: if s.workspace_id.is_empty() { None } else { Some(s.workspace_id) },
         }
     }
 }
@@ -726,6 +728,17 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                     },
                 ))
             }
+            protocol::GatewayResponse::SetSessionWorkspace {
+                session_id,
+                workspace_id,
+            } => {
+                Some(proto::server_message::Payload::SetSessionWorkspace(
+                    proto::SetSessionWorkspace {
+                        session_id: session_id.clone(),
+                        workspace_id: workspace_id.clone(),
+                    },
+                ))
+            }
             protocol::GatewayResponse::IterationLimitPaused {
                 iteration,
                 max_iterations,
@@ -986,6 +999,7 @@ mod tests {
             title: Some("Test Session".to_string()),
             corrupted: false,
             status: None,
+            workspace_id: None,
         };
 
         let proto_msg: proto::SessionInfoDto = (&original).into();
@@ -1007,6 +1021,7 @@ mod tests {
             title: Some("Status Test".to_string()),
             corrupted: false,
             status: Some(protocol::SessionStatusDto::Streaming { message_id: None }),
+            workspace_id: None,
         };
 
         let proto_msg: proto::SessionInfoDto = (&original).into();
@@ -1023,6 +1038,7 @@ mod tests {
             title: None,
             corrupted: false,
             status: Some(protocol::SessionStatusDto::WaitingApproval { request_id: "req-123".to_string() }),
+            workspace_id: None,
         };
 
         let proto_msg2: proto::SessionInfoDto = (&original2).into();

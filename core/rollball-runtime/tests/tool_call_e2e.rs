@@ -398,6 +398,7 @@ async fn test_file_read_path_traversal_blocked() {
 
     let inner = Arc::new(builtin::file_read::FileReadTool::new(&work_dir));
     let guarded = PathGuardedTool::new(inner, vec![WorkspaceDir {
+        id: "ws".to_string(),
         path: work_dir.clone(),
         access: WorkspaceAccess::ReadWrite,
     }]);

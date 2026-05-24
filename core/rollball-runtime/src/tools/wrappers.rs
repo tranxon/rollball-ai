@@ -358,6 +358,7 @@ mod tests {
     async fn test_path_guarded_allows_within_dir() {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-workdir".to_string(),
             access: WorkspaceAccess::ReadWrite,
         }]);
@@ -372,6 +373,7 @@ mod tests {
     async fn test_path_guarded_blocks_outside_dir() {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-workdir".to_string(),
             access: WorkspaceAccess::ReadWrite,
         }]);
@@ -387,6 +389,7 @@ mod tests {
     async fn test_path_guarded_relative_path() {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-workdir".to_string(),
             access: WorkspaceAccess::ReadWrite,
         }]);
@@ -401,6 +404,7 @@ mod tests {
     async fn test_path_guarded_non_filesystem_tool() {
         let inner = Arc::new(EchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-workdir".to_string(),
             access: WorkspaceAccess::ReadWrite,
         }]);
@@ -416,6 +420,7 @@ mod tests {
     async fn test_path_guarded_blocks_traversal() {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-workdir".to_string(),
             access: WorkspaceAccess::ReadWrite,
         }]);
@@ -432,6 +437,7 @@ mod tests {
     async fn test_path_guarded_blocks_prefix_suffix_attack() {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-workdir".to_string(),
             access: WorkspaceAccess::ReadWrite,
         }]);
@@ -449,6 +455,7 @@ mod tests {
         // A file_read tool should be allowed in a ReadOnly directory
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-pkg".to_string(),
             access: WorkspaceAccess::ReadOnly,
         }]);
@@ -484,6 +491,7 @@ mod tests {
 
         let inner = Arc::new(FileWriteEchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-pkg".to_string(),
             access: WorkspaceAccess::ReadOnly,
         }]);
@@ -520,6 +528,7 @@ mod tests {
 
         let inner = Arc::new(FileEditEchoTool);
         let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+            id: "test-ws".to_string(),
             path: "/tmp/agent-pkg".to_string(),
             access: WorkspaceAccess::ReadOnly,
         }]);
@@ -539,10 +548,12 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(inner, vec![
             WorkspaceDir {
+                id: "rw".to_string(),
                 path: "/tmp/agent-pkg".to_string(),
                 access: WorkspaceAccess::ReadOnly,
             },
             WorkspaceDir {
+                id: "ws".to_string(),
                 path: "/tmp/agent-pkg/workspace".to_string(),
                 access: WorkspaceAccess::ReadWrite,
             },
@@ -562,10 +573,12 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let _tool = PathGuardedTool::new(inner, vec![
             WorkspaceDir {
+                id: "rw".to_string(),
                 path: "/tmp/agent-pkg".to_string(),
                 access: WorkspaceAccess::ReadWrite,
             },
             WorkspaceDir {
+                id: "ro".to_string(),
                 path: "/tmp/agent-pkg/readonly".to_string(),
                 access: WorkspaceAccess::ReadOnly,
             },
@@ -594,10 +607,12 @@ mod tests {
         let write_inner = Arc::new(FileWriteEchoTool2);
         let write_tool = PathGuardedTool::new(write_inner, vec![
             WorkspaceDir {
+                id: "rw".to_string(),
                 path: "/tmp/agent-pkg".to_string(),
                 access: WorkspaceAccess::ReadWrite,
             },
             WorkspaceDir {
+                id: "ro".to_string(),
                 path: "/tmp/agent-pkg/readonly".to_string(),
                 access: WorkspaceAccess::ReadOnly,
             },

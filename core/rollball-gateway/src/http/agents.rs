@@ -19,10 +19,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::GatewayError;
-use crate::http::agent_config::{self, AgentConfigOverride, AgentConfigResponse, UpdateAgentConfigRequest};
+use crate::http::agent_config::{self, AgentConfigResponse, UpdateAgentConfigRequest};
 use crate::http::routes::{ApiError, AppState};
 use rollball_core::protocol::GatewayResponse;
-use rollball_core::protocol::{AvailableTool, AvailableToolsResponse};
+use rollball_core::protocol::{AvailableTool, AvailableToolsResponse, McpServerConfigDef};
 use rollball_core::AgentManifest;
 
 /// Build the agent management router
@@ -542,7 +542,7 @@ pub async fn stop_agent(
 
 /// `GET /api/agents/:id/model` — get the current active model for an agent
 ///
-/// Reads the per-agent model preference from the workspace `.agent_model.json` file.
+/// Reads the per-agent model preference from the workspace `agent_model.json` file.
 /// If no per-agent preference exists, falls back to the Gateway config default_model,
 /// then the Vault entry's default_model (models[0]).
 pub async fn get_agent_model(
@@ -710,7 +710,7 @@ fn read_manifest_tools(install_path: &str) -> Vec<String> {
 /// Write updated `[[tools]]` declarations back to manifest.toml.
 ///
 /// **Deprecated (ADR-009)**: Gateway no longer writes to agent workspace files.
-/// active_tools persistence is handled by AgentConfigOverride in Gateway's data_dir.
+/// active_tools persistence is handled by Runtime ({work_dir}/config/agent_config.json).
 #[allow(dead_code)]
 fn write_manifest_tools(install_path: &str, active_tools: &[String]) {
     let manifest_path = std::path::Path::new(install_path).join("manifest.toml");
@@ -888,7 +888,7 @@ pub async fn update_agent_config(
     let req_shell_approval_threshold = req.shell_approval_threshold;
     let req_mcp_servers = req.mcp_servers.clone();
 
-    // Push RuntimeConfigUpdate to connected agent (no Gateway disk save)
+    // Push RuntimeConfigUpdate to connected agent
     if let Some(ref session_mgr) = state.session_mgr {
         let mgr = session_mgr.lock().await;
         if let Some((_conn_id, session)) = mgr.find_by_agent_id(&agent_id) {
@@ -938,38 +938,53 @@ pub async fn update_agent_config(
 /// `GET /api/agents/{id}/tools` — list available tools and current activation state.
 ///
 /// Returns all built-in tools with their names, descriptions, and required
-/// permissions, plus the currently active tool names.
+/// permissions, plus the currently active tool names queried from Runtime.
 pub async fn get_agent_tools(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<AvailableToolsResponse>, (StatusCode, Json<ApiError>)> {
-    let gw = state.gateway_state.read().await;
-
-    let info = gw
-        .installed_agents
-        .get(&agent_id)
-        .ok_or_else(|| ApiError::not_found(&format!("Agent not found: {}", agent_id)))?;
-
-    let data_dir = gw
-        .config
-        .as_ref()
-        .map(|c| std::path::PathBuf::from(&c.data_dir))
-        .unwrap_or_else(|| std::path::PathBuf::from("./data"));
+    // Verify agent exists and is running
+    {
+        let gw = state.gateway_state.read().await;
+        if !gw.installed_agents.contains_key(&agent_id) {
+            return Err(ApiError::not_found(&format!("Agent not found: {}", agent_id)));
+        }
+        if let Some(info) = gw.running_agents.get(&agent_id) {
+            if !info.ready {
+                return Err(ApiError::service_unavailable(
+                    &format!("Agent '{}' is starting up, please wait", agent_id),
+                ));
+            }
+        } else {
+            return Err(ApiError::service_unavailable(
+                &format!("Agent '{}' is not started", agent_id),
+            ));
+        }
+    }
 
     // Get all available built-in tools with metadata
     let available = builtin_tool_metadata();
 
-    // Determine active tools: config override > manifest
-    let per_agent = agent_config::load_agent_config(&data_dir, &agent_id).unwrap_or(None);
-    // ADR-009: active_tools from per-agent config only, not manifest.toml
-    let raw_active_tools = per_agent
-        .as_ref()
-        .and_then(|o| o.active_tools.clone())
-        .unwrap_or_default();
-
-    // Normalize platform-specific shell names (bash, powershell, pwsh)
-    // to the unified "shell" tool name for consistent UI display.
-    let active_tools = normalize_shell_tools(&raw_active_tools);
+    // Query Runtime for active_tools via gRPC (QueryConfig → ConfigSnapshot)
+    let active_tools = if let Some(ref grpc_mgr) = state.grpc_session_mgr {
+        let query = rollball_core::proto::server_message::Payload::QueryConfig(
+            rollball_core::proto::QueryConfig {
+                request_id: uuid::Uuid::new_v4().to_string(),
+            },
+        );
+        match crate::http::memory_api::grpc_memory_roundtrip(grpc_mgr, &agent_id, query).await {
+            Some(response) => {
+                if let Some(rollball_core::proto::client_message::Payload::ConfigSnapshot(snap)) = response.payload {
+                    normalize_shell_tools(&snap.active_tools)
+                } else {
+                    Vec::new()
+                }
+            }
+            None => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
 
     Ok(Json(AvailableToolsResponse {
         agent_id,
@@ -1119,34 +1134,56 @@ pub struct UpdateMcpServersRequest {
 
 /// `GET /api/agents/{id}/mcp-servers` — get active MCP server names for an agent
 ///
-/// Returns the list of MCP server names that are currently active for this agent.
-/// These names reference entries in the global MCP catalog.
+/// Returns the list of MCP server names that are currently active for this agent,
+/// queried from Runtime via gRPC (QueryConfig → ConfigSnapshot).
 pub async fn get_agent_mcp_servers(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<AgentMcpServersResponse>, (StatusCode, Json<ApiError>)> {
-    let gw = state.gateway_state.read().await;
-
-    // Verify agent exists
-    if !gw.installed_agents.contains_key(&agent_id) {
-        return Err(ApiError::not_found(&format!("Agent not found: {}", agent_id)));
+    // Verify agent exists and is running
+    {
+        let gw = state.gateway_state.read().await;
+        if !gw.installed_agents.contains_key(&agent_id) {
+            return Err(ApiError::not_found(&format!("Agent not found: {}", agent_id)));
+        }
+        if let Some(info) = gw.running_agents.get(&agent_id) {
+            if !info.ready {
+                return Err(ApiError::service_unavailable(
+                    &format!("Agent '{}' is starting up, please wait", agent_id),
+                ));
+            }
+        } else {
+            return Err(ApiError::service_unavailable(
+                &format!("Agent '{}' is not started", agent_id),
+            ));
+        }
     }
 
-    let data_dir = gw
-        .config
-        .as_ref()
-        .map(|c| std::path::PathBuf::from(&c.data_dir))
-        .unwrap_or_else(|| std::path::PathBuf::from("./data"));
-
-    // Load per-agent config
-    let per_agent = agent_config::load_agent_config(&data_dir, &agent_id).unwrap_or(None);
-
-    // Extract MCP server names from the per-agent config
-    // Current model: mcp_servers stores full McpServerConfigDef — extract names
-    let active_servers = per_agent
-        .and_then(|cfg| cfg.mcp_servers)
-        .map(|servers| servers.into_iter().map(|s| s.name).collect())
-        .unwrap_or_default();
+    // Query Runtime for MCP config via gRPC
+    let active_servers: Vec<String> = if let Some(ref grpc_mgr) = state.grpc_session_mgr {
+        let query = rollball_core::proto::server_message::Payload::QueryConfig(
+            rollball_core::proto::QueryConfig {
+                request_id: uuid::Uuid::new_v4().to_string(),
+            },
+        );
+        match crate::http::memory_api::grpc_memory_roundtrip(grpc_mgr, &agent_id, query).await {
+            Some(response) => {
+                if let Some(rollball_core::proto::client_message::Payload::ConfigSnapshot(snap)) = response.payload {
+                    // Parse JSON strings back to server names
+                    snap.mcp_servers_json
+                        .into_iter()
+                        .filter_map(|s| serde_json::from_str::<McpServerConfigDef>(&s).ok())
+                        .map(|s| s.name)
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            }
+            None => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
 
     Ok(Json(AgentMcpServersResponse {
         agent_id,
@@ -1201,23 +1238,7 @@ pub async fn update_agent_mcp_servers(
         )));
     }
 
-    // Load existing per-agent config
-    let mut existing = agent_config::load_agent_config(&data_dir, &agent_id)
-        .unwrap_or(None)
-        .unwrap_or_default();
-
-    // Update MCP servers field
-    existing.mcp_servers = if resolved_servers.is_empty() {
-        Some(Vec::new())
-    } else {
-        Some(resolved_servers.clone())
-    };
-
-    // Save per-agent config
-    agent_config::save_agent_config(&data_dir, &agent_id, &existing)
-        .map_err(|e| ApiError::internal(&format!("Failed to save config: {}", e)))?;
-
-    // Push RuntimeConfigUpdate to connected agent if available
+    // Push RuntimeConfigUpdate to connected agent (Runtime persists per-agent config)
     if let Some(ref session_mgr) = state.session_mgr {
         let mgr = session_mgr.lock().await;
         if let Some((_conn_id, session)) = mgr.find_by_agent_id(&agent_id) {
@@ -1226,7 +1247,7 @@ pub async fn update_agent_mcp_servers(
                     mcp_servers: if resolved_servers.is_empty() {
                         Some(Vec::new())
                     } else {
-                        Some(resolved_servers)
+                        Some(resolved_servers.clone())
                     },
                     max_output_tokens: None,
                     max_iterations: None,

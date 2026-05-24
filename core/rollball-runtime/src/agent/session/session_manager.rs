@@ -22,6 +22,7 @@ use crate::agent::session_state::{SessionState, SessionStatus};
 use crate::conversation::ConversationSession;
 use crate::error::{Result, RuntimeError};
 use crate::tools::mcp_manager::McpManager;
+use crate::tools::workspace_resolver::{WorkspaceResolver, format_workspace_context_for_session};
 
 /// Configuration for SessionManager.
 #[derive(Debug, Clone)]
@@ -170,6 +171,8 @@ pub struct SessionManager {
     pub runtime_overrides: RuntimeConfigOverrides,
     /// Cached workspace context (from AgentHello or Gateway push) that
     /// must be re-applied to every newly created session.
+    /// After the session-workspace refactor, this is kept for backward
+    /// compatibility; new code should use `session_workspaces`.
     workspace_context: Option<String>,
     /// Cached LLM config from LLMConfigDelivery (provider params, caps, limit)
     /// that must be re-applied to every newly created session.
@@ -183,6 +186,14 @@ pub struct SessionManager {
     mcp_tools: Option<Vec<Arc<dyn Tool>>>,
     /// MCP connection manager.
     mcp_manager: McpManager,
+    /// Per-session workspace selection.
+    /// Maps session_id → workspace_id (or "__agent_home__" for agent home).
+    session_workspaces: HashMap<String, String>,
+    /// Per-session pending workspace reference.
+    /// When a session's last workspace was deleted from the list,
+    /// the session_id → ws_id mapping is moved here so it can be
+    /// reconciled if the workspace is re-added.
+    pub pending_workspaces: HashMap<String, String>,
 }
 
 impl SessionManager {
@@ -201,6 +212,8 @@ impl SessionManager {
             current_session_id: initial_session_id,
             mcp_tools: None,
             mcp_manager: McpManager::new(),
+            session_workspaces: HashMap::new(),
+            pending_workspaces: HashMap::new(),
         }
     }
 
@@ -229,6 +242,13 @@ impl SessionManager {
         session_id: String,
         conversation: Option<ConversationSession>,
     ) -> Result<String> {
+        // Read the persisted workspace_id before the conversation is moved
+        // into SessionState, so we can restore it to session_workspaces.
+        let persisted_workspace_id = conversation
+            .as_ref()
+            .and_then(|c| c.workspace_id())
+            .map(|w| w.to_string());
+
         let (inbound_tx, inbound_rx) =
             mpsc::channel(self.config.inbound_channel_capacity);
 
@@ -273,6 +293,12 @@ impl SessionManager {
 
         self.sessions.insert(session_id.clone(), handle);
         tracing::info!(session_id = %session_id, "SessionManager: created new session");
+
+        // Initialize per-session workspace.
+        // For resumed sessions, restore the persisted workspace_id from JSONL metadata.
+        // New sessions default to agent home.
+        let initial_workspace = persisted_workspace_id.unwrap_or_else(|| "__agent_home__".to_string());
+        self.session_workspaces.insert(session_id.clone(), initial_workspace);
 
         // Re-apply any runtime config overrides accumulated from prior
         // Gateway pushes. Without this, a new session would start from the
@@ -379,6 +405,11 @@ impl SessionManager {
 
         // Send Stop signal; ignore errors (session may have already stopped)
         let _ = handle.inbound_tx.send(SessionMessage::Stop).await;
+
+        // Clean up per-session workspace mappings
+        self.session_workspaces.remove(session_id);
+        self.pending_workspaces.remove(session_id);
+
         tracing::info!(session_id = %session_id, "SessionManager: destroyed session");
         Ok(())
     }
@@ -844,6 +875,118 @@ impl SessionManager {
             }
         }
         tracing::info!(evicted = to_evict.len(), "Idle session eviction complete");
+    }
+
+    // ── per-session workspace management ─────────────────────────────────
+
+    /// Get the agent home path (derived from core config).
+    pub fn agent_home(&self) -> &str {
+        &self.core.config().work_dir
+    }
+
+    /// Set the current workspace for a specific session.
+    ///
+    /// Updates both the in-memory map and persists to the session's JSONL
+    /// conversation file (when one exists).
+    pub fn set_session_workspace(&mut self, session_id: &str, workspace_id: &str) {
+        self.session_workspaces
+            .insert(session_id.to_string(), workspace_id.to_string());
+        // Remove from pending if the workspace is now active
+        self.pending_workspaces.remove(session_id);
+        tracing::info!(
+            session_id = %session_id,
+            workspace_id = %workspace_id,
+            "SessionManager: session workspace updated"
+        );
+        // Persist to the session's JSONL conversation file
+        if let Some(handle) = self.sessions.get(session_id) {
+            let _ = handle.send(SessionMessage::SetWorkspaceId {
+                workspace_id: workspace_id.to_string(),
+            });
+        }
+    }
+
+    /// Get the current workspace ID for a session.
+    /// Returns `"__agent_home__"` if the session has no explicit workspace set.
+    pub fn session_workspace_id(&self, session_id: &str) -> &str {
+        self.session_workspaces
+            .get(session_id)
+            .map(|s| s.as_str())
+            .unwrap_or("__agent_home__")
+    }
+
+    /// Get the current working directory path for a session.
+    /// Returns `(path, is_agent_home)`.
+    pub fn current_dir_for(&self, session_id: &str, resolver: &WorkspaceResolver) -> (String, bool) {
+        let ws_id = self.session_workspace_id(session_id);
+        if ws_id == "__agent_home__" {
+            return (resolver.agent_home().to_string(), true);
+        }
+        match resolver.find_by_id(ws_id) {
+            Some(dir) => (dir.path.clone(), false),
+            None => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    workspace_id = %ws_id,
+                    "Session workspace not found in resolver, falling back to agent home"
+                );
+                (resolver.agent_home().to_string(), true)
+            }
+        }
+    }
+
+    /// Format and send workspace context to a specific session only.
+    pub fn update_session_workspace_context(
+        &mut self,
+        session_id: &str,
+        resolver: &WorkspaceResolver,
+    ) {
+        let ws_id = self.session_workspace_id(session_id);
+        let context_text = format_workspace_context_for_session(resolver, ws_id);
+        if let Some(handle) = self.sessions.get(session_id) {
+            let _ = handle.send(SessionMessage::UpdateWorkspaceContext {
+                context_text,
+            });
+            tracing::info!(
+                session_id = %session_id,
+                workspace_id = %ws_id,
+                "SessionManager: sent per-session workspace context"
+            );
+        } else {
+            tracing::warn!(
+                session_id = %session_id,
+                "SessionManager: cannot update workspace context — session not found"
+            );
+        }
+    }
+
+    /// Reconcile deleted workspaces: for all sessions whose selected workspace
+    /// is no longer in the resolver's allowed list, move to pending and fallback
+    /// to agent home.
+    pub fn reconcile_deleted_workspaces(&mut self, resolver: &WorkspaceResolver) {
+        let mut changes: Vec<(String, String)> = Vec::new();
+        for (sid, ws_id) in &self.session_workspaces {
+            if ws_id == "__agent_home__" {
+                continue;
+            }
+            if resolver.find_by_id(ws_id).is_none() {
+                changes.push((sid.clone(), ws_id.clone()));
+            }
+        }
+        for (sid, old_ws_id) in changes {
+            self.pending_workspaces.insert(sid.clone(), old_ws_id.clone());
+            self.session_workspaces.insert(sid.clone(), "__agent_home__".to_string());
+            tracing::info!(
+                session_id = %sid,
+                old_workspace_id = %old_ws_id,
+                "SessionManager: workspace deleted, moved to pending + fallback to agent home"
+            );
+        }
+    }
+
+    /// Get the pending workspace ID for a session, if any.
+    pub fn pending_workspace_id(&self, session_id: &str) -> Option<&str> {
+        self.pending_workspaces.get(session_id).map(|s| s.as_str())
     }
 }
 

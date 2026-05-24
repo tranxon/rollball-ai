@@ -129,7 +129,7 @@ impl GlobalResourcePusher {
     /// Push MCP catalog changes to all running agents after a catalog mutation.
     #[tracing::instrument(skip(self), name = "push_mcp_catalog")]
     pub async fn push_mcp_catalog(&self) {
-        use crate::http::{agent_config, mcp_catalog_api};
+        use crate::http::mcp_catalog_api;
         use rollball_core::protocol::McpServerConfigDef;
         use tokio::task::JoinSet;
 
@@ -156,43 +156,16 @@ impl GlobalResourcePusher {
             }
         };
 
-        // ── Phase 2: Build per-agent merged server lists (blocking I/O) ──
-        let data_dir = self.data_dir.clone();
-        let agent_ids_clone = agent_ids.clone();
-        let per_agent_configs: Vec<(String, Vec<McpServerConfigDef>)> =
-            tokio::task::spawn_blocking(move || {
-                let mut results = Vec::new();
-                for aid in &agent_ids_clone {
-                    let per_agent =
-                        agent_config::load_agent_config(&data_dir, aid).unwrap_or(None);
-                    let active_servers = match &per_agent {
-                        Some(cfg) => cfg.mcp_servers.clone().unwrap_or_default(),
-                        None => Vec::new(),
-                    };
-                    results.push((aid.clone(), active_servers));
-                }
-                results
-            })
-            .await
-            .unwrap_or_default();
-
-        let mut push_targets: Vec<(String, Vec<McpServerConfigDef>)> = Vec::new();
-        for (aid, active_servers) in per_agent_configs {
-            if active_servers.is_empty() {
-                continue;
-            }
-            let merged: Vec<McpServerConfigDef> = active_servers
-                .into_iter()
-                .map(|s| {
-                    catalog
-                        .iter()
-                        .find(|c| c.name == s.name)
-                        .cloned()
-                        .unwrap_or(s)
-                })
-                .collect();
-            push_targets.push((aid, merged));
+        // Per-agent MCP config is now owned by Runtime ({work_dir}/config/agent_config.json).
+        // Gateway no longer stores per-agent MCP configuration, so we cannot filter
+        // by per-agent active servers. Push the full catalog to all running agents;
+        // Runtime will filter based on its own persisted config.
+        if agent_ids.is_empty() || catalog.is_empty() {
+            return;
         }
+
+        let push_targets: Vec<(String, Vec<McpServerConfigDef>)> =
+            agent_ids.into_iter().map(|aid| (aid, catalog.clone())).collect();
 
         if push_targets.is_empty() {
             return;

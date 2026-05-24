@@ -282,7 +282,7 @@ export function ChatPanel() {
           connectStream(selectedAgentId, getGatewayUrl());
         }
       }
-      // Load model from Gateway API FIRST (reads per-agent .agent_model.json),
+      // Load model from Gateway API FIRST (reads per-agent agent_model.json),
       // THEN reload the model list. This ensures currentModel is set before
       // setAvailableModels runs, preventing the fallback-to-first-model bug.
       const initModel = async () => {

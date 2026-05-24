@@ -438,6 +438,7 @@ async fn test_redteam_path_traversal_blocked() {
 
     let inner = Arc::new(FileReadTool);
     let tool = PathGuardedTool::new(inner, vec![WorkspaceDir {
+        id: "ws".to_string(),
         path: "/workspace/agent-data".to_string(),
         access: WorkspaceAccess::ReadWrite,
     }]);

@@ -56,6 +56,11 @@ pub struct SessionMetadata {
     /// When true, other fields may contain degraded/default values.
     #[serde(default)]
     pub corrupted: bool,
+    /// Per-session workspace selection.
+    /// `None` or `"__agent_home__"` means the agent's home directory.
+    /// Persisted so sessions restore their workspace on cold start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 /// Commands sent to the background writer thread.
@@ -177,6 +182,9 @@ pub struct ConversationSession {
     title_set: AtomicBool,
     /// Currently persisted title, for deduplicating force-update calls.
     current_title: std::sync::Mutex<Option<String>>,
+    /// Per-session workspace selection, persisted in JSONL metadata.
+    /// `None` or `"__agent_home__"` means the agent's home directory.
+    workspace_id: Option<String>,
     sender: mpsc::UnboundedSender<WriterCommand>,
     /// Path to the JSONL file (for session-level distillation on close).
     session_file_path: PathBuf,
@@ -210,6 +218,7 @@ impl ConversationSession {
             updated_at: Some(now),
             message_count: Some(0),
             corrupted: false,
+            workspace_id: None,
         };
 
         // Write metadata as the first line — build complete line then single write
@@ -229,6 +238,7 @@ impl ConversationSession {
             created_at: now_for_self,
             title_set: AtomicBool::new(false),
             current_title: std::sync::Mutex::new(None),
+            workspace_id: None,
             sender: tx,
             session_file_path: file_path,
         })
@@ -260,6 +270,7 @@ impl ConversationSession {
             created_at: meta.created_at,
             title_set: AtomicBool::new(meta.title.is_some()),
             current_title: std::sync::Mutex::new(meta.title.clone()),
+            workspace_id: meta.workspace_id.clone(),
             sender: tx,
             session_file_path: file_path,
         })
@@ -366,6 +377,7 @@ impl ConversationSession {
             updated_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
             message_count: None,
             corrupted: false,
+            workspace_id: self.workspace_id.clone(),
         };
         self.update_metadata(metadata);
         // Track current title for dedup
@@ -405,6 +417,7 @@ impl ConversationSession {
             updated_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
             message_count: None,
             corrupted: false,
+            workspace_id: self.workspace_id.clone(),
         };
         self.update_metadata(metadata);
         // Track current title for dedup
@@ -413,6 +426,37 @@ impl ConversationSession {
         }
         tracing::info!(session_id = %self.session_id, title = %truncated, "Session title force-updated via API");
         true
+    }
+
+    /// Persist the per-session workspace selection to the JSONL metadata.
+    ///
+    /// Rewrites the first line of the JSONL file so the workspace binding
+    /// survives cold restarts. Does NOT mutate the in-memory
+    /// `SessionManager.session_workspaces` — the caller is responsible for
+    /// keeping the two in sync.
+    pub fn update_workspace_id(&self, workspace_id: &str) {
+        let metadata = SessionMetadata {
+            version: CONVERSATION_FORMAT_VERSION,
+            session_id: self.session_id.clone(),
+            created_at: self.created_at.clone(),
+            agent_id: self.agent_id.clone(),
+            title: self.current_title.lock().ok().and_then(|t| t.clone()),
+            updated_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            message_count: None,
+            corrupted: false,
+            workspace_id: Some(workspace_id.to_string()),
+        };
+        self.update_metadata(metadata);
+        tracing::info!(
+            session_id = %self.session_id,
+            workspace_id = %workspace_id,
+            "Session workspace_id persisted to JSONL"
+        );
+    }
+
+    /// Return the persisted workspace_id, if any.
+    pub fn workspace_id(&self) -> Option<&str> {
+        self.workspace_id.as_deref()
     }
 }
 
@@ -726,6 +770,7 @@ pub fn read_session_metadata(path: &Path) -> Result<SessionMetadata> {
                 updated_at: None,
                 message_count: None,
                 corrupted: true,
+                workspace_id: None,
             })
         }
     }
@@ -965,6 +1010,7 @@ mod tests {
                 updated_at: None,
                 message_count: Some(0),
                 corrupted: false,
+                workspace_id: None,
             };
             let mut file = std::fs::File::create(&path).unwrap();
             serde_json::to_writer(&mut file, &meta).unwrap();
@@ -996,6 +1042,7 @@ mod tests {
                 updated_at: None,
                 message_count: Some(5),
                 corrupted: false,
+                workspace_id: None,
             };
             serde_json::to_writer(&mut file, &meta).unwrap();
             writeln!(file).unwrap();
@@ -1162,6 +1209,7 @@ mod tests {
             updated_at: None,
             message_count: Some(3),
             corrupted: false,
+            workspace_id: None,
         };
         let mut file = std::fs::File::create(&file_path).unwrap();
         serde_json::to_writer(&mut file, &meta).unwrap();
@@ -1191,6 +1239,7 @@ mod tests {
             updated_at: None,
             message_count: Some(0),
             corrupted: false,
+            workspace_id: None,
         };
         let mut file = std::fs::File::create(&valid_path).unwrap();
         serde_json::to_writer(&mut file, &valid_meta).unwrap();

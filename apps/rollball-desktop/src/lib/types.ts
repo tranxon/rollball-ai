@@ -506,6 +506,8 @@ export interface SessionInfo {
   title: string | null;
   /** ADR-014: Session lifecycle status from backend (source of truth) */
   status?: SessionStatus;
+  /** Per-session workspace selection ("__agent_home__" = agent home) */
+  workspace_id?: string;
 }
 
 /** ADR-014: Session lifecycle status — read-only from backend */
