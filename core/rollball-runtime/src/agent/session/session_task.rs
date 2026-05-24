@@ -71,6 +71,8 @@ pub enum SessionMessage {
     },
     /// Update the title of the session's conversation
     UpdateSessionTitle { title: String },
+    /// Persist the per-session workspace_id to the JSONL conversation file
+    SetWorkspaceId { workspace_id: String },
     /// Interrupt signal to stop the current agent loop iteration
     Interrupt { reason: String },
     /// Stop the session gracefully
@@ -623,6 +625,14 @@ impl SessionTask {
                         "SessionTask: updating session title"
                     );
                     let _ = agent_loop.update_session_title(&title);
+                }
+                Some(SessionMessage::SetWorkspaceId { workspace_id }) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        workspace_id = %workspace_id,
+                        "SessionTask: persisting workspace_id to JSONL"
+                    );
+                    agent_loop.update_session_workspace_id(&workspace_id);
                 }
                 Some(SessionMessage::Interrupt { reason }) => {
                     tracing::info!(

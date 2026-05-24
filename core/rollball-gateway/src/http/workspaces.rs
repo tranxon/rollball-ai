@@ -10,7 +10,7 @@
 //! Agent must be running (HTTP API returns 409 if not).
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
     routing::get,
@@ -29,9 +29,11 @@ pub struct WorkspaceDir {
     pub alias: Option<String>,
     pub access: AccessLevel,
     pub added_at: String,
-    /// Whether this is the currently selected workspace
-    #[serde(default)]
-    pub is_current: bool,
+    /// Deprecated: replaced by session-level workspace selection.
+    /// Renamed from `is_current` for backward-compatible JSON reading.
+    /// Frontend should read `sessionWorkspaceMap` instead.
+    #[serde(default, alias = "is_current")]
+    pub last_active: bool,
     /// Cumulative selection count for context ranking
     #[serde(default)]
     pub select_count: u32,
@@ -67,6 +69,13 @@ pub struct AddWorkspaceRequest {
 #[derive(Debug, Deserialize)]
 pub struct SetCurrentWorkspaceRequest {
     pub workspace_id: String,
+}
+
+/// Query parameters for set_current_workspace (optional session_id for per-session selection).
+#[derive(Debug, Deserialize, Default)]
+pub struct SetCurrentWorkspaceQuery {
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// Request to update a workspace directory
@@ -209,7 +218,7 @@ pub async fn add_workspace(
         alias: req.alias,
         access: req.access,
         added_at: chrono::Utc::now().to_rfc3339(),
-        is_current: false,
+        last_active: false,
         select_count: 0,
         last_selected_at: None,
     };
@@ -255,35 +264,74 @@ pub async fn update_workspace(
 }
 
 /// `PUT /api/agents/{agent_id}/workspaces/current` — set the current (active) workspace
+///
+/// Optional query param `session_id` enables per-session workspace selection.
+/// When provided, Gateway also sends `SetSessionWorkspace` IPC to the Runtime
+/// in addition to the `WorkspaceConfigUpdate` (which updates list stats).
 pub async fn set_current_workspace(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    Query(query): Query<SetCurrentWorkspaceQuery>,
     Json(req): Json<SetCurrentWorkspaceRequest>,
 ) -> Result<Json<WorkspaceListResponse>, (StatusCode, Json<ApiError>)> {
     let mut config = get_cached_config(&state, &agent_id).await
         .ok_or_else(|| ApiError::not_found("Agent not running — cannot set workspace"))?;
 
-    // Check that the target workspace exists
-    if !config.additional_dirs.iter().any(|d| d.id == req.workspace_id) {
+    // Validate workspace: either "__agent_home__" or an existing workspace ID
+    let is_agent_home = req.workspace_id == "__agent_home__";
+    if !is_agent_home && !config.additional_dirs.iter().any(|d| d.id == req.workspace_id) {
         return Err(ApiError::not_found(&format!(
             "Workspace directory not found: {}",
             req.workspace_id
         )));
     }
 
-    // Clear is_current on all workspaces, then set on target
-    let now = chrono::Utc::now().to_rfc3339();
-    for dir in &mut config.additional_dirs {
-        if dir.id == req.workspace_id {
-            dir.is_current = true;
-            dir.select_count += 1;
-            dir.last_selected_at = Some(now.clone());
-        } else {
-            dir.is_current = false;
+    // When session_id is provided, push SetSessionWorkspace to Runtime
+    if let Some(ref session_id) = query.session_id {
+        if let Some(ref session_mgr) = state.session_mgr {
+            let push_tx = {
+                let mgr = session_mgr.lock().await;
+                mgr.find_by_agent_id(&agent_id)
+                    .and_then(|(_, session)| session.push_sender().cloned())
+            };
+            if let Some(push_tx) = push_tx {
+                let push_msg = rollball_core::protocol::GatewayResponse::SetSessionWorkspace {
+                    session_id: session_id.clone(),
+                    workspace_id: req.workspace_id.clone(),
+                };
+                if push_tx.send(push_msg).await.is_err() {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        session_id = %session_id,
+                        "Failed to push SetSessionWorkspace (channel closed)"
+                    );
+                } else {
+                    tracing::info!(
+                        agent_id = %agent_id,
+                        session_id = %session_id,
+                        workspace_id = %req.workspace_id,
+                        "Pushed SetSessionWorkspace to Runtime"
+                    );
+                }
+            }
         }
     }
 
-    // Push to Runtime + update cache
+    // Update select_count and last_selected_at for the selected workspace (if it's a user workspace)
+    if !is_agent_home {
+        let now = chrono::Utc::now().to_rfc3339();
+        for dir in &mut config.additional_dirs {
+            if dir.id == req.workspace_id {
+                dir.last_active = true;
+                dir.select_count += 1;
+                dir.last_selected_at = Some(now.clone());
+            } else {
+                dir.last_active = false;
+            }
+        }
+    }
+
+    // Push WorkspaceConfigUpdate to Runtime (updates list stats + cache)
     push_and_cache(&state, &agent_id, &config).await
         .map_err(|e| ApiError::internal(&e))?;
 

@@ -1,21 +1,28 @@
-//! Workspace directory resolver — single source of truth for "where tools operate".
+//! Workspace directory resolver — manages the list of allowed directories.
 //!
-//! All file-operation tools (content_search, glob_search, file_read/write/edit, shell)
-//! must go through `WorkspaceResolver` to determine which directory to act on.
+//! ## Responsibility split (Session-level workspace refactor)
 //!
-//! ## Priority
+//! - **WorkspaceResolver** (this module): manages the Agent-level workspace
+//!   list — allowed directories, path validation, search directories.
+//!   *No longer owns "current directory" selection* — that belongs to
+//!   `SessionManager` per session.
 //!
-//! 1. **`current_dir()`**: the directory the user is "working in".
-//!    - Determined by `is_current: true` in `.agent_workspaces.json`
-//!    - Falls back to `agent_home` if no workspace is marked current
+//! - **SessionManager**: owns per-session `current_dir` mapping
+//!   (`session_id → workspace_id`). Tool execution queries
+//!   `SessionManager::current_dir_for(session_id)` instead of
+//!   `WorkspaceResolver::current_dir()`.
 //!
-//! 2. **`agent_home()`**: the agent's install directory.
-//!    - Used for runtime data: conversations, memory, logs, identity
-//!    - This is the `work_dir` passed from CLI/gRPC
+//! ## Key APIs
 //!
-//! 3. **`search_dirs()`**: directories to search (content_search / glob_search).
-//!    - All workspace directories (including non-current ones)
-//!    - Falls back to `[agent_home]` if no workspaces configured
+//! 1. **`agent_home()`**: the agent's install directory.
+//!    Used for runtime data: conversations, memory, logs, identity.
+//!
+//! 2. **`search_dirs()`**: directories to search (content_search / glob_search).
+//!    All workspace directories. Falls back to `[agent_home]`.
+//!
+//! 3. **`allowed_dirs()`**: all allowed dirs (for PathGuardedTool validation).
+//!
+//! 4. **`find_by_id()`**: look up a workspace by its ID.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -69,6 +76,7 @@ impl<'de> serde::Deserialize<'de> for WorkspaceAccess {
 /// A single workspace directory entry
 #[derive(Clone, Debug)]
 pub struct WorkspaceDir {
+    pub id: String,
     pub path: String,
     pub access: WorkspaceAccess,
 }
@@ -77,14 +85,15 @@ pub struct WorkspaceDir {
 ///
 /// Constructed once at startup from the agent's `work_dir`.
 /// Reads `.agent_workspaces.json` to discover user-configured directories.
+///
+/// Does NOT manage "current directory" — that is per-session state
+/// owned by `SessionManager`.
 #[derive(Clone, Debug)]
 pub struct WorkspaceResolver {
     /// Agent install dir (for logs, conversations, memory, identity)
     agent_home: String,
     /// All allowed dirs from .agent_workspaces.json + fallbacks
     allowed_dirs: Vec<WorkspaceDir>,
-    /// Index of the `is_current=true` entry in allowed_dirs, if any
-    current_dir_index: Option<usize>,
 }
 
 impl WorkspaceResolver {
@@ -93,11 +102,10 @@ impl WorkspaceResolver {
     /// Reads `.agent_workspaces.json` from `work_dir` to discover
     /// user-configured workspace directories.
     pub fn new(work_dir: &str) -> Self {
-        let (allowed_dirs, current_dir_index) = load_workspace_dirs(work_dir);
+        let allowed_dirs = load_workspace_dirs(work_dir);
         Self {
             agent_home: work_dir.to_string(),
             allowed_dirs,
-            current_dir_index,
         }
     }
 
@@ -109,23 +117,15 @@ impl WorkspaceResolver {
         Self::new(work_dir)
     }
 
-    /// The "current working directory" for file operations.
-    ///
-    /// Priority: first `is_current=true` workspace dir > fallback to agent_home.
-    ///
-    /// This is what file_read/write/edit/shell use as the base directory,
-    /// and what content_search/glob_search use when no `path` param is given.
-    pub fn current_dir(&self) -> &str {
-        if let Some(idx) = self.current_dir_index {
-            &self.allowed_dirs[idx].path
-        } else {
-            &self.agent_home
-        }
-    }
-
     /// Agent home dir (for conversations, memory, logs, identity, etc.)
     pub fn agent_home(&self) -> &str {
         &self.agent_home
+    }
+
+    /// Look up a workspace directory by its ID.
+    /// Returns None if not found.
+    pub fn find_by_id(&self, id: &str) -> Option<&WorkspaceDir> {
+        self.allowed_dirs.iter().find(|d| d.id == id)
     }
 
     /// All searchable directories (for content_search / glob_search).
@@ -147,10 +147,7 @@ impl WorkspaceResolver {
 }
 
 /// Load workspace directories from `.agent_workspaces.json`.
-///
-/// Returns `(dirs, current_index)` where `current_index` is the index of the
-/// `is_current=true` entry (if any).
-fn load_workspace_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
+fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
     #[derive(Deserialize)]
     #[allow(dead_code)]
     struct WorkspaceConfig {
@@ -185,14 +182,11 @@ fn load_workspace_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
     match std::fs::read_to_string(&config_path) {
         Ok(content) => match serde_json::from_str::<WorkspaceConfig>(&content) {
             Ok(config) => {
-                let mut current_index = None;
                 let mut dirs: Vec<WorkspaceDir> = Vec::new();
 
-                for (i, entry) in config.additional_dirs.into_iter().enumerate() {
-                    if entry.is_current && current_index.is_none() {
-                        current_index = Some(i);
-                    }
+                for entry in config.additional_dirs.into_iter() {
                     dirs.push(WorkspaceDir {
+                        id: entry.id,
                         path: entry.path,
                         access: if entry.access == "read-write" {
                             WorkspaceAccess::ReadWrite
@@ -207,6 +201,7 @@ fn load_workspace_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
                     let package_root_str = package_root.to_string_lossy().to_string();
                     if package_root_str != work_dir {
                         dirs.push(WorkspaceDir {
+                            id: "__package_root__".to_string(),
                             path: package_root_str,
                             access: WorkspaceAccess::ReadOnly,
                         });
@@ -215,6 +210,7 @@ fn load_workspace_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
 
                 // Always include agent_home as read-write
                 dirs.push(WorkspaceDir {
+                    id: "__agent_home__".to_string(),
                     path: work_dir.to_string(),
                     access: WorkspaceAccess::ReadWrite,
                 });
@@ -222,12 +218,11 @@ fn load_workspace_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
                 tracing::info!(
                     work_dir,
                     count = dirs.len(),
-                    current_dir = ?current_index.map(|i| &dirs[i].path),
                     dirs = ?dirs.iter().map(|d| d.path.as_str()).collect::<Vec<_>>(),
                     "Loaded workspace directories from .agent_workspaces.json"
                 );
 
-                (dirs, current_index)
+                dirs
             }
             Err(e) => {
                 tracing::error!(
@@ -250,7 +245,7 @@ fn load_workspace_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
 }
 
 /// Fallback: use work_dir as the only allowed directory
-fn fallback_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
+fn fallback_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
     let mut dirs = vec![];
 
     // Include package root as read-only
@@ -258,6 +253,7 @@ fn fallback_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
         let package_root_str = package_root.to_string_lossy().to_string();
         if package_root_str != work_dir {
             dirs.push(WorkspaceDir {
+                id: "__package_root__".to_string(),
                 path: package_root_str,
                 access: WorkspaceAccess::ReadOnly,
             });
@@ -265,11 +261,12 @@ fn fallback_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
     }
 
     dirs.push(WorkspaceDir {
+        id: "__agent_home__".to_string(),
         path: work_dir.to_string(),
         access: WorkspaceAccess::ReadWrite,
     });
 
-    (dirs, None)
+    dirs
 }
 
 // ── Persistence & Formatting ───────────────────────────────────────────────
@@ -283,8 +280,11 @@ pub struct WorkspaceDirFull {
     pub alias: Option<String>,
     pub access: WorkspaceAccess,
     pub added_at: String,
-    #[serde(default)]
-    pub is_current: bool,
+    /// Deprecated: replaced by session-level workspace selection.
+    /// Renamed from `is_current` for backward-compatible JSON reading.
+    /// Still stored in JSON but no longer drives context formatting.
+    #[serde(default, alias = "is_current")]
+    pub last_active: bool,
     #[serde(default)]
     pub select_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -328,137 +328,88 @@ pub fn write_workspace_config(work_dir: &str, config_json: &str) -> Result<(), S
     Ok(())
 }
 
-/// Format workspace context Markdown from the raw config JSON.
+/// Format workspace context for a specific session.
 ///
-/// This is the Runtime-side equivalent of what Gateway's `format_workspace_context`
-/// used to do. The Runtime now self-formats its LLM context.
-///
-/// `install_path` is the agent's home directory (for the "Agent Home Directory" label).
-pub fn format_workspace_context_from_json(config_json: &str, install_path: &str) -> String {
-    let config: WorkspaceConfigFull = match serde_json::from_str(config_json) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to parse workspace config JSON for formatting");
-            return format_workspace_context_fallback(install_path);
-        }
-    };
-    format_workspace_context_full(&config.additional_dirs, install_path)
-}
+/// Takes the WorkspaceResolver (for the full allowed list + agent_home),
+/// and the session's current workspace selection.
+/// `current_ws_id` of `"__agent_home__"` means agent home is active.
+pub fn format_workspace_context_for_session(
+    resolver: &WorkspaceResolver,
+    current_ws_id: &str,
+) -> String {
+    // Determine current directory path
+    let (current_path, current_alias, current_access, is_agent_home) =
+        if current_ws_id == "__agent_home__" {
+            (resolver.agent_home().to_string(), None::<String>, None, true)
+        } else {
+            match resolver.find_by_id(current_ws_id) {
+                Some(dir) => (
+                    dir.path.clone(),
+                    None, // alias not stored in WorkspaceDir
+                    Some(dir.access.clone()),
+                    false,
+                ),
+                None => (
+                    resolver.agent_home().to_string(),
+                    None,
+                    None,
+                    true,
+                ),
+            }
+        };
 
-/// Compute the list of workspaces to inject into LLM context (at most 3).
-fn compute_context_workspaces(workspaces: &[WorkspaceDirFull]) -> Vec<usize> {
-    if workspaces.is_empty() {
-        return Vec::new();
-    }
-
-    let current_idx = workspaces.iter().position(|w| w.is_current);
-
-    let max_select = workspaces.iter().map(|w| w.select_count).max().unwrap_or(0);
-
-    let now = chrono::Utc::now();
-    let mut scored: Vec<(f64, usize)> = workspaces
-        .iter()
-        .enumerate()
-        .filter(|(_, w)| !w.is_current)
-        .map(|(i, w)| {
-            let normalized = if max_select > 0 {
-                w.select_count as f64 / max_select as f64
-            } else {
-                0.0
-            };
-
-            let days_since = w
-                .last_selected_at
-                .as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
-                .map(|dt| {
-                    let dur = now.signed_duration_since(dt.with_timezone(&chrono::Utc));
-                    (dur.num_days().max(0) as f64)
-                })
-                .unwrap_or(1e9_f64);
-
-            let recency = 1.0 / (1.0 + days_since);
-            (normalized * 0.3 + recency * 0.7, i)
-        })
-        .collect();
-
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut result = Vec::new();
-    if let Some(idx) = current_idx {
-        result.push(idx);
-    }
-    for (_, idx) in scored.into_iter().take(2) {
-        if result.len() >= 3 {
-            break;
-        }
-        result.push(idx);
-    }
-    result
-}
-
-/// Escape special characters for Markdown table cells.
-fn escape_md(s: &str) -> String {
-    s.replace('|', "\\|").replace('\n', " ").replace('\r', "")
-}
-
-/// Produce the final Markdown context text.
-fn format_workspace_context_full(workspaces: &[WorkspaceDirFull], install_path: &str) -> String {
     let mut buf = String::new();
     buf.push_str("## Workspace Environment\n\n");
 
-    if workspaces.is_empty() {
+    // 1. Current Working Directory
+    if is_agent_home {
         buf.push_str(&format!(
             "Current Working Directory: {} (agent home)\n",
-            escape_md(install_path)
+            escape_md(&current_path)
         ));
-        buf.push_str("No additional workspaces have been configured. Use the Agent Home Directory above\n");
-        buf.push_str("as the default working directory for all file and shell operations.\n");
-        return buf;
-    }
-
-    let active = workspaces.iter().find(|w| w.is_current);
-
-    // 1. Current Working Directory
-    if let Some(current) = active {
-        let alias = current.alias.as_deref().unwrap_or("-");
+    } else {
+        let alias = current_alias.as_deref().unwrap_or("-");
+        let access_str = current_access
+            .as_ref()
+            .map(|a| a.as_str())
+            .unwrap_or("read-write");
         buf.push_str(&format!(
             "Current Working Directory: {} ({}, {})\n",
-            escape_md(&current.path),
+            escape_md(&current_path),
             alias,
-            current.access,
+            access_str,
         ));
         buf.push_str("This is your currently active workspace.\n\n");
-    } else {
-        buf.push_str(&format!(
-            "Current Working Directory: {} (agent home)\n",
-            escape_md(install_path)
-        ));
-        buf.push_str("No workspace is currently selected. The agent's home directory is the default working directory.\n\n");
     }
 
     // 2. Agent Home Directory
     buf.push_str(&format!(
         "Agent Home Directory: {} (installation directory)\n\n",
-        escape_md(install_path)
+        escape_md(resolver.agent_home())
     ));
 
-    // 3. Available Workspaces table
-    buf.push_str("### Available Workspaces\n");
-    buf.push_str("| # | Alias | Path | Access | Active |\n");
-    buf.push_str("|---|-------|------|--------|--------|\n");
+    // 3. Available Workspaces table (user workspaces only, not synthetic entries)
+    let user_workspaces: Vec<&WorkspaceDir> = resolver
+        .allowed_dirs()
+        .iter()
+        .filter(|d| d.id != "__agent_home__" && d.id != "__package_root__")
+        .collect();
 
-    for (i, ws) in workspaces.iter().enumerate() {
-        let alias = escape_md(ws.alias.as_deref().unwrap_or("-"));
-        let active_marker = if ws.is_current { "*" } else { "" };
-        buf.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
-            i + 1,
-            alias,
-            escape_md(&ws.path),
-            ws.access,
-            active_marker,
-        ));
+    if !user_workspaces.is_empty() {
+        buf.push_str("### Available Workspaces\n");
+        buf.push_str("| # | Path | Access |\n");
+        buf.push_str("|---|------|--------|\n");
+
+        for (i, ws) in user_workspaces.iter().enumerate() {
+            let active_marker = if ws.id == current_ws_id { " *" } else { "" };
+            buf.push_str(&format!(
+                "| {} | {} | {} |\n",
+                i + 1,
+                escape_md(&ws.path),
+                ws.access,
+            ));
+            let _ = active_marker;
+        }
     }
 
     buf.push_str("\nIMPORTANT: When performing file operations or running shell commands, ALWAYS use the\n");
@@ -467,6 +418,72 @@ fn format_workspace_context_full(workspaces: &[WorkspaceDirFull], install_path: 
     buf.push_str("configuration files, not your project code.\n");
     buf.push_str("All listed directories are authorized for access at the indicated permission level.\n");
 
+    buf
+}
+
+/// Legacy: format workspace context from the raw config JSON.
+/// Kept for backward compatibility during transition.
+/// Prefer `format_workspace_context_for_session` for session-aware formatting.
+pub fn format_workspace_context_from_json(config_json: &str, install_path: &str) -> String {
+    let config: WorkspaceConfigFull = match serde_json::from_str(config_json) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to parse workspace config JSON for formatting");
+            return format_workspace_context_fallback(install_path);
+        }
+    };
+    format_workspace_context_full_legacy(&config.additional_dirs, install_path)
+}
+
+/// Escape special characters for Markdown table cells.
+fn escape_md(s: &str) -> String {
+    s.replace('|', "\\|").replace('\n', " ").replace('\r', "")
+}
+
+/// Legacy: format workspace context with the old `last_active` logic.
+fn format_workspace_context_full_legacy(workspaces: &[WorkspaceDirFull], install_path: &str) -> String {
+    let mut buf = String::new();
+    buf.push_str("## Workspace Environment\n\n");
+
+    if workspaces.is_empty() {
+        buf.push_str(&format!(
+            "Current Working Directory: {} (agent home)\n",
+            escape_md(install_path)
+        ));
+        buf.push_str("No additional workspaces have been configured.\n");
+        return buf;
+    }
+
+    let active = workspaces.iter().find(|w| w.last_active);
+    if let Some(current) = active {
+        let alias = current.alias.as_deref().unwrap_or("-");
+        buf.push_str(&format!(
+            "Current Working Directory: {} ({}, {})\n",
+            escape_md(&current.path),
+            alias,
+            current.access,
+        ));
+    } else {
+        buf.push_str(&format!(
+            "Current Working Directory: {} (agent home)\n",
+            escape_md(install_path)
+        ));
+    }
+    buf.push_str(&format!(
+        "Agent Home Directory: {} (installation directory)\n\n",
+        escape_md(install_path)
+    ));
+    buf.push_str("### Available Workspaces\n");
+    buf.push_str("| # | Alias | Path | Access | Active |\n");
+    buf.push_str("|---|-------|------|--------|--------|\n");
+    for (i, ws) in workspaces.iter().enumerate() {
+        let alias = escape_md(ws.alias.as_deref().unwrap_or("-"));
+        let active_marker = if ws.last_active { "*" } else { "" };
+        buf.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            i + 1, alias, escape_md(&ws.path), ws.access, active_marker,
+        ));
+    }
     buf
 }
 
@@ -488,13 +505,17 @@ mod tests {
     fn test_resolver_no_config_file() {
         let dir = tempfile::tempdir().unwrap();
         let resolver = WorkspaceResolver::new(dir.path().to_str().unwrap());
-        // Falls back to work_dir as current_dir
-        assert_eq!(resolver.current_dir(), dir.path().to_str().unwrap());
         assert_eq!(resolver.agent_home(), dir.path().to_str().unwrap());
+        // find_by_id should work for synthetic entries
+        assert!(resolver.find_by_id("__agent_home__").is_some());
+        assert_eq!(
+            resolver.find_by_id("__agent_home__").unwrap().path,
+            dir.path().to_str().unwrap()
+        );
     }
 
     #[test]
-    fn test_resolver_with_current_workspace() {
+    fn test_resolver_with_workspaces() {
         let dir = tempfile::tempdir().unwrap();
         let config = r#"{
             "version": "1.0.0",
@@ -516,11 +537,18 @@ mod tests {
                 }
             ]
         }"#;
+        std::fs::create_dir_all(dir.path().join("config")).unwrap();
         std::fs::write(dir.path().join("config").join(".agent_workspaces.json"), config).unwrap();
 
         let resolver = WorkspaceResolver::new(dir.path().to_str().unwrap());
-        assert_eq!(resolver.current_dir(), "D:\\projects\\my-project");
         assert_eq!(resolver.agent_home(), dir.path().to_str().unwrap());
+
+        // find_by_id should locate user workspaces
+        let ws1 = resolver.find_by_id("ws-1").unwrap();
+        assert_eq!(ws1.path, "D:\\projects\\my-project");
+        let ws2 = resolver.find_by_id("ws-2").unwrap();
+        assert_eq!(ws2.path, "D:\\projects\\other");
+
         // search_dirs should include all workspace dirs
         let search = resolver.search_dirs();
         assert!(search.iter().any(|d| d.contains("my-project")));
@@ -528,24 +556,33 @@ mod tests {
     }
 
     #[test]
-    fn test_resolver_no_current_workspace() {
+    fn test_format_workspace_context_for_session() {
         let dir = tempfile::tempdir().unwrap();
         let config = r#"{
             "version": "1.0.0",
             "additional_dirs": [
                 {
                     "id": "ws-1",
-                    "path": "D:\\projects\\other",
-                    "alias": "other",
-                    "access": "read-only",
+                    "path": "D:\\projects\\my-project",
+                    "alias": "my-project",
+                    "access": "read-write",
                     "added_at": "2026-05-01T00:00:00Z"
                 }
             ]
         }"#;
+        std::fs::create_dir_all(dir.path().join("config")).unwrap();
         std::fs::write(dir.path().join("config").join(".agent_workspaces.json"), config).unwrap();
 
         let resolver = WorkspaceResolver::new(dir.path().to_str().unwrap());
-        // No is_current=true, so falls back to agent_home
-        assert_eq!(resolver.current_dir(), dir.path().to_str().unwrap());
+
+        // Agent home as current
+        let ctx = format_workspace_context_for_session(&resolver, "__agent_home__");
+        assert!(ctx.contains("(agent home)"));
+        assert!(ctx.contains("my-project"));
+
+        // User workspace as current
+        let ctx = format_workspace_context_for_session(&resolver, "ws-1");
+        assert!(ctx.contains("my-project"));
+        assert!(ctx.contains("read-write"));
     }
 }

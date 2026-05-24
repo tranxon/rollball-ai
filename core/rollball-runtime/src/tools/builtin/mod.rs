@@ -56,7 +56,7 @@ pub fn all_builtin_tools(
     agent_id: &str,
 ) -> Vec<Arc<dyn Tool>> {
     let work_dir = resolver.read().unwrap().agent_home().to_string();
-    let current_dir = resolver.read().unwrap().current_dir().to_string();
+    let current_dir = resolver.read().unwrap().agent_home().to_string();
 
     // Register shell tools based on platform detection
     let shell_tools: Vec<Arc<dyn Tool>> = crate::platform::detected_shells()

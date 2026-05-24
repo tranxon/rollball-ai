@@ -872,28 +872,79 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
     // Provider key vault is always delivered fresh and never persisted to disk.
     let resource_cache = read_resource_cache(std::path::Path::new(&config.work_dir));
 
-    let (provider, mut resolved_model, available_models, protocol_type) = {
+    // Load per-agent model/provider preference BEFORE selecting provider.
+    // Priority: agent_model.json saved provider > manifest suggested_provider
+    // (only if API key exists) > first available provider with API key.
+    let saved_agent_model = load_agent_model(&config.work_dir);
+
+    let (provider, resolved_model, available_models, protocol_type) = {
         if let Some(ref cfg) = hello_config {
             let provider_list = cfg.provider_list.as_ref().or(resource_cache.providers.as_ref());
 
             if let Some(providers) = provider_list {
-                let suggested_provider = &loaded.manifest.llm.suggested_provider;
-                if let Some(prov) = providers.iter().find(|p| p.id == *suggested_provider) {
+                // Check if a provider has an API key in the vault.
+                // A provider without an API key cannot be used.
+                let has_api_key = |prov_id: &str| -> bool {
+                    cfg.provider_key_vault.iter().any(|k| k.provider_id == prov_id)
+                };
+
+                // Priority 1: saved provider from agent_model.json (must have API key)
+                let saved_provider = saved_agent_model.as_ref()
+                    .and_then(|(_, p)| p.as_deref());
+                let chosen_prov = saved_provider
+                    .and_then(|sp| providers.iter().find(|p| p.id == sp && has_api_key(&p.id)));
+
+                // Priority 2: manifest suggested_provider (only if API key exists)
+                let chosen_prov = chosen_prov.or_else(|| {
+                    let suggested = &loaded.manifest.llm.suggested_provider;
+                    if has_api_key(suggested) {
+                        providers.iter().find(|p| p.id == *suggested)
+                    } else {
+                        tracing::info!(
+                            suggested = %suggested,
+                            "Manifest suggested_provider has no API key, skipping"
+                        );
+                        None
+                    }
+                });
+
+                // Priority 3: first available provider with API key
+                let chosen_prov = chosen_prov.or_else(|| {
+                    providers.iter().find(|p| has_api_key(&p.id))
+                });
+
+                if let Some(prov) = chosen_prov {
                     // Resolve API key from fresh key vault (never cached to disk).
                     let api_key = cfg.provider_key_vault.iter()
                         .find(|k| k.provider_id == prov.id)
                         .map(|k| k.api_key.as_str());
 
-                    let suggested_model = &loaded.manifest.llm.suggested_model;
-                    let model = prov.models.iter().find(|m| m.id == *suggested_model);
+                    let available = prov.models.iter().map(|m| m.id.clone()).collect::<Vec<_>>();
 
-                    if let Some(m) = model {
+                    // Model selection: saved model (if in this provider's list) > first model
+                    let saved_model = saved_agent_model.as_ref().map(|(m, _)| m.as_str());
+                    let model_id = if let Some(sm) = saved_model {
+                        if prov.models.iter().any(|m| m.id == sm) {
+                            sm.to_string()
+                        } else {
+                            tracing::info!(
+                                saved_model = %sm,
+                                provider = %prov.id,
+                                "Saved model not in selected provider's list, using first available"
+                            );
+                            prov.models.first().map(|m| m.id.clone())
+                                .unwrap_or_else(|| "default".to_string())
+                        }
+                    } else {
+                        prov.models.first().map(|m| m.id.clone())
+                            .unwrap_or_else(|| "default".to_string())
+                    };
+
+                    // Look up capabilities for the selected model
+                    if let Some(m) = prov.models.iter().find(|m| m.id == model_id) {
                         gateway_model_capabilities = Some(m.capabilities.clone());
                         gateway_max_output_tokens_limit = m.max_output_tokens_limit;
                     }
-
-                    let available = prov.models.iter().map(|m| m.id.clone()).collect::<Vec<_>>();
-                    let model_id = model.map(|m| m.id.clone()).unwrap_or_else(|| suggested_model.clone());
 
                     let provider = crate::providers::router::create_provider(
                         &prov.id,
@@ -907,15 +958,16 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                         model = %model_id,
                         num_models = available.len(),
                         has_api_key = api_key.is_some(),
+                        source = if saved_provider == Some(prov.id.as_str()) { "agent_model.json" }
+                                 else { "fallback" },
                         "Provider initialized from AgentHelloConfig"
                     );
 
                     (provider, model_id, available, prov.protocol_type.clone())
                 } else {
                     tracing::warn!(
-                        suggested = %suggested_provider,
                         available = ?providers.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
-                        "Suggested provider not found in Gateway list, using noop"
+                        "No provider with API key found, using noop"
                     );
                     let p = crate::providers::router::create_noop_provider();
                     (p, "no-model".to_string(), vec![], ProtocolType::OpenAI)
@@ -1156,109 +1208,12 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
     }
 
 
-    // Step 6.5: Restore per-agent model preference from workspace
-
-
-    //
-
-
-    // If the agent previously selected a different model (via model_switch),
-
-
-    // it was persisted to .agent_model.json in the workspace.
-
-
-    // On cold start, restore that preference if the model is still available.
-
-
-    //
-    // persisted_provider is extracted to survive outside the if-let so that
-    // the save at line ~1723 can preserve the user's provider choice instead of
-    // blindly overwriting it with the Gateway-resolved default provider.
-
-
-    let mut persisted_provider: Option<String> = None;
-    if let Some((saved_model, saved_provider)) = load_agent_model(&config.work_dir) {
-        persisted_provider = saved_provider.clone();
-
-
-        if available_models.contains(&saved_model) {
-
-
-            if saved_model != resolved_model {
-
-
-                tracing::info!(
-
-
-                    saved_model = %saved_model,
-
-
-                    gateway_model = %resolved_model,
-
-
-                    "Restoring per-agent model preference from workspace"
-
-
-                );
-
-
-                context_builder.set_override_model(saved_model.clone());
-
-
-                resolved_model = saved_model;
-
-
-            }
-
-
-        } else {
-
-
-            // Model not in default provider's list — could be from a
-            // different provider that was selected in a previous session.
-            // Do NOT delete agent_model.json; the saved preference is
-            // still valid and will be used when the correct provider is
-            // resolved (e.g., after a model_switch or LLMConfigDelivery).
-            tracing::warn!(
-
-
-                saved_model = %saved_model,
-
-
-                saved_provider = ?saved_provider,
-
-
-                default_provider_models = ?available_models,
-
-
-                "Saved model not in default provider's model list "
-
-
-            );
-            // Still restore the saved model — trust the user's preference.
-            // The provider mismatch will be resolved when the Gateway delivers
-            // LLMConfigDelivery for the correct provider via model_switch.
-            tracing::info!(
-
-
-                saved_model = %saved_model,
-
-
-                saved_provider = ?saved_provider,
-
-
-                "Restoring saved model despite provider mismatch"
-
-
-            );
-            context_builder.set_override_model(saved_model.clone());
-            resolved_model = saved_model;
-        }
-
-
-    }
-
+    // Step 6.5: Per-agent model/provider preference was already applied
+    // during provider selection above (agent_model.json has priority over
+    // manifest suggested_provider).  Extract persisted_provider for the
+    // save_agent_model call later in the Gateway mode path.
+    let persisted_provider = saved_agent_model.as_ref()
+        .and_then(|(_, p)| p.clone());
 
     tracing::info!(
 
@@ -1644,24 +1599,73 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
         // ── Workspace Context (self-formatted from .agent_workspaces.json) ──
         // Runtime reads its own workspace config and formats the LLM context text.
         // Gateway is a pure pass-through for workspace CRUD (no persistence).
+        //
+        // With the session-level workspace refactor:
+        //   - Per-session workspace defaults to "__agent_home__".
+        //   - If legacy is_current is found in .agent_workspaces.json, the initial
+        //     session inherits that workspace selection.
+        //   - The global workspace_context cache is still set for backward compat
+        //     with sessions created *after* startup (they receive the legacy fallback
+        //     until set_session_workspace() is called on them).
         {
             let config_path = std::path::Path::new(&config.work_dir)
                 .join("config")
                 .join(".agent_workspaces.json");
             if config_path.exists() {
                 if let Ok(config_json) = std::fs::read_to_string(&config_path) {
+                    // Check for legacy is_current to migrate to per-session workspace
+                    let legacy_ws_id: Option<String> = {
+                        #[derive(serde::Deserialize)]
+                        struct LegacyConfig {
+                            #[serde(default)]
+                            additional_dirs: Vec<LegacyDir>,
+                        }
+                        #[derive(serde::Deserialize)]
+                        struct LegacyDir {
+                            id: String,
+                            #[serde(default)]
+                            is_current: bool,
+                        }
+                        serde_json::from_str::<LegacyConfig>(&config_json)
+                            .ok()
+                            .and_then(|c| {
+                                c.additional_dirs
+                                    .into_iter()
+                                    .find(|d| d.is_current)
+                                    .map(|d| d.id)
+                            })
+                    };
+
+                    if let Some(ws_id) = legacy_ws_id {
+                        // Legacy is_current found → initial session inherits this workspace
+                        session_manager.set_session_workspace(&initial_session_id, &ws_id);
+                        tracing::info!(
+                            initial_session_id = %initial_session_id,
+                            legacy_workspace_id = %ws_id,
+                            "Migrated legacy is_current to per-session workspace"
+                        );
+                    }
+
+                    // Send per-session workspace context to the initial session
+                    session_manager.update_session_workspace_context(
+                        &initial_session_id,
+                        &workspace_resolver.read().unwrap(),
+                    );
+
+                    // Also cache the legacy-formatted context for backward compat
+                    // (sessions created later receive this as a fallback)
                     let context_text = crate::tools::workspace_resolver::format_workspace_context_from_json(
                         &config_json,
                         &config.work_dir,
                     );
-                    tracing::info!(
-                        work_dir = %config.work_dir,
-                        "Applying self-formatted workspace context from .agent_workspaces.json"
-                    );
                     session_manager.set_workspace_context(context_text);
                 }
             } else {
-                // No config file yet — use fallback context
+                // No config file yet — use per-session context + legacy fallback
+                session_manager.update_session_workspace_context(
+                    &initial_session_id,
+                    &workspace_resolver.read().unwrap(),
+                );
                 let fallback = crate::tools::workspace_resolver::format_workspace_context_from_json(
                     r#"{"version":"1.0.0","additional_dirs":[]}"#,
                     &config.work_dir,
@@ -1694,7 +1698,8 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                 || agent_cfg.max_iterations.is_some()
                 || agent_cfg.temperature.is_some()
                 || agent_cfg.system_prompt_override.is_some()
-                || agent_cfg.shell_approval_threshold.is_some();
+                || agent_cfg.shell_approval_threshold.is_some()
+                || !agent_cfg.active_tools.is_empty();
 
             if has_overrides {
                 tracing::info!(
@@ -1710,6 +1715,11 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                     agent_cfg.system_prompt_override.clone(),
                     agent_cfg.shell_approval_threshold.clone(),
                 );
+
+                // Restore active_tools from persisted config
+                if !agent_cfg.active_tools.is_empty() {
+                    session_manager.apply_active_tools(Some(agent_cfg.active_tools.clone()));
+                }
             }
 
         
@@ -4677,16 +4687,64 @@ async fn process_gateway_recv(
                             *w = crate::tools::workspace_resolver::WorkspaceResolver::reload(work_dir);
                         }
 
-                        // 3. Format context text and broadcast to all sessions
-                        let context_text = crate::tools::workspace_resolver::format_workspace_context_from_json(
-                            &config_json,
-                            work_dir,
-                        );
-                        session_manager.set_workspace_context(context_text);
+                        // 3. Refresh context for CURRENT session only (not broadcast).
+                        // Workspace list CRUD only affects the foreground session;
+                        // other sessions reconcile lazily when switched to foreground.
+                        let resolver_guard = resolver.read().unwrap();
+                        let current_sid = session_manager.current_session_id().to_string();
+                        if !current_sid.is_empty() {
+                            session_manager.update_session_workspace_context(
+                                &current_sid,
+                                &resolver_guard,
+                            );
+                        }
+
+                        // 4. For all other sessions: check if their selected workspace
+                        //    still exists. If deleted → move to pending, fallback to agent home.
+                        session_manager.reconcile_deleted_workspaces(&resolver_guard);
+                        drop(resolver_guard);
 
                         tracing::info!(
-                            "Workspace config applied: file written, resolver reloaded, context broadcast"
+                            "Workspace config applied: file written, resolver reloaded, context refreshed for current session"
                         );
+                        return LoopAction::Continue;
+
+
+                    }
+
+
+                    GatewayResponse::SetSessionWorkspace { session_id, workspace_id } => {
+                        tracing::info!(
+                            session_id = %session_id,
+                            workspace_id = %workspace_id,
+                            "Received SetSessionWorkspace from Gateway"
+                        );
+
+                        // Validate workspace exists or is "__agent_home__"
+                        let is_valid = workspace_id == "__agent_home__"
+                            || resolver.read().unwrap()
+                                .allowed_dirs()
+                                .iter()
+                                .any(|d| d.id == workspace_id);
+
+                        if !is_valid {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                workspace_id = %workspace_id,
+                                "SetSessionWorkspace: workspace not in list, setting as pending + fallback"
+                            );
+                            session_manager.pending_workspaces.insert(session_id.clone(), workspace_id.clone());
+                            session_manager.set_session_workspace(&session_id, "__agent_home__");
+                        } else {
+                            session_manager.set_session_workspace(&session_id, &workspace_id);
+                        }
+
+                        // Format and send per-session workspace context
+                        session_manager.update_session_workspace_context(
+                            &session_id,
+                            &resolver.read().unwrap(),
+                        );
+
                         return LoopAction::Continue;
 
 
@@ -6370,6 +6428,9 @@ async fn handle_list_sessions(
                 });
 
 
+            let ws_id = session_manager.session_workspace_id(&s.session_id);
+            let workspace_id = if ws_id == "__agent_home__" { None } else { Some(ws_id.to_string()) };
+
             rollball_core::protocol::SessionInfoDto {
 
 
@@ -6389,6 +6450,9 @@ async fn handle_list_sessions(
 
 
                 status,
+
+
+                workspace_id,
 
 
             }

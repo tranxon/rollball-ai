@@ -74,6 +74,7 @@ message ServerMessage {
     LogRotate               log_rotate            = 32;
     QueryConfig             query_config          = 33;
     WorkspaceConfigUpdate   workspace_config_update = 34;
+    SetSessionWorkspace     set_session_workspace  = 35;
   }
 }
 
@@ -167,6 +168,7 @@ message CapabilityUpdate        { string agent_id = 1; repeated string actions =
 message LLMConfigDelivery       { string provider = 1; string model = 2; string api_key = 3; string base_url = 4; repeated string models = 5; ModelCapabilitiesInfo model_capabilities = 6; uint64 max_output_tokens_limit = 7; string protocol_type = 8; }
 message IdentityDelivery        { repeated IdentityEntry entries = 1; }
 message WorkspaceConfigUpdate   { string config_json = 1; }
+message SetSessionWorkspace     { string session_id = 1; string workspace_id = 2; }
 message UpdateWorkspaceConfig   { string config_json = 1; }
 message IterationLimitPaused    { uint32 iteration = 1; uint32 max_iterations = 2; string message = 3; }
 message LogLevelUpdate           { string log_level = 1; }
@@ -181,7 +183,7 @@ message ModelCapabilitiesInfo   { uint64 context_window = 1; uint64 max_output_t
 message ContextUsageInfo        { uint64 context_window = 1; uint64 input_tokens = 2; uint64 output_tokens = 3; uint64 total_tokens = 4; uint64 max_input_tokens = 5; uint64 usable_context = 6; uint32 usage_percent = 7; }
 message IdentityEntry           { string field = 1; string value = 2; float confidence = 3; string category = 4; string privacy = 5; string source = 6; string updated_at = 7; }
 message CronEntryInfo           { string id = 1; string agent_id = 2; string schedule = 3; string action = 4; string params_json = 5; }
-message SessionInfoDto          { string session_id = 1; string created_at = 2; uint32 message_count = 3; string title = 4; bool corrupted = 5; string status_json = 6; }
+message SessionInfoDto          { string session_id = 1; string created_at = 2; uint32 message_count = 3; string title = 4; bool corrupted = 5; string status_json = 6; string workspace_id = 7; }
 message ConversationEntryDto    { string id = 1; string ts = 2; string role = 3; string content = 4; string metadata_json = 5; }
 
 // ── Memory API messages (Gateway → Runtime queries) ──────────────────────

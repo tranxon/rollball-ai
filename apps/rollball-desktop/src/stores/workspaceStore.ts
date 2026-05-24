@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useSettingsStore } from "./settingsStore";
+import { useChatStore } from "./chatStore";
 import { DEFAULT_GATEWAY_URL } from "../lib/config";
 
 /** Single workspace directory entry — matches Gateway API response */
@@ -9,21 +10,31 @@ interface WorkspaceDir {
   alias: string | null;
   access: "read-only" | "read-write";
   added_at: string;
-  is_current: boolean;
+  /** Deprecated: replaced by session-level workspace selection (sessionWorkspaceMap). */
+  is_current?: boolean;
+  /** Legacy field for backward compat; frontend reads sessionWorkspaceMap instead. */
+  last_active?: boolean;
   select_count: number;
   last_selected_at: string | null;
 }
 
 interface WorkspaceState {
   workspaces: WorkspaceDir[];
-  currentWorkspaceId: string | null;
+  /** Per-session current workspace selection. "__agent_home__" = agent home. */
+  sessionWorkspaceMap: Record<string, string>;
   loading: boolean;
 
   // Fetch workspace list for a given agent
   fetchWorkspaces: (agentId: string) => Promise<void>;
 
-  // Set the current workspace (PUT API + local state update)
+  // Set current workspace for a specific session (preferred API)
+  setSessionWorkspace: (agentId: string, sessionId: string, workspaceId: string) => Promise<void>;
+
+  // Legacy: set current workspace using the active session (backward compat)
   setCurrentWorkspace: (agentId: string, workspaceId: string) => Promise<void>;
+
+  // Get current workspace ID for a session (defaults to "__agent_home__")
+  getSessionWorkspaceId: (sessionId: string) => string;
 
   // Clear state on agent switch
   reset: () => void;
@@ -39,7 +50,7 @@ let requestSeq = 0;
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
-  currentWorkspaceId: null,
+  sessionWorkspaceMap: {},
   loading: false,
 
   fetchWorkspaces: async (agentId: string) => {
@@ -55,12 +66,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
       const data = (await resp.json()) as { workspaces: WorkspaceDir[] };
       const workspaces = data.workspaces || [];
-      const current = workspaces.find((w) => w.is_current);
       // Discard stale response if a newer request has been issued
       if (seq !== requestSeq) return;
       set({
         workspaces,
-        currentWorkspaceId: current?.id ?? null,
         loading: false,
       });
     } catch (e) {
@@ -70,41 +79,60 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  setCurrentWorkspace: async (agentId: string, workspaceId: string) => {
+  setSessionWorkspace: async (agentId: string, sessionId: string, workspaceId: string) => {
     const seq = ++requestSeq;
     const prevWorkspaces = get().workspaces;
-    const prevCurrentId = get().currentWorkspaceId;
+    const prevMap = { ...get().sessionWorkspaceMap };
     try {
       const baseUrl = getGatewayUrl();
-      const resp = await fetch(`${baseUrl}/api/agents/${agentId}/workspaces/current`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: workspaceId }),
-      });
+      const resp = await fetch(
+        `${baseUrl}/api/agents/${agentId}/workspaces/current?session_id=${encodeURIComponent(sessionId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspace_id: workspaceId }),
+        },
+      );
       if (!resp.ok) {
-        console.error("[WorkspaceStore] setCurrentWorkspace failed:", resp.status, resp.statusText);
+        console.error("[WorkspaceStore] setSessionWorkspace failed:", resp.status, resp.statusText);
         return;
       }
       // API returns the updated workspace list after switching
       const data = (await resp.json()) as { workspaces: WorkspaceDir[] };
       const workspaces = data.workspaces || [];
-      const current = workspaces.find((w) => w.is_current);
       // Discard stale response if a newer request has been issued
       if (seq !== requestSeq) return;
       set({
         workspaces,
-        currentWorkspaceId: current?.id ?? workspaceId,
+        sessionWorkspaceMap: {
+          ...get().sessionWorkspaceMap,
+          [sessionId]: workspaceId,
+        },
       });
     } catch (e) {
-      console.error("[WorkspaceStore] setCurrentWorkspace error:", e);
+      console.error("[WorkspaceStore] setSessionWorkspace error:", e);
       // Revert to previous state on failure (only if still the latest request)
       if (seq !== requestSeq) return;
-      set({ workspaces: prevWorkspaces, currentWorkspaceId: prevCurrentId });
+      set({ workspaces: prevWorkspaces, sessionWorkspaceMap: prevMap });
     }
   },
 
+  setCurrentWorkspace: async (agentId: string, workspaceId: string) => {
+    // Legacy wrapper: resolve active session ID and delegate to setSessionWorkspace
+    const activeSessionId = useChatStore.getState().getActiveSessionId(agentId);
+    if (!activeSessionId) {
+      console.warn("[WorkspaceStore] setCurrentWorkspace: no active session for agent", agentId);
+      return;
+    }
+    return get().setSessionWorkspace(agentId, activeSessionId, workspaceId);
+  },
+
+  getSessionWorkspaceId: (sessionId: string) => {
+    return get().sessionWorkspaceMap[sessionId] ?? "__agent_home__";
+  },
+
   reset: () => {
-    set({ workspaces: [], currentWorkspaceId: null, loading: false });
+    set({ workspaces: [], sessionWorkspaceMap: {}, loading: false });
   },
 }));
 

@@ -978,6 +978,9 @@ pub struct SessionInfoResponse {
     /// Current session lifecycle status (ADR-014)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<rollball_core::SessionStatusDto>,
+    /// Per-session workspace selection ("__agent_home__" = agent home)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 /// Response for session messages
@@ -1052,6 +1055,7 @@ pub async fn list_sessions(
             message_count: s.message_count,
             title: s.title,
             status: s.status,
+            workspace_id: s.workspace_id,
         })
         .collect();
 

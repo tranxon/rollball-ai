@@ -604,6 +604,17 @@ pub enum GatewayResponse {
         /// Full workspace config JSON (same format as .agent_workspaces.json)
         config_json: String,
     },
+    /// Set the current workspace for a specific session (Gateway → Runtime).
+    ///
+    /// Unlike WorkspaceConfigUpdate (which pushes the full list),
+    /// this targets a single session's working directory selection.
+    /// `workspace_id` of "__agent_home__" means the agent's install directory.
+    SetSessionWorkspace {
+        /// Target session ID
+        session_id: String,
+        /// Workspace ID to activate, or "__agent_home__" for agent home
+        workspace_id: String,
+    },
     /// Iteration limit reached — agent loop paused, awaiting user decision.
     ///
     /// The Runtime pushes this when `iteration >= max_iterations`.
@@ -795,6 +806,10 @@ pub struct SessionInfoDto {
     /// (e.g. session loaded from disk, not currently active in memory).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<SessionStatusDto>,
+    /// Per-session workspace selection persisted in JSONL metadata.
+    /// None or "__agent_home__" means the agent's home directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 /// DTO for session lifecycle status (ADR-014).

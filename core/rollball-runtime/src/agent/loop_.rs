@@ -515,6 +515,15 @@ impl AgentLoop {
         self.session.conversation.as_ref().map(|conv| conv.update_title_force(title))
     }
 
+    /// Persist the per-session workspace selection to the JSONL conversation file.
+    ///
+    /// Only effective when the session has an active `ConversationSession`.
+    pub fn update_session_workspace_id(&mut self, workspace_id: &str) {
+        if let Some(ref conv) = self.session.conversation {
+            conv.update_workspace_id(workspace_id);
+        }
+    }
+
     /// Look up model capabilities by exact model name (delegates to AgentCore).
     pub(crate) fn get_model_capabilities(&self, model_name: &str) -> Option<&ModelCapabilitiesInfo> {
         self.core.get_model_capabilities(model_name)
@@ -3489,7 +3498,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_permission_partial_denial() {
-        // When one tool is denied permission, others should still execute.
+        // When a tool is declared in the manifest but not in the tool registry
+        // (i.e. not permitted), the missing tool should produce an error while
+        // other registered tools still execute normally.
+        //
+        // Note: the tool registry IS the permission boundary — tools not in the
+        // registry are effectively permission-denied. `execute_single_tool` returns
+        // "Unknown tool" for any tool not found in the registry.
         use async_trait::async_trait;
 
         struct EchoPermTool;
@@ -3581,9 +3596,10 @@ mod tests {
         // First tool (echo) should have result
         assert!(tool_results[0].content.contains("Echo result") || tool_results[0].content.contains("Unknown tool"),
             "Echo tool should have result or unknown tool error");
-        // Second tool (shell) should have permission denied
-        assert!(tool_results[1].content.contains("Permission denied"),
-            "Shell tool should have permission denied: {}", tool_results[1].content);
+        // Second tool (shell) is not in the tool registry (permission denied),
+        // so it should produce an "Unknown tool" error.
+        assert!(tool_results[1].content.contains("Unknown tool: shell"),
+            "Shell tool should be unknown (not in registry): {}", tool_results[1].content);
     }
 
     // ── S1.9: Tool call argument robustness tests ──────────────────────

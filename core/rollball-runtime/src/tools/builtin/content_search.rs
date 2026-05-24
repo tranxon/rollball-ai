@@ -174,7 +174,7 @@ impl Tool for ContentSearchTool {
         let user_path = params["path"].as_str();
         let search_roots: Vec<std::path::PathBuf> = if let Some(p) = user_path {
             // User specified a subdirectory — resolve against current_dir
-            let resolved = Path::new(resolver_ref.current_dir()).join(p);
+            let resolved = Path::new(resolver_ref.agent_home()).join(p);
             if resolved.exists() {
                 vec![resolved]
             } else {
@@ -187,7 +187,7 @@ impl Tool for ContentSearchTool {
             }
         } else {
             // No path specified — search current workspace only
-            vec![Path::new(resolver_ref.current_dir()).to_path_buf()]
+            vec![Path::new(resolver_ref.agent_home()).to_path_buf()]
         };
 
         if search_roots.is_empty() {
@@ -206,7 +206,7 @@ impl Tool for ContentSearchTool {
         let mut truncated = false;
 
         tracing::info!(
-            current_dir = %resolver_ref.current_dir(),
+            current_dir = %resolver_ref.agent_home(),
             user_path = ?user_path,
             search_roots = ?search_roots.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
             include = ?include_glob,
