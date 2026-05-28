@@ -48,6 +48,9 @@ pub struct VaultKeyEntryResponse {
     /// User-overridden model capabilities per model name
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub model_capabilities: std::collections::HashMap<String, StoredModelCapabilities>,
+    /// Compact model for LLM summarization (ADR-010). None = use current model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_model: Option<String>,
 }
 
 /// Add key request (supports full provider configuration)
@@ -70,6 +73,9 @@ pub struct AddKeyRequest {
     /// Each key is a model ID matching the `models` list.
     #[serde(default)]
     pub model_capabilities: std::collections::HashMap<String, StoredModelCapabilities>,
+    /// Compact model for LLM summarization (ADR-010). None = use current model.
+    #[serde(default)]
+    pub compact_model: Option<String>,
 }
 
 /// Update key request (supports partial updates — key is optional)
@@ -94,6 +100,9 @@ pub struct UpdateKeyRequest {
     /// When present, each model entry replaces the existing one.
     #[serde(default)]
     pub model_capabilities: std::collections::HashMap<String, StoredModelCapabilities>,
+    /// Compact model for LLM summarization (ADR-010). None = use current model.
+    #[serde(default)]
+    pub compact_model: Option<String>,
 }
 
 /// Generic message response
@@ -137,14 +146,15 @@ pub async fn list_keys(
 
     let response: Vec<VaultKeyEntryResponse> = entries.iter().map(|k| {
         // Try to get the full provider entry for base_url/default_model/models/capabilities
-        let (base_url, default_model, models, model_capabilities) = match gw.vault.get_provider(&k.provider) {
+        let (base_url, default_model, models, model_capabilities, compact_model) = match gw.vault.get_provider(&k.provider) {
             Ok(entry) => (
                 entry.base_url.clone(),
                 entry.default_model.clone(),
                 entry.models.clone(),
                 entry.model_capabilities.clone(),
+                entry.compact_model.clone(),
             ),
-            Err(_) => (None, None, Vec::new(), std::collections::HashMap::new()),
+            Err(_) => (None, None, Vec::new(), std::collections::HashMap::new(), None),
         };
         VaultKeyEntryResponse {
             provider: k.provider.clone(),
@@ -153,6 +163,7 @@ pub async fn list_keys(
             default_model,
             models,
             model_capabilities,
+            compact_model,
         }
     }).collect();
 
@@ -197,6 +208,7 @@ pub async fn add_key(
         &resolved_models,
         &body.key,
         &body.model_capabilities,
+        body.compact_model.as_deref(),
     ).map_err(|e| ApiError::internal(&format!("Failed to store key: {}", e)))?;
 
     // Rebuild provider_list cache so AgentHello picks up the new provider.
@@ -305,6 +317,16 @@ pub async fn update_key(
         }
     };
 
+    // Resolve compact_model: use provided value, or preserve existing if not specified
+    let resolved_compact_model = if body.compact_model.is_some() {
+        body.compact_model.clone()
+    } else {
+        match gw.vault.get_provider(&provider) {
+            Ok(entry) => entry.compact_model.clone(),
+            Err(_) => None,
+        }
+    };
+
     // Remove old entry, store new with full config
     let _ = gw.vault.remove_key(&provider);
     gw.vault.store_provider(
@@ -313,6 +335,7 @@ pub async fn update_key(
         &resolved_models,
         &api_key,
         &resolved_capabilities,
+        resolved_compact_model.as_deref(),
     ).map_err(|e| ApiError::internal(&format!("Failed to update key: {}", e)))?;
 
     // Rebuild provider_list cache after update.

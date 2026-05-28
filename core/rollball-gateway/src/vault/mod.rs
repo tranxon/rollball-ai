@@ -102,6 +102,9 @@ pub struct ProviderEntry {
     /// When present, takes precedence over models.dev / offline data.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub model_capabilities: std::collections::HashMap<String, StoredModelCapabilities>,
+    /// Compact model for LLM summarization (ADR-010). None = use current model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_model: Option<String>,
 }
 
 /// Key entry for HTTP API listing (masked preview)
@@ -181,7 +184,7 @@ impl VaultFacade {
     /// Stores the full provider configuration as JSON:
     /// `{ "api_key": "...", "base_url": "...", "models": ["..."] }`
     pub fn store_key(&mut self, provider: &str, api_key: &str) -> Result<(), GatewayError> {
-        self.store_provider(provider, None, &[], api_key, &std::collections::HashMap::new())
+        self.store_provider(provider, None, &[], api_key, &std::collections::HashMap::new(), None)
     }
 
     /// Store a full provider entry with optional base_url, models list, and capabilities
@@ -192,6 +195,7 @@ impl VaultFacade {
         models: &[String],
         api_key: &str,
         capabilities: &std::collections::HashMap<String, StoredModelCapabilities>,
+        compact_model: Option<&str>,
     ) -> Result<(), GatewayError> {
         let default_model = models.first().cloned();
         let entry = ProviderEntry {
@@ -200,6 +204,7 @@ impl VaultFacade {
             default_model,
             models: models.to_vec(),
             model_capabilities: capabilities.clone(),
+            compact_model: compact_model.map(|s| s.to_string()),
         };
         let json = serde_json::to_string(&entry)
             .map_err(|e| GatewayError::Vault(format!("Failed to serialize provider entry: {}", e)))?;
@@ -235,6 +240,7 @@ impl VaultFacade {
                         default_model: None,
                         models: Vec::new(),
                         model_capabilities: HashMap::new(),
+                        compact_model: None,
                     });
                 }
                 Err(_) => continue, // Try next candidate
@@ -469,7 +475,7 @@ mod tests {
         let dir = temp_vault_dir("store_provider");
         let mut vault = VaultFacade::new(&dir);
         vault.unlock("password123").unwrap();
-        vault.store_provider("deepseek", Some("https://api.deepseek.com/v1"), &["deepseek-chat".to_string()], "sk-abc", &std::collections::HashMap::new()).unwrap();
+        vault.store_provider("deepseek", Some("https://api.deepseek.com/v1"), &["deepseek-chat".to_string()], "sk-abc", &std::collections::HashMap::new(), None).unwrap();
         let entry = vault.get_provider("deepseek").unwrap();
         assert_eq!(entry.api_key, "sk-abc");
         assert_eq!(entry.base_url, Some("https://api.deepseek.com/v1".to_string()));
@@ -483,7 +489,7 @@ mod tests {
         let dir = temp_vault_dir("store_provider_min");
         let mut vault = VaultFacade::new(&dir);
         vault.unlock("password123").unwrap();
-        vault.store_provider("openai", None, &[], "sk-test", &std::collections::HashMap::new()).unwrap();
+        vault.store_provider("openai", None, &[], "sk-test", &std::collections::HashMap::new(), None).unwrap();
         let entry = vault.get_provider("openai").unwrap();
         assert_eq!(entry.api_key, "sk-test");
         assert_eq!(entry.base_url, None);

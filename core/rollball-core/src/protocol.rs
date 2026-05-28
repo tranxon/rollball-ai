@@ -671,6 +671,12 @@ pub enum GatewayResponse {
         /// Protocol type for the LLM API (anthropic/openai/ollama)
         #[serde(default)]
         protocol_type: ProtocolType,
+        /// Compact model for LLM summarization / context compression (ADR-010).
+        /// When set, the Runtime uses this model for context summarization instead
+        /// of the main chat model. When None, the Runtime falls back to the current model.
+        /// Set by the user in frontend Provider Settings.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compact_model: Option<String>,
     },
     /// Web Search configuration delivery (Gateway → Runtime, hot-push)
     ///

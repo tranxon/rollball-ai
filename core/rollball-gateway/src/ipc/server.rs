@@ -701,6 +701,8 @@ pub struct ResolvedLlmConfig {
     pub base_url: Option<String>,
     pub models: Vec<String>,
     pub stored_capabilities: Option<rollball_core::protocol::ModelCapabilitiesInfo>,
+    /// Compact model for LLM summarization (ADR-010). None = use current model.
+    pub compact_model: Option<String>,
 }
 
 /// Resolve the LLM configuration to deliver to an Agent.
@@ -813,6 +815,7 @@ pub async fn resolve_llm_config_for_agent(
                 stored_capabilities: model.as_ref()
                     .and_then(|m| effective_entry.model_capabilities.get(m))
                     .map(|c| rollball_core::protocol::ModelCapabilitiesInfo::from(c.clone())),
+                compact_model: effective_entry.compact_model.clone(),
             })
         }
         Err(e) => {

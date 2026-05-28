@@ -104,6 +104,7 @@ impl GlobalResourcePusher {
                             model_capabilities,
                             max_output_tokens_limit,
                             protocol_type,
+                            compact_model: cfg.compact_model.clone(),
                         })
                         .await;
 
