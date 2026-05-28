@@ -77,6 +77,7 @@ function ProvidersTab() {
   const [newContextWindow, setNewContextWindow] = useState("");
   const [newMaxOutputTokens, setNewMaxOutputTokens] = useState("");
   const [newSupportsToolCalling, setNewSupportsToolCalling] = useState(true);
+  const [newCompactModel, setNewCompactModel] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -93,7 +94,7 @@ function ProvidersTab() {
   const [editContextWindow, setEditContextWindow] = useState("");
   const [editMaxOutputTokens, setEditMaxOutputTokens] = useState("");
   const [editSupportsToolCalling, setEditSupportsToolCalling] = useState(true);
-
+  const [editCompactModel, setEditCompactModel] = useState("");
   // Gateway config for default provider indication
   const [config, setConfig] = useState<GatewayConfig | null>(null);
 
@@ -334,6 +335,7 @@ function ProvidersTab() {
         defaultModel: undefined,
         models: newModels.length > 0 ? newModels : undefined,
         modelCapabilities,
+        compactModel: newCompactModel || undefined,
       });
       setShowAddDialog(false);
       setNewKey("");
@@ -390,6 +392,7 @@ function ProvidersTab() {
     setEditContextWindow(keyEntry?.model_capabilities?.context_window?.toString() ?? "");
     setEditMaxOutputTokens(keyEntry?.model_capabilities?.max_output_tokens?.toString() ?? "");
     setEditSupportsToolCalling(keyEntry?.model_capabilities?.supports_tool_calling ?? true);
+    setEditCompactModel(keyEntry?.compact_model ?? "");
     setShowEditDialog(provider);
     // Fetch models
     setEditModelsLoading(true);
@@ -437,6 +440,12 @@ function ProvidersTab() {
           };
         }
         updatePayload.modelCapabilities = caps;
+      }
+      // Include compact_model if set
+      if (editCompactModel) {
+        updatePayload.compactModel = editCompactModel;
+      } else {
+        updatePayload.compactModel = null;  // Explicitly clear if empty
       }
       console.log("[handleEditSave] payload:", JSON.stringify(updatePayload));
       await invoke("update_key", updatePayload);
@@ -489,6 +498,11 @@ function ProvidersTab() {
                           <span className="shrink-0 text-xs" style={{ color: "var(--color-accent)" }}>{keyEntry.default_model}</span>
                         ) : (
                           <span className="shrink-0 text-xs text-zinc-400">—</span>
+                        )}
+                        {keyEntry.compact_model && (
+                          <span className="shrink-0 rounded bg-purple-100 px-1.5 py-0.5 text-xs text-purple-700 dark:bg-purple-900 dark:text-purple-300" title="Compact model for summarization">
+                            compact: {keyEntry.compact_model}
+                          </span>
                         )}
                       </div>
                       <div className="flex items-center gap-2">
@@ -879,7 +893,24 @@ function ProvidersTab() {
                 );
               })()}
 
-
+              {/* Compact model for LLM summarization */}
+              {newModels.length > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">
+                    Compact Model (Summarization)
+                  </label>
+                  <select
+                    value={newCompactModel}
+                    onChange={(e) => setNewCompactModel(e.target.value)}
+                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  >
+                    <option value="">Use current model (default)</option>
+                    {newModels.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Test result */}
               {testResult && (
@@ -1172,6 +1203,25 @@ function ProvidersTab() {
                   </div>
                 );
               })()}
+
+              {/* Compact model for LLM summarization */}
+              {editModels.length > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">
+                    Compact Model (Summarization)
+                  </label>
+                  <select
+                    value={editCompactModel}
+                    onChange={(e) => setEditCompactModel(e.target.value)}
+                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  >
+                    <option value="">Use current model (default)</option>
+                    {editModels.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="mt-4 flex items-center justify-end gap-2">

@@ -124,6 +124,8 @@ export interface VaultKeyEntry {
   models?: string[];
   /** Per-model capabilities map (model ID → capabilities) */
   model_capabilities?: ModelCapabilitiesMap;
+  /** Compact model for LLM summarization (ADR-010). null = use current model. */
+  compact_model?: string;
 }
 
 /** Gateway config response */

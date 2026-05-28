@@ -1004,6 +1004,7 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 "ollama" => ProtocolType::Ollama,
                 _ => ProtocolType::OpenAI,
             },
+            compact_model: cfg.compact_model,
         },
         Some(ServerPayload::WorkspaceConfigUpdate(wcu)) => {
             GatewayResponse::WorkspaceConfigUpdate {

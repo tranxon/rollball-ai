@@ -609,6 +609,7 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                 model_capabilities,
                 max_output_tokens_limit,
                 protocol_type,
+                compact_model,
             } => {
                 Some(proto::server_message::Payload::LlmConfigDelivery(
                     proto::LlmConfigDelivery {
@@ -620,6 +621,7 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                         model_capabilities: model_capabilities.as_ref().map(|m| m.into()),
                         max_output_tokens_limit: *max_output_tokens_limit,
                         protocol_type: format!("{:?}", protocol_type).to_lowercase(),
+                        compact_model: compact_model.clone(),
                     },
                 ))
             }

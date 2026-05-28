@@ -294,6 +294,7 @@ impl GatewayClient {
         default_model: Option<&str>,
         models: Option<&[String]>,
         model_capabilities: &HashMap<String, ModelCapabilities>,
+        compact_model: Option<&str>,
     ) -> Result<GenericMessageResponse> {
         let mut body = serde_json::json!({ "provider": provider, "key": key });
         if let Some(url) = base_url {
@@ -317,6 +318,10 @@ impl GatewayClient {
                     serde_json::to_value(model_capabilities)
                         .expect("model_capabilities serialization failed twice")
                 });
+        }
+        // Send compact_model if provided
+        if let Some(cm) = compact_model {
+            body["compact_model"] = serde_json::Value::String(cm.to_string());
         }
         let resp = self
             .client
@@ -349,6 +354,7 @@ impl GatewayClient {
         default_model: Option<&str>,
         models: Option<&[String]>,
         model_capabilities: &HashMap<String, ModelCapabilities>,
+        compact_model: Option<&str>,
     ) -> Result<GenericMessageResponse> {
         let mut body = serde_json::Map::new();
         if let Some(k) = key {
@@ -383,6 +389,10 @@ impl GatewayClient {
                             .expect("model_capabilities serialization failed twice")
                     }),
             );
+        }
+        // Send compact_model if provided
+        if let Some(cm) = compact_model {
+            body.insert("compact_model".to_string(), serde_json::Value::String(cm.to_string()));
         }
         let resp = self
             .client
@@ -576,6 +586,9 @@ pub struct VaultKeyEntry {
     /// Per-model capabilities
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub model_capabilities: HashMap<String, ModelCapabilities>,
+    /// Compact model for LLM summarization (ADR-010). None = use current model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_model: Option<String>,
 }
 
 /// Model capabilities info

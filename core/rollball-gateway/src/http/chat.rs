@@ -1498,6 +1498,7 @@ async fn push_llm_config_on_switch(
                 model_capabilities,
                 max_output_tokens_limit,
                 protocol_type,
+                compact_model: entry.compact_model.clone(),
             }).await;
             if push_result {
                 tracing::info!(

@@ -55,6 +55,8 @@ pub struct AgentCore {
     /// When a model's max_output_tokens exceeds this value, the value is capped.
     /// Default: 32768 (32K). Set to 0 to disable the limit.
     pub(crate) max_output_tokens_limit: u64,
+    /// Compact model for LLM summarization (ADR-010). None = use current model.
+    pub(crate) compact_model: Option<String>,
     /// LLM temperature override (from Gateway config).
     /// None = use model/provider default.
     pub(crate) temperature_override: Option<f32>,
@@ -141,6 +143,7 @@ impl AgentCore {
             all_tools: tools,
             gateway_model_capabilities: HashMap::new(),
             max_output_tokens_limit: 32_768,
+            compact_model: None,
             temperature_override: None,
             system_prompt_override: None,
             session_id: None,
@@ -396,6 +399,7 @@ impl AgentCore {
             all_tools: self.all_tools.clone(),
             gateway_model_capabilities: self.gateway_model_capabilities.clone(),
             max_output_tokens_limit: self.max_output_tokens_limit,
+            compact_model: self.compact_model.clone(),
             temperature_override: self.temperature_override,
             system_prompt_override: self.system_prompt_override.clone(),
             session_id: Some(session_id),

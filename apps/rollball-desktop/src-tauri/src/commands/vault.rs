@@ -23,6 +23,7 @@ pub async fn add_key(
     default_model: Option<String>,
     models: Option<Vec<String>>,
     model_capabilities: Option<HashMap<String, ModelCapabilities>>,
+    compact_model: Option<String>,
 ) -> Result<GenericMessageResponse, String> {
     let client = state.gateway.read().await;
     let caps = model_capabilities.unwrap_or_default();
@@ -34,6 +35,7 @@ pub async fn add_key(
             default_model.as_deref(),
             models.as_deref(),
             &caps,
+            compact_model.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())
@@ -59,6 +61,7 @@ pub async fn update_key(
     default_model: Option<String>,
     models: Option<Vec<String>>,
     model_capabilities: Option<HashMap<String, ModelCapabilities>>,
+    compact_model: Option<String>,
 ) -> Result<GenericMessageResponse, String> {
     let client = state.gateway.read().await;
     let caps = model_capabilities.unwrap_or_default();
@@ -70,6 +73,7 @@ pub async fn update_key(
             default_model.as_deref(),
             models.as_deref(),
             &caps,
+            compact_model.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())
