@@ -583,6 +583,10 @@ async fn handle_ws_text(
                 if let Some(ref p) = provider {
                     params["provider"] = serde_json::json!(p);
                 }
+                // ADR-012: Pass session_id so Runtime can route model_switch to the correct session.
+                if let Some(ref sid) = client_msg.session_id {
+                    params["session_id"] = serde_json::json!(sid);
+                }
                 let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
                     from: "http-ws".to_string(),
                     action: "model_switch".to_string(),
@@ -621,6 +625,10 @@ async fn handle_ws_text(
             });
             if let Some(ref p) = provider {
                 confirmed["provider"] = serde_json::json!(p);
+            }
+            // ADR-012: Include session_id so frontend knows which session was updated.
+            if let Some(ref sid) = client_msg.session_id {
+                confirmed["session_id"] = serde_json::json!(sid);
             }
             let _ = socket.send(Message::Text(confirmed.to_string().into())).await;
         } else {
@@ -1141,6 +1149,7 @@ pub async fn get_session_messages(
 pub async fn create_session(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<SessionCreatedResponse>), (StatusCode, Json<ApiError>)> {
     // Verify agent exists and is running
     {
@@ -1156,7 +1165,19 @@ pub async fn create_session(
         }
     }
 
-    let data = forward_session_query(&state, &agent_id, "create_session", serde_json::json!({})).await?;
+    // ADR-012: Forward initial per-session metadata (model/provider/workspace_id) to Runtime.
+    let mut params = serde_json::json!({});
+    if let Some(m) = body.get("model").and_then(|v| v.as_str()) {
+        params["model"] = serde_json::json!(m);
+    }
+    if let Some(p) = body.get("provider").and_then(|v| v.as_str()) {
+        params["provider"] = serde_json::json!(p);
+    }
+    if let Some(w) = body.get("workspace_id").and_then(|v| v.as_str()) {
+        params["workspace_id"] = serde_json::json!(w);
+    }
+
+    let data = forward_session_query(&state, &agent_id, "create_session", params).await?;
 
     // Check for error response from Runtime
     if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
@@ -1186,7 +1207,7 @@ pub async fn create_session(
 pub async fn activate_session(
     State(state): State<AppState>,
     Path((agent_id, session_id)): Path<(String, String)>,
-) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     // Verify agent exists and is running
     {
         let gw = state.gateway_state.read().await;
@@ -1212,7 +1233,7 @@ pub async fn activate_session(
         return Err(ApiError::internal(error));
     }
 
-    Ok(StatusCode::OK)
+    Ok(Json(data))
 }
 
 /// `PUT /api/agents/{id}/sessions/{session_id}/title` — update session title (S1.14)

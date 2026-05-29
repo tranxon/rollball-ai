@@ -80,24 +80,6 @@ export function MemoryPanel() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Toolbar */}
-      <div className="flex gap-3 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-        <button
-          onClick={handleConsolidate}
-          disabled={loading}
-          className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-        >
-          Consolidate
-        </button>
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-        >
-          Refresh
-        </button>
-      </div>
-
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
         <input
@@ -209,6 +191,24 @@ export function MemoryPanel() {
             }}
           />
         )}
+      </div>
+
+      {/* Bottom actions */}
+      <div className="flex gap-3 border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
+        <button
+          onClick={handleConsolidate}
+          disabled={loading}
+          className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+        >
+          Consolidate
+        </button>
+        <button
+          onClick={handleRefresh}
+          disabled={loading}
+          className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+        >
+          Refresh
+        </button>
       </div>
     </div>
   );

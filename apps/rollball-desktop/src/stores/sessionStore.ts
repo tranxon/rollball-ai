@@ -104,25 +104,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
 
       // Populate workspaceStore.sessionWorkspaceMap from session workspace_ids
-      const wsStore = useWorkspaceStore.getState();
-      const wsMap = { ...wsStore.sessionWorkspaceMap };
-      let wsChanged = false;
-      for (const session of sessions) {
-        const wsId = session.workspace_id;
-        if (wsId && wsId !== "__agent_home__") {
-          if (wsMap[session.session_id] !== wsId) {
-            wsMap[session.session_id] = wsId;
-            wsChanged = true;
-          }
-        } else if (session.session_id in wsMap) {
-          // Session reverted to agent home — clear stale entry
-          delete wsMap[session.session_id];
-          wsChanged = true;
-        }
-      }
-      if (wsChanged) {
-        useWorkspaceStore.setState({ sessionWorkspaceMap: wsMap });
-      }
+      useWorkspaceStore.getState().syncSessionWorkspaces(sessions);
     } catch (e) {
       // Discard stale error too
       if (requestId !== fetchSessionId) return;
@@ -164,14 +146,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // ③ Cancel any in-flight session message loading
     useChatStore.getState().abortSessionLoad();
 
-    // ④ Notify Runtime to switch its active ConversationSession (best-effort, non-blocking)
+    // ④ Notify Runtime to switch its active ConversationSession, and await the
+    //    response which now includes the session's core metadata (model/provider/workspace_id).
+    //    Apply them immediately so the UI is correct without waiting for WS events.
     if (agentId) {
-      fetch(
-        `${getGatewayUrl()}/api/agents/${agentId}/sessions/${sessionId}/activate`,
-        { method: "POST" },
-      ).catch((e) => {
+      try {
+        const resp = await fetch(
+          `${getGatewayUrl()}/api/agents/${agentId}/sessions/${sessionId}/activate`,
+          { method: "POST" },
+        );
+        if (resp.ok) {
+          const meta = await resp.json() as {
+            session_id: string;
+            activated: boolean;
+            model?: string | null;
+            provider?: string | null;
+            workspace_id?: string | null;
+          };
+          useChatStore.getState().applySessionMeta(agentId, sessionId, meta);
+        }
+      } catch (e) {
         console.warn("[SessionStore] activate_session failed:", e);
-      });
+      }
 
       // ADR-014: Pull repair — refresh session statuses on switch
       useSessionStore.getState().fetchSessions(agentId);
@@ -186,11 +182,35 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   createSession: async (agentId: string) => {
     try {
+      // Collect initial per-session metadata to send to backend via create_session API.
+      const agent = useChatStore.getState().agentStates[agentId];
+      const availableModels = useChatStore.getState().availableModels;
+      const initialModel = agent?.preferredModel ?? availableModels[0]?.name ?? null;
+      const initialProvider = agent?.preferredProvider ?? null;
+      const lastActiveWs = useWorkspaceStore.getState().workspaces.find((w) => w.last_active)?.id ?? null;
+
+      // Ensure agent.preferredModel is set on the frontend state so that
+      // activateSession() → makeInitialSessionState() can use it for the UI.
+      if (!agent?.preferredModel && initialModel) {
+        useChatStore.setState((state) => ({
+          agentStates: {
+            ...state.agentStates,
+            [agentId]: { ...state.agentStates[agentId], preferredModel: initialModel },
+          },
+        }));
+      }
+
+      const body: Record<string, string> = {};
+      if (initialModel) body.model = initialModel;
+      if (initialProvider) body.provider = initialProvider;
+      if (lastActiveWs) body.workspace_id = lastActiveWs;
+
       const resp = await fetch(
         `${getGatewayUrl()}/api/agents/${agentId}/sessions`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
         },
       );
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -208,17 +228,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }));
 
       // Populate workspace for the new session from last_active in workspace list.
-      // This must happen BEFORE activateSession so the WorkspaceSelector reads
-      // the correct workspace immediately when it re-renders.
-      const wsStore = useWorkspaceStore.getState();
-      const lastActiveWs = wsStore.workspaces.find((w) => w.last_active);
       if (lastActiveWs) {
-        useWorkspaceStore.setState({
-          sessionWorkspaceMap: {
-            ...wsStore.sessionWorkspaceMap,
-            [data.session_id]: lastActiveWs.id,
-          },
-        });
+        useWorkspaceStore.getState().setSessionWorkspaceLocal(data.session_id, lastActiveWs);
       }
 
       // Activate the new session in chatStore (creates session state entry)

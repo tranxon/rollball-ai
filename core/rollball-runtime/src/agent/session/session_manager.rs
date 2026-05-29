@@ -50,8 +50,6 @@ pub struct SessionManagerConfig {
     pub full_tool_specs: Vec<(String, serde_json::Value)>,
     /// Identity context string injected by Gateway for ContextBuilder.
     pub identity_context: Option<String>,
-    /// Model override from Gateway (takes precedence over manifest's suggested_model)
-    pub override_model: Option<String>,
     /// LLM protocol type derived from models.dev (used for image token estimation)
     pub protocol_type: ProtocolType,
 }
@@ -73,7 +71,6 @@ impl Default for SessionManagerConfig {
             tool_definitions: Vec::new(),
             full_tool_specs: Vec::new(),
             identity_context: None,
-            override_model: None,
             protocol_type: ProtocolType::default(),
         }
     }
@@ -154,17 +151,6 @@ struct CachedLLMConfig {
     compact_model: Option<String>,
 }
 
-/// Cached search configuration from the latest Gateway SearchConfigDelivery push.
-///
-/// Mirrors `CachedLLMConfig`: stores search_key_vault (API keys, never persisted)
-/// and search provider list (metadata) so that sessions created *after* a search
-/// config change can use the latest keys and provider list.
-#[derive(Debug, Clone)]
-pub(crate) struct CachedSearchConfig {
-    pub key_vault: Vec<SearchKeyEntry>,
-    pub provider_list: Vec<SearchProviderListItem>,
-}
-
 /// Lifecycle manager for multiple concurrent sessions.
 ///
 /// Owns a shared `Arc<AgentCore>` template and creates `SessionTask`s
@@ -188,10 +174,6 @@ pub struct SessionManager {
     /// Cached LLM config from LLMConfigDelivery (provider params, caps, limit)
     /// that must be re-applied to every newly created session.
     cached_llm: Option<CachedLLMConfig>,
-    /// Cached search config from SearchConfigDelivery (key vault + provider list).
-    /// Mirrors `cached_llm` — stored so ConfigSnapshot can return current
-    /// search provider metadata for the Agent Setup UI.
-    cached_search_config: Option<CachedSearchConfig>,
     /// The currently active session ID — used as the default routing target
     /// when an incoming message does not specify an explicit session_id.
     /// Owned here (not in cli.rs) so SessionManager is the single source of truth.
@@ -227,7 +209,6 @@ impl SessionManager {
             runtime_overrides: RuntimeConfigOverrides::default(),
             workspace_context: None,
             cached_llm: None,
-            cached_search_config: None,
             current_session_id: initial_session_id,
             mcp_tools: None,
             mcp_manager: McpManager::new(),
@@ -262,21 +243,33 @@ impl SessionManager {
         session_id: String,
         conversation: Option<ConversationSession>,
     ) -> Result<String> {
-        // Read the persisted workspace_id before the conversation is moved
-        // into SessionState, so we can restore it to session_workspaces.
+        // Read the persisted workspace_id and model/provider before the conversation
+        // is moved into SessionState, so we can restore them.
         let persisted_workspace_id = conversation
             .as_ref()
             .and_then(|c| c.workspace_id())
             .map(|w| w.to_string());
 
+        // ADR-012: Read persisted model/provider from JSONL metadata.
+        // The frontend is responsible for always providing an initial model;
+        // we do NOT fall back to manifest's suggested_model.
+        let initial_model = conversation
+            .as_ref()
+            .and_then(|c| c.model());
+
         let (inbound_tx, inbound_rx) =
             mpsc::channel(self.config.inbound_channel_capacity);
 
-        let session_state = SessionState::new(
+        let mut session_state = SessionState::new(
             self.config.history_max_tokens,
             self.config.per_session_budget.clone(),
             conversation,
         );
+
+        // ADR-012: Set per-session model on SessionState (only if we have one).
+        if let Some(m) = initial_model.as_ref() {
+            session_state.set_model(m.clone());
+        }
 
         let (mut task, agent_inbound_tx) = SessionTask::new(
             self.core.clone(),
@@ -287,7 +280,6 @@ impl SessionManager {
             session_id.clone(),
             self.config.tool_definitions.clone(),
             self.config.identity_context.clone(),
-            self.config.override_model.clone(),
             self.config.protocol_type.clone(),
             self.mcp_tools.clone(),
         );
@@ -785,21 +777,27 @@ impl SessionManager {
         })
     }
 
-    /// Update model override and broadcast to all active sessions.
+    /// Route a model switch to a specific session (ADR-012: per-session model).
     ///
-    /// Follows the same cache+broadcast pattern as other ambient state:
-    /// the model is stored in `SessionManagerConfig.override_model` so that
-    /// sessions created *after* this call inherit the latest model, while
-    /// existing sessions receive the update via broadcast.
-    pub fn update_model_override(&mut self, model: String) -> Vec<String> {
+    /// Only sends the ModelSwitch message to the targeted session.
+    /// Model persistence is handled by the SessionTask itself (via
+    /// `ConversationSession::update_model_provider`).
+    pub fn route_model_switch(
+        &mut self,
+        session_id: &str,
+        model: String,
+        provider: Option<String>,
+    ) -> Result<()> {
         tracing::info!(
+            session_id = %session_id,
             model = %model,
-            "SessionManager: caching model override"
+            provider = ?provider,
+            "SessionManager: routing model_switch to session (ADR-012: per-session)"
         );
-        self.config.override_model = Some(model.clone());
-        self.broadcast(SessionMessage::ModelSwitch {
-            model,
-        })
+        self.send_to_session(
+            session_id,
+            SessionMessage::ModelSwitch { model, provider },
+        )
     }
 
     /// Update web search config from Gateway SearchConfigDelivery hot-push.
@@ -815,12 +813,8 @@ impl SessionManager {
         tracing::info!(
             provider_count = search_list.len(),
             key_count = search_key_vault.len(),
-            "SessionManager: caching search config"
+            "SessionManager: search config received (keys held in memory, not cached)"
         );
-        self.cached_search_config = Some(CachedSearchConfig {
-            key_vault: search_key_vault,
-            provider_list: search_list,
-        });
     }
 
     /// Update user identity from Gateway UserProfileUpdate push.
@@ -844,11 +838,6 @@ impl SessionManager {
                 identity_context: identity_context.clone(),
             });
         }
-    }
-
-    /// Get the current cached search config, if any.
-    pub(crate) fn search_config(&self) -> Option<&CachedSearchConfig> {
-        self.cached_search_config.as_ref()
     }
 
     /// Get all active session IDs.
@@ -876,6 +865,11 @@ impl SessionManager {
             .iter()
             .map(|(id, handle)| (id.clone(), handle.status()))
             .collect()
+    }
+
+    /// Access the shared core's manifest (ADR-012: for per-session model defaults).
+    pub fn manifest(&self) -> &rollball_core::AgentManifest {
+        self.core.manifest()
     }
 
     /// Get the suggested provider name from the shared core manifest.

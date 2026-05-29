@@ -440,10 +440,8 @@ async fn async_main(
     // Provider key vault is always delivered fresh and never persisted to disk.
     let resource_cache = read_resource_cache(std::path::Path::new(&config.work_dir));
 
-    // Load per-agent model/provider preference BEFORE selecting provider.
-    // Priority: agent_model.json saved provider > manifest suggested_provider
-    // (only if API key exists) > first available provider with API key.
-    let saved_agent_model = load_agent_model(&config.work_dir);
+    // ADR-012: Per-session model — no global agent_model.json.
+    // Cold start uses manifest's suggested_model/provider.
     let (provider, resolved_model, available_models, protocol_type) = {
         if let Some(ref cfg) = hello_config {
             let provider_list = cfg
@@ -459,26 +457,19 @@ async fn async_main(
                         .any(|k| k.provider_id == prov_id)
                 };
 
-                // Priority 1: saved provider from agent_model.json (must have API key)
-                let saved_provider = saved_agent_model.as_ref().and_then(|(_, p)| p.as_deref());
-                let chosen_prov = saved_provider
-                    .and_then(|sp| providers.iter().find(|p| p.id == sp && has_api_key(&p.id)));
+                // Priority 1: manifest suggested_provider (only if API key exists)
+                let suggested = &loaded.manifest.llm.suggested_provider;
+                let chosen_prov = if has_api_key(suggested) {
+                    providers.iter().find(|p| p.id == *suggested)
+                } else {
+                    tracing::info!(
+                        suggested = %suggested,
+                        "Manifest suggested_provider has no API key, skipping"
+                    );
+                    None
+                };
 
-                // Priority 2: manifest suggested_provider (only if API key exists)
-                let chosen_prov = chosen_prov.or_else(|| {
-                    let suggested = &loaded.manifest.llm.suggested_provider;
-                    if has_api_key(suggested) {
-                        providers.iter().find(|p| p.id == *suggested)
-                    } else {
-                        tracing::info!(
-                            suggested = %suggested,
-                            "Manifest suggested_provider has no API key, skipping"
-                        );
-                        None
-                    }
-                });
-
-                // Priority 3: first available provider with API key
+                // Priority 2: first available provider with API key
                 let chosen_prov =
                     chosen_prov.or_else(|| providers.iter().find(|p| has_api_key(&p.id)));
                 if let Some(prov) = chosen_prov {
@@ -493,22 +484,11 @@ async fn async_main(
                         .map(|k| k.api_key.as_str());
                     let available = prov.models.iter().map(|m| m.id.clone()).collect::<Vec<_>>();
 
-                    // Model selection: saved model (if in this provider's list) > first model
-                    let saved_model = saved_agent_model.as_ref().map(|(m, _)| m.as_str());
-                    let model_id = if let Some(sm) = saved_model {
-                        if prov.models.iter().any(|m| m.id == sm) {
-                            sm.to_string()
-                        } else {
-                            tracing::info!(
-                                saved_model = %sm,
-                                provider = %prov.id,
-                                "Saved model not in selected provider's list, using first available"
-                            );
-                            prov.models
-                                .first()
-                                .map(|m| m.id.clone())
-                                .unwrap_or_else(|| "default".to_string())
-                        }
+                    // ADR-012: Model selection uses manifest suggested_model.
+                    // No global agent_model.json anymore — model is per-session.
+                    let suggested_model = &loaded.manifest.llm.suggested_model;
+                    let model_id = if prov.models.iter().any(|m| m.id == *suggested_model) {
+                        suggested_model.clone()
                     } else {
                         prov.models
                             .first()
@@ -535,8 +515,7 @@ async fn async_main(
                         model = %model_id,
                         num_models = available.len(),
                         has_api_key = api_key.is_some(),
-                        source = if saved_provider == Some(prov.id.as_str()) { "agent_model.json" }
-                                 else { "fallback" },
+                        source = "manifest",
                         "Provider initialized from AgentHelloConfig"
                     );
 
@@ -666,11 +645,7 @@ async fn async_main(
         context_builder = context_builder.with_override_model(resolved_model.clone());
     }
 
-    // Step 6.5: Per-agent model/provider preference was already applied
-    // during provider selection above (agent_model.json has priority over
-    // manifest suggested_provider).  Extract persisted_provider for the
-    // save_agent_model call later in the Gateway mode path.
-    let persisted_provider = saved_agent_model.as_ref().and_then(|(_, p)| p.clone());
+    // Step 6.5: ADR-012 — model is per-session, no global agent_model.json.
     tracing::info!(
         provider = %provider.name(),
         model = %resolved_model,
@@ -719,7 +694,12 @@ async fn async_main(
             Some(crate::conversation::ConversationSession::new(
                 work_dir_path,
                 &new_id,
-                &config.agent_id,
+                crate::conversation::SessionConfig {
+                    agent_id: config.agent_id.clone(),
+                    workspace_id: None,
+                    model: None,
+                    provider: None,
+                },
             )?)
         };
 
@@ -731,14 +711,8 @@ async fn async_main(
         tracing::info!(count = sessions.len(), "Background session scan complete");
     });
 
-    // Calculate model override for SessionManagerConfig BEFORE grpc_client is moved.
-    // In Gateway mode, the resolved_model takes precedence over manifest.suggested_model.
-    let override_model =
-        if grpc_client.is_some() && resolved_model != loaded.manifest.llm.suggested_model {
-            Some(resolved_model.clone())
-        } else {
-            None
-        };
+    // ADR-012: Per-session model — no global override_model in SessionManagerConfig.
+    // Model is initialized per-session from manifest.suggested_model or restored from JSONL.
 
     // Step 9: Run the appropriate loop based on connection mode
     if let Some(mut client) = grpc_client {
@@ -823,7 +797,6 @@ async fn async_main(
             tool_definitions: tool_definitions_for_session,
             full_tool_specs: full_tool_specs.clone(),
             identity_context: identity_context_for_session,
-            override_model,
             protocol_type: protocol_type.clone(),
         };
         let mut session_manager = SessionManager::new(core, session_manager_config, String::new());
@@ -980,25 +953,8 @@ async fn async_main(
                 }
             }
 
-            // Always cache the model from AgentHelloConfig so the SessionManager
-            // has it properly initialized — even when resolved_model matches the
-            // manifest's suggested_model.  Without this, the override_model stays
-            // None and subsequent sessions fall back to the (potentially stale)
-            // manifest model.  Switching models in the frontend sends a
-            // RuntimeConfigUpdate which calls update_model_override, completing
-            // the init; this ensures the AgentHelloResult model is cached from
-            // the start (same save-then-override pattern as line ~4903).
-            {
-                // Preserve the user's provider preference from agent_model.json
-                // when available; otherwise fall back to Gateway-resolved provider.
-                let provider_to_save = persisted_provider.as_deref(); // FIXME(Task10): provider from agent_model.json
-                save_agent_model(&config.work_dir, &resolved_model, provider_to_save);
-                session_manager.update_model_override(resolved_model.clone());
-                tracing::info!(
-                    model = %resolved_model,
-                    "Cached model override from AgentHelloResult"
-                );
-            }
+        // ADR-012: Per-session model — no global agent_model.json anymore.
+        // Model is initialized per-session and persisted in JSONL SessionMetadata.
         }
 
         // ── MCP server auto-connect at startup ──
@@ -1227,11 +1183,20 @@ async fn async_main(
                             relay_intent(&outbound_tx, "agent_interrupted", &params).await;
                         }
 
-                        crate::agent::loop_::ChunkEvent::SessionStateChanged { status } => {
-                            let params = serde_json::json!({
+                        crate::agent::loop_::ChunkEvent::SessionStateChanged { status, model, provider, workspace_id } => {
+                            let mut params = serde_json::json!({
                                 "status": status,
                                 "session_id": sid,
                             });
+                            if let Some(ref m) = model {
+                                params["model"] = serde_json::json!(m);
+                            }
+                            if let Some(ref p) = provider {
+                                params["provider"] = serde_json::json!(p);
+                            }
+                            if let Some(ref w) = workspace_id {
+                                params["workspace_id"] = serde_json::json!(w);
+                            }
                             relay_intent(&outbound_tx, "session_state_changed", &params).await;
                         }
 
@@ -1557,8 +1522,9 @@ async fn run_gateway_loop(
                         Some((request_id, payload)) => {
                             // Handle QueryConfig inline (no Grafeo needed)
                             if let ServerPayload::QueryConfig(_q) = &payload {
-                                let (current_model, current_provider) =
-                                    load_agent_model(&work_dir).unwrap_or((String::new(), None));
+                                // ADR-012: Per-session model — use manifest's suggested_model as default.
+                                let current_model = session_manager.manifest().llm.suggested_model.clone();
+                                let current_provider = Some(session_manager.provider_name());
                                 let overrides = &session_manager.runtime_overrides;
                                 // Read MCP config from separate agent_mcp.json.
                                 let mcp_json: Vec<String> = crate::agent_config::load_agent_mcp_config(
@@ -1572,7 +1538,7 @@ async fn run_gateway_loop(
                                 let snapshot = proto::client_message::Payload::ConfigSnapshot(
                                     proto::ConfigSnapshot {
                                         request_id: String::new(),
-                                        model: if current_model.is_empty() { None } else { Some(current_model) },
+                                        model: Some(current_model),
                                         provider: current_provider,
                                         max_output_tokens: overrides.max_output_tokens,
                                         max_iterations: overrides.max_iterations,
@@ -1721,22 +1687,37 @@ async fn process_gateway_recv(
                         }
                     };
 
-                    // Handle model_switch: broadcast to all sessions AND
-                    // update SessionManagerConfig so new sessions inherit the model.
-                    // Without the config update, a session created after model switch
-                    // would fall back to the stale override_model from AgentHelloResult.
+                    // Handle model_switch: ADR-012 — per-session model routing.
+                    // Only the targeted session receives the model switch.
+                    // Model persistence is handled by SessionTask (JSONL metadata).
                     if action == "model_switch" {
                         if let Some(model) = params.get("model").and_then(|v| v.as_str()) {
                             let provider = params.get("provider").and_then(|v| v.as_str());
-                            save_agent_model(work_dir, model, provider);
-                            session_manager.update_model_override(model.to_string());
-                            tracing::info!(
-
-                                model = %model,
-                                provider = ?provider,
-                                "Model switched via model_switch message (broadcast to all sessions)"
-
-                            );
+                            // ADR-012: Extract session_id from params (passed by Gateway).
+                            // Falls back to target_session_id (from message routing) if not specified.
+                            let switch_session_id = params
+                                .get("session_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(&target_session_id);
+                            if let Err(e) = session_manager.route_model_switch(
+                                switch_session_id,
+                                model.to_string(),
+                                provider.map(|s| s.to_string()),
+                            ) {
+                                tracing::warn!(
+                                    session_id = %switch_session_id,
+                                    model = %model,
+                                    error = %e,
+                                    "Failed to route model_switch to session"
+                                );
+                            } else {
+                                tracing::info!(
+                                    session_id = %switch_session_id,
+                                    model = %model,
+                                    provider = ?provider,
+                                    "Model switched via model_switch (ADR-012: per-session)"
+                                );
+                            }
                         } else {
                             tracing::warn!("model_switch message missing 'model' field, ignoring");
                         }
@@ -1926,11 +1907,20 @@ async fn process_gateway_recv(
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
+                        // ADR-012: Accept initial per-session metadata from frontend.
+                        let initial_workspace = params.get("workspace_id").and_then(|v| v.as_str());
+                        let initial_model = params.get("model").and_then(|v| v.as_str());
+                        let initial_provider = params.get("provider").and_then(|v| v.as_str());
                         let new_session_id = crate::conversation::generate_session_id();
                         match crate::conversation::ConversationSession::new(
                             std::path::Path::new(work_dir),
                             &new_session_id,
-                            agent_id_for_reconnect,
+                            crate::conversation::SessionConfig {
+                                agent_id: agent_id_for_reconnect.to_string(),
+                                workspace_id: initial_workspace.map(|s| s.to_string()),
+                                model: initial_model.map(|s| s.to_string()),
+                                provider: initial_provider.map(|s| s.to_string()),
+                            },
                         ) {
                             Ok(new_session) => {
                                 if let Err(e) = session_manager
@@ -2036,11 +2026,27 @@ async fn process_gateway_recv(
 
                         // In multi-session mode, activation updates current_session_id for routing
                         session_manager.set_current_session_id(session_id.clone());
-                        let data = serde_json::json!({
 
+                        // Read session metadata from JSONL to return model/provider/workspace_id
+                        // to the frontend in the activation response, so it can populate the UI
+                        // immediately without waiting for a WS event.
+                        let (session_model, session_provider, session_workspace_id) = {
+                            let conversations_dir =
+                                std::path::Path::new(work_dir).join("conversations");
+                            let file_path =
+                                conversations_dir.join(format!("{}.jsonl", session_id));
+                            match crate::conversation::read_session_metadata(&file_path) {
+                                Ok(meta) => (meta.model, meta.provider, meta.workspace_id),
+                                Err(_) => (None, None, None),
+                            }
+                        };
+
+                        let data = serde_json::json!({
                             "session_id": session_id,
                             "activated": true,
-
+                            "model": session_model,
+                            "provider": session_provider,
+                            "workspace_id": session_workspace_id,
                         });
                         send_session_response(grpc_client, &request_id, data).await;
                         return LoopAction::Continue;
@@ -2125,7 +2131,12 @@ async fn process_gateway_recv(
                             match crate::conversation::ConversationSession::new(
                                 std::path::Path::new(work_dir),
                                 &new_session_id,
-                                agent_id_for_reconnect,
+                                crate::conversation::SessionConfig {
+                                    agent_id: agent_id_for_reconnect.to_string(),
+                                    workspace_id: None,
+                                    model: None,
+                                    provider: None,
+                                },
                             ) {
                                 Ok(new_session) => {
                                     if let Err(e) = session_manager
@@ -2306,9 +2317,7 @@ async fn process_gateway_recv(
                         compact_model.clone(),
                     );
 
-                    // Persist selected model/provider to agent_model.json.
-                    save_agent_model(&work_dir, &resolved_model, Some(&provider));
-
+                    // ADR-012: Per-session model — no global agent_model.json.
                     // Persist provider_list_version + compact_model to
                     // resource_cache.json for next-startup AgentHello diff sync
                     // and distillation model resolution.
@@ -2529,8 +2538,8 @@ async fn process_gateway_recv(
                     active_tools,
                     shell_approval_threshold,
                     mcp_servers,
-                    model,
-                    provider,
+                    model: _,    // ADR-012: model_switch is a separate action
+                    provider: _, // ADR-012: model_switch is a separate action
                     search_config_json,
                 } => {
                     tracing::info!(
@@ -2565,20 +2574,6 @@ async fn process_gateway_recv(
                     let mcp_for_persist = mcp_servers.clone();
                     if let Some(mcp_configs) = mcp_servers {
                         session_manager.apply_mcp_servers(mcp_configs).await;
-                    }
-
-                    // Handle model/provider switch from Gateway (same pattern as model_switch action)
-                    if model.is_some() || provider.is_some() {
-                        if let Some(ref model_name) = model {
-                            let provider_ref = provider.as_deref();
-                            save_agent_model(&work_dir, model_name, provider_ref);
-                            session_manager.update_model_override(model_name.clone());
-                        }
-                        tracing::info!(
-                            model = ?model,
-                            provider = ?provider,
-                            "Model/provider override applied from RuntimeConfigUpdate"
-                        );
                     }
 
                     // Hot-rebuild tool definitions when active_tools changes.
@@ -3217,6 +3212,8 @@ async fn handle_list_sessions(
                 corrupted: s.corrupted,
                 status,
                 workspace_id,
+                model: s.model,
+                provider: s.provider,
             }
         })
         .collect();
@@ -3533,111 +3530,6 @@ fn resolve_skill_mode(
     }
 
     manifest.skill_mode()
-}
-
-// ── Per-agent model persistence ──────────────────────────────────────────
-
-/// Agent model preference file stored in the workspace directory.
-///
-/// When the user switches models via model_switch, the Agent Runtime persists
-/// the selection to this file so it survives restarts. On cold start, the Runtime
-/// reads this file and restores the preference if the model is still available
-/// in the LLMConfigDelivery.models list.
-const AGENT_MODEL_FILE: &str = "config/agent_model.json";
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct AgentModelEntry {
-    /// The model identifier selected by the user
-    model: String,
-
-    /// The provider identifier selected by the user (e.g., "deepseek", "openai")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<String>,
-
-    /// ISO 8601 timestamp of when the model was last changed
-    updated_at: String,
-}
-
-/// Load the per-agent model preference from the workspace.
-///
-/// Returns `Some((model, provider))` if the file exists and parses correctly, otherwise `None`.
-/// The provider field may be `None` for legacy files that only stored the model.
-fn load_agent_model(work_dir: &str) -> Option<(String, Option<String>)> {
-    let path = std::path::Path::new(work_dir).join(AGENT_MODEL_FILE);
-    if !path.exists() {
-        return None;
-    }
-
-    match std::fs::read_to_string(&path) {
-        Ok(content) => match serde_json::from_str::<AgentModelEntry>(&content) {
-            Ok(entry) => {
-                tracing::info!(
-                    model = %entry.model,
-                    provider = ?entry.provider,
-                    updated_at = %entry.updated_at,
-                    "Loaded per-agent model preference from workspace"
-                );
-                Some((entry.model, entry.provider))
-            }
-
-            Err(e) => {
-                tracing::warn!("Failed to parse {}: {}", AGENT_MODEL_FILE, e);
-                None
-            }
-        },
-
-        Err(e) => {
-            tracing::warn!("Failed to read {}: {}", AGENT_MODEL_FILE, e);
-            None
-        }
-    }
-}
-
-/// Save the per-agent model preference to the workspace.
-///
-/// Called when a model_switch message is received. Updates the model and
-/// provider, overwriting any existing entry.
-fn save_agent_model(work_dir: &str, model: &str, provider: Option<&str>) {
-    let entry = AgentModelEntry {
-        model: model.to_string(),
-        provider: provider.map(|s| s.to_string()),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    };
-    let path = std::path::Path::new(work_dir).join(AGENT_MODEL_FILE);
-
-    // Ensure parent directory exists (config/ may not exist yet)
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
-    match serde_json::to_string_pretty(&entry) {
-        Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
-                tracing::warn!("Failed to write {}: {}", AGENT_MODEL_FILE, e);
-            }
-        }
-
-        Err(e) => {
-            tracing::warn!("Failed to serialize {}: {}", AGENT_MODEL_FILE, e);
-        }
-    }
-}
-
-/// Remove the per-agent model preference file from the workspace.
-///
-/// Called when the saved model is no longer available in the current provider's
-/// model list (e.g. provider was changed or model was removed).
-///
-/// NOTE: This function is intentionally NOT called automatically.
-/// agent_model.json is the user's preference — never auto-delete it.
-#[allow(dead_code)]
-fn remove_agent_model(work_dir: &str) {
-    let path = std::path::Path::new(work_dir).join(AGENT_MODEL_FILE);
-    if path.exists()
-        && let Err(e) = std::fs::remove_file(&path)
-    {
-        tracing::warn!("Failed to remove {}: {}", AGENT_MODEL_FILE, e);
-    }
 }
 
 /// Attempt to reconnect to the Gateway via gRPC with exponential backoff.

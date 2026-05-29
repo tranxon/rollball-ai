@@ -7,8 +7,7 @@
 //! Also stores per-agent MCP server config in `{work_dir}/config/agent_mcp.json`
 //! and per-agent search provider config in `{work_dir}/config/agent_search.json`.
 //!
-//! Model selection and available model list are stored separately in
-//! `{work_dir}/config/agent_model.json` (see cli.rs AgentModelEntry).
+//! Model selection is per-session (ADR-012), persisted in JSONL SessionMetadata.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

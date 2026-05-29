@@ -33,6 +33,14 @@ interface WorkspaceState {
   // Legacy: set current workspace using the active session (backward compat)
   setCurrentWorkspace: (agentId: string, workspaceId: string) => Promise<void>;
 
+  // Synchronous local-only setter — used by chatStore/sessionStore to keep
+  // sessionWorkspaceMap consistent without an API roundtrip.
+  setSessionWorkspaceLocal: (sessionId: string, workspaceId: string) => void;
+
+  // Bulk-sync session workspaces from fetchSessions / activate_session.
+  // Accepts the raw session list; removes stale entries automatically.
+  syncSessionWorkspaces: (sessions: Array<{ session_id: string; workspace_id?: string | null }>) => void;
+
   // Get current workspace ID for a session (defaults to "__agent_home__")
   getSessionWorkspaceId: (sessionId: string) => string;
 
@@ -125,6 +133,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return;
     }
     return get().setSessionWorkspace(agentId, activeSessionId, workspaceId);
+  },
+
+  setSessionWorkspaceLocal: (sessionId: string, workspaceId: string) => {
+    set((state) => ({
+      sessionWorkspaceMap: { ...state.sessionWorkspaceMap, [sessionId]: workspaceId },
+    }));
+  },
+
+  syncSessionWorkspaces: (sessions) => {
+    set((state) => {
+      const next = { ...state.sessionWorkspaceMap };
+      let changed = false;
+      for (const s of sessions) {
+        const wsId = s.workspace_id;
+        if (wsId && wsId !== "__agent_home__") {
+          if (next[s.session_id] !== wsId) {
+            next[s.session_id] = wsId;
+            changed = true;
+          }
+        } else if (s.session_id in next) {
+          delete next[s.session_id];
+          changed = true;
+        }
+      }
+      return changed ? { sessionWorkspaceMap: next } : {};
+    });
   },
 
   getSessionWorkspaceId: (sessionId: string) => {
