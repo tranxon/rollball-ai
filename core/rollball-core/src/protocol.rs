@@ -962,6 +962,12 @@ pub struct SessionInfoDto {
     /// None or "__agent_home__" means the agent's home directory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    /// Per-session model selection (ADR-012), from JSONL metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Per-session provider selection (ADR-012), from JSONL metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// DTO for session lifecycle status (ADR-014).

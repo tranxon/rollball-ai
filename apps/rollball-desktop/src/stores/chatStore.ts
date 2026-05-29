@@ -5,6 +5,7 @@ import { useSessionStore } from "./sessionStore";
 import { useAgentStore } from "./agentStore";
 import { useUserProfileStore } from "./userProfileStore";
 import { useAgentProfileStore } from "./agentProfileStore";
+import { useWorkspaceStore } from "./workspaceStore";
 import { getGatewayUrl } from "../lib/config";
 
 // ── Sender info helpers ────────────────────────────────────────────────
@@ -59,6 +60,10 @@ interface SessionChatState {
   lastAccessed: number;
   /** Per-session todo list (from todo_write tool) */
   todos: TodoItem[];
+  /** Per-session selected model */
+  model: string | null;
+  /** Per-session selected provider */
+  provider: string | null;
 }
 
 const DEFAULT_SESSION_STATE: SessionChatState = {
@@ -82,6 +87,8 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   pendingSend: false,
   lastAccessed: 0,
   todos: [],
+  model: null,
+  provider: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -96,9 +103,6 @@ interface AgentState {
   activeSessionId: string | null;
   /** ADR-015: All session IDs that are open as tabs (ordered, max 32) */
   openSessionIds: string[];
-  /** Per-agent model info */
-  model: string | null;
-  provider: string | null;
   /** Reconnect attempts counter */
   reconnectAttempts: number;
   /** Reconnect timer reference */
@@ -107,18 +111,22 @@ interface AgentState {
   lastLoadedSessionId: string | null;
   /** Session init in progress */
   isSessionInitLoading: boolean;
+  /** ADR-012: Agent's preferred model — set on every model_switch, inherited by new sessions */
+  preferredModel: string | null;
+  /** ADR-012: Agent's preferred provider */
+  preferredProvider: string | null;
 }
 
 const DEFAULT_AGENT_STATE: AgentState = {
   sessionStates: {},
   activeSessionId: null,
   openSessionIds: [],
-  model: null,
-  provider: null,
   reconnectAttempts: 0,
   reconnectTimer: null,
   lastLoadedSessionId: null,
   isSessionInitLoading: false,
+  preferredModel: null,
+  preferredProvider: null,
 };
 
 const MAX_CACHED_SESSIONS = 32;
@@ -143,6 +151,15 @@ function getActiveSessionState(state: ChatStore, agentId: string): SessionChatSt
   const agent = getAgentState(state, agentId);
   if (!agent.activeSessionId) return DEFAULT_SESSION_STATE;
   return agent.sessionStates[agent.activeSessionId] ?? DEFAULT_SESSION_STATE;
+}
+
+/** Build initial session state, inheriting agent's preferred model (ADR-012). */
+function makeInitialSessionState(agent: AgentState): SessionChatState {
+  return {
+    ...DEFAULT_SESSION_STATE,
+    model: agent.preferredModel,
+    provider: agent.preferredProvider,
+  };
 }
 
 /** Produce a new agentStates patch that merges `patch` into the agent's current state */
@@ -235,12 +252,6 @@ interface ChatStore {
   // ---- Global fields (not per-agent) ----
   /** Per-agent WebSocket connections: agentId → WebSocket */
   wsMap: Record<string, WebSocket>;
-  /** Current active model (derived from agentStates[activeAgent].model, kept for compat) */
-  currentModel: string | null;
-  /** Current active provider (derived from agentStates[activeAgent].provider, kept for compat) */
-  currentProvider: string | null;
-  /** Per-agent model memory: agent_id → { model, provider } */
-  agentModels: Record<string, { model: string; provider: string }>;
   availableModels: ModelEntry[];
   /** Current agent ID for stop functionality */
   currentAgentId: string | null;
@@ -269,13 +280,11 @@ interface ChatStore {
   setCurrentModel: (model: string, provider: string, agentId: string) => void;
   setAvailableModels: (models: ModelEntry[]) => void;
   getWs: (agentId: string) => WebSocket | undefined;
-  loadAgentProvider: (agentId: string) => string | null;
   continueExecution: (agentId: string) => Promise<void>;
   resolveApproval: (agentId: string) => void;
   /** Resolve a specific approval by tool_call_id, removing it from the pending map. */
   resolveApprovalByToolCallId: (agentId: string, toolCallId: string) => void;
   resolveQuestion: (agentId: string) => void;
-  loadAgentModel: (agentId: string) => Promise<string | null>;
   loadConversationHistory: (agentId: string) => Promise<void>;
   loadSessionMessages: (
     agentId: string,
@@ -288,6 +297,8 @@ interface ChatStore {
   loadMoreMessages: (agentId: string, sessionId: string) => Promise<void>;
   /** Activate a session — sets activeSessionId and triggers cleanup */
   activateSession: (agentId: string, sessionId: string) => void;
+  /** Apply session metadata (model/provider/workspace_id) from activate_session response */
+  applySessionMeta: (agentId: string, sessionId: string, meta: { model?: string | null; provider?: string | null; workspace_id?: string | null }) => void;
   /** Get the active session ID for an agent */
   getActiveSessionId: (agentId: string) => string | null;
   /** ADR-014: Get session state for reading from external stores */
@@ -364,9 +375,6 @@ function resetAllReconnects() {
 export const useChatStore = create<ChatStore>((set, get) => ({
   agentStates: {},
   wsMap: {},
-  currentModel: null,
-  currentProvider: null,
-  agentModels: {},
   availableModels: [],
   currentAgentId: null,
   isLoadingMore: false,
@@ -393,7 +401,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const session = agent.sessionStates[sessionId];
       if (!session) {
         // Crash restart: create entry with backend status
-        const updatedSessions = { ...agent.sessionStates, [sessionId]: { ...DEFAULT_SESSION_STATE, sessionStatus: status, pendingSend: false, lastAccessed: Date.now() } };
+        const updatedSessions = { ...agent.sessionStates, [sessionId]: { ...makeInitialSessionState(agent), sessionStatus: status, pendingSend: false, lastAccessed: Date.now() } };
         const updatedAgent = { ...agent, sessionStates: updatedSessions };
         return { agentStates: { ...state.agentStates, [agentId]: updatedAgent } };
       }
@@ -417,7 +425,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         } else {
           // Crash restart: session not cached yet — create entry with backend status
           updatedSessions[sessionId] = {
-            ...DEFAULT_SESSION_STATE,
+            ...makeInitialSessionState(agent),
             sessionStatus: status,
             pendingSend: false,
             lastAccessed: Date.now(),
@@ -499,7 +507,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       // Ensure the new session has a state entry
       if (!newSessionStates[sessionId]) {
-        newSessionStates[sessionId] = { ...DEFAULT_SESSION_STATE, lastAccessed: Date.now() };
+        newSessionStates[sessionId] = { ...makeInitialSessionState(agent), lastAccessed: Date.now() };
       } else {
         newSessionStates[sessionId] = {
           ...newSessionStates[sessionId],
@@ -520,11 +528,46 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       return {
         ...evictResult,
-        // Update currentModel/currentProvider from the new session's agent
-        currentModel: evictResult.agentStates[agentId]?.model ?? state.currentModel,
-        currentProvider: evictResult.agentStates[agentId]?.provider ?? state.currentProvider,
       };
     });
+  },
+
+  /** Apply session metadata (model/provider/workspace_id) from activate_session response.
+   *  Sets the session's model/provider and agent's preferredModel, plus syncs workspaceStore. */
+  applySessionMeta: (
+    agentId: string,
+    sessionId: string,
+    meta: { model?: string | null; provider?: string | null; workspace_id?: string | null },
+  ) => {
+    set((state) => {
+      const sessionPatch: Partial<SessionChatState> = {};
+      const agentPatch: Partial<AgentState> = {};
+      if (typeof meta.model === "string" && meta.model) {
+        sessionPatch.model = meta.model;
+        agentPatch.preferredModel = meta.model;
+      }
+      if (typeof meta.provider === "string" && meta.provider) {
+        sessionPatch.provider = meta.provider;
+        agentPatch.preferredProvider = meta.provider;
+      }
+      if (Object.keys(sessionPatch).length === 0 && Object.keys(agentPatch).length === 0) return state;
+
+      // Apply session and agent patches sequentially, carrying state forward
+      let result = state;
+      if (Object.keys(sessionPatch).length > 0) {
+        const p = updateSessionState(result, agentId, sessionId, sessionPatch);
+        result = { ...result, agentStates: p.agentStates };
+      }
+      if (Object.keys(agentPatch).length > 0) {
+        const p = updateAgentState(result, agentId, agentPatch);
+        result = { ...result, agentStates: p.agentStates };
+      }
+      return result;
+    });
+    // Sync workspace selection to workspaceStore
+    if (typeof meta.workspace_id === "string" && meta.workspace_id) {
+      useWorkspaceStore.getState().setSessionWorkspaceLocal(sessionId, meta.workspace_id as string);
+    }
   },
 
   clearMessages: (agentId?: string) => {
@@ -964,46 +1007,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   setCurrentModel: (model: string, provider: string, agentId: string) => {
-    const prevModel = get().currentModel;
-    const prevProvider = get().currentProvider;
-    // Update both global (compat) and per-agent
-    set((state) => ({
-      currentModel: model,
-      currentProvider: provider,
-      ...updateAgentState(state, agentId, { model, provider }),
-      agentModels: {
-        ...state.agentModels,
-        [agentId]: { model, provider },
-      },
-    }));
+    const sessionId = getAgentState(get(), agentId).activeSessionId;
+    if (!sessionId) return;
+
+    // Update session model (current session only)
+    set((state) => updateSessionState(state, agentId, sessionId, { model, provider }));
+    // Update agent's default model (new sessions inherit this)
+    set((state) => updateAgentState(state, agentId, { preferredModel: model, preferredProvider: provider }));
+
     const ws = get().wsMap[agentId];
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "model_switch", model, provider, agentId, _prevModel: prevModel }));
-    } else {
-      // No WebSocket — revert
-      set((state) => ({
-        currentModel: prevModel,
-        currentProvider: prevProvider,
-        ...updateAgentState(state, agentId, { model: prevModel, provider: prevProvider }),
-      }));
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "model_switch", model, provider, agentId, session_id: sessionId }));
     }
   },
   setAvailableModels: (models: ModelEntry[]) => {
-    set((state) => {
-      const currentModelExists = state.currentModel && state.currentProvider
-        ? models.some(m => m.name === state.currentModel && m.provider === state.currentProvider)
-        : false;
-
-      return {
-        availableModels: models,
-        currentModel: currentModelExists ? state.currentModel : (models[0]?.name ?? null),
-        currentProvider: currentModelExists ? state.currentProvider : (models[0]?.provider ?? null),
-      };
-    });
-  },
-  loadAgentProvider: (agentId: string) => {
-    const cached = get().agentModels[agentId];
-    return cached?.provider ?? null;
+    set({ availableModels: models });
   },
   continueExecution: async (agentId: string) => {
     try {
@@ -1043,34 +1061,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const sessionId = getAgentState(get(), agentId).activeSessionId;
     if (!sessionId) return;
     set((state) => updateSessionState(state, agentId, sessionId, { pendingQuestion: null }));
-  },
-  loadAgentModel: async (agentId: string): Promise<string | null> => {
-    try {
-      const resp = await fetch(`${getGatewayUrl()}/api/agents/${agentId}/model`);
-      if (!resp.ok) return null;
-      const data = await resp.json() as { provider: string; model: string; available_models: string[] };
-      if (data.model) {
-        set((state) => {
-          const cached = state.agentModels[agentId];
-          let provider = data.provider;
-          if (!provider && cached && cached.model === data.model && cached.provider) {
-            provider = cached.provider;
-          }
-          return {
-            currentModel: data.model,
-            currentProvider: provider,
-            ...updateAgentState(state, agentId, { model: data.model, provider }),
-            agentModels: {
-              ...state.agentModels,
-              [agentId]: { model: data.model, provider },
-            },
-          };
-        });
-      }
-      return data.model ?? null;
-    } catch {
-      return null;
-    }
   },
   loadConversationHistory: async (agentId: string) => {
     try {
@@ -1400,6 +1390,7 @@ const CONTENT_EVENT_TYPES = new Set([
   "reasoning_started", "chunk", "tool_call", "tool_result",
   "done", "error", "tool_approval_needed", "ask_question", "iteration_limit_paused",
   "context_usage", "session_state_changed", "interrupted", "todo_list_updated",
+  "model_confirmed",
 ]);
 
 function handleMessageEvent(
@@ -1777,21 +1768,17 @@ function handleMessageEvent(
     case "model_confirmed": {
       const confirmedModel = data.model as string;
       const confirmedProvider = data.provider as string | undefined;
-      const confirmedAgentId = data.agentId as string | undefined;
       console.log("[ChatStore] Model switch confirmed:", confirmedModel, confirmedProvider);
-      if (confirmedAgentId && confirmedModel) {
-        set((state) => ({
-          agentModels: {
-            ...state.agentModels,
-            [confirmedAgentId]: {
-              model: confirmedModel,
-              provider: confirmedProvider ?? state.currentProvider ?? "",
-            },
-          },
-          ...updateAgentState(state, confirmedAgentId, {
-            model: confirmedModel,
-            provider: confirmedProvider ?? getAgentState(state, confirmedAgentId).provider ?? "",
-          }),
+      if (confirmedModel && sid) {
+        // Update session model (current session only)
+        set((state) => updateSessionState(state, agentId, sid!, {
+          model: confirmedModel,
+          provider: confirmedProvider ?? "",
+        }));
+        // Update agent's default model (new sessions inherit this)
+        set((state) => updateAgentState(state, agentId, {
+          preferredModel: confirmedModel,
+          preferredProvider: confirmedProvider ?? null,
         }));
       }
       break;
@@ -1802,12 +1789,6 @@ function handleMessageEvent(
       // Gateway透传后Runtime原始字段名是content，旧IPC路径重写为message
       const errorMsg = (data.message ?? data.content) as string;
       console.error("[ChatStore] Server error:", errorMsg);
-      if (errorMsg && errorMsg.includes("cannot switch model")) {
-        const errorAgentId = data.agentId as string | undefined;
-        if (errorAgentId) {
-          get().loadAgentModel(errorAgentId);
-        }
-      }
       const errMsg: ChatMessage = {
         id: `msg-error-${Date.now()}`,
         type: "error",
@@ -1952,6 +1933,10 @@ function handleMessageEvent(
           set((state) => {
             const sessionPatch: Partial<SessionChatState> = { sessionStatus: status, pendingSend: false };
 
+            // ADR-012: Backend includes per-session model/provider (from JSONL metadata).
+            if (typeof data.model === "string") sessionPatch.model = data.model as string;
+            if (typeof data.provider === "string") sessionPatch.provider = data.provider as string;
+
             // When status transitions FROM Streaming, clear transient streaming state
             const prev = getSessionState(state, agentId, sid);
             if (prev.sessionStatus?.status === "streaming" && status.status !== "streaming") {
@@ -1968,7 +1953,20 @@ function handleMessageEvent(
               sessionPatch.iterationLimitPaused = null;
             }
 
-            return updateSessionState(state, agentId, sid, sessionPatch);
+            // Update session state (model/provider/status)
+            const sessionResult = updateSessionState(state, agentId, sid, sessionPatch);
+
+            // Update agent's default model from resumed session (new sessions inherit this)
+            if (typeof data.model === "string" && data.model) {
+              set((s) => updateAgentState(s, agentId, { preferredModel: data.model as string }));
+            }
+
+            // Sync per-session workspace from session_state_changed event.
+            // Workspace can change during session lifetime (just like model can be switched).
+            if (typeof data.workspace_id === "string" && data.workspace_id) {
+              useWorkspaceStore.getState().setSessionWorkspaceLocal(sid, data.workspace_id as string);
+            }
+            return sessionResult;
           });
         }
       }

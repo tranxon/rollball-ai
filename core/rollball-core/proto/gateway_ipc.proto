@@ -238,7 +238,7 @@ message ModelModalities         { repeated string input = 1; repeated string out
 message ModelCapabilitiesInfo   { uint64 context_window = 1; uint64 max_output_tokens = 2; uint64 max_input_tokens = 3; bool supports_tool_calling = 4; bool supports_reasoning = 5; bool supports_attachment = 6; bool supports_temperature = 7; ModelCostInfo cost = 8; ModelModalities modalities = 9; string name = 10; string family = 11; string knowledge_cutoff = 12; }
 message ContextUsageInfo        { uint64 context_window = 1; uint64 input_tokens = 2; uint64 output_tokens = 3; uint64 total_tokens = 4; uint64 max_input_tokens = 5; uint64 usable_context = 6; uint32 usage_percent = 7; }
 message CronEntryInfo           { string id = 1; string agent_id = 2; string schedule = 3; string action = 4; string params_json = 5; }
-message SessionInfoDto          { string session_id = 1; string created_at = 2; uint32 message_count = 3; string title = 4; bool corrupted = 5; string status_json = 6; string workspace_id = 7; }
+message SessionInfoDto          { string session_id = 1; string created_at = 2; uint32 message_count = 3; string title = 4; bool corrupted = 5; string status_json = 6; string workspace_id = 7; string model = 8; string provider = 9; }
 message ConversationEntryDto    { string id = 1; string ts = 2; string role = 3; string content = 4; string metadata_json = 5; }
 
 // ── Memory API messages (Gateway → Runtime queries) ──────────────────────

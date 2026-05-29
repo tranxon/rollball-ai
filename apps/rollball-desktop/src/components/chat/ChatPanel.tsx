@@ -61,7 +61,6 @@ export function ChatPanel() {
 
   // Per-agent + per-session state selectors
   // Two-level mapping: agentStates[agentId].sessionStates[sessionId]
-  const agentState = useChatStore((s) => selectedAgentId ? s.agentStates[selectedAgentId] : null);
   const sessionState = useChatStore((s) => {
     if (!selectedAgentId) return null;
     const agent = s.agentStates[selectedAgentId];
@@ -87,11 +86,11 @@ export function ChatPanel() {
       || sessionState.sessionStatus?.status === "waiting_approval"
       || sessionState.sessionStatus?.status === "paused")
     : false;
-  const currentModel = agentState?.model ?? useChatStore.getState().currentModel;
-  const currentProvider = agentState?.provider ?? useChatStore.getState().currentProvider;
+  const currentModel = sessionState?.model ?? null;
+  const currentProvider = sessionState?.provider ?? null;
 
   // Global state and actions
-  const { wsMap, connectStream, sendMessage, sendInterrupt, availableModels, setCurrentModel, setAvailableModels, loadAgentModel, continueExecution, resolveApproval, resolveApprovalByToolCallId } = useChatStore();
+  const { wsMap, connectStream, sendMessage, sendInterrupt, availableModels, setCurrentModel, setAvailableModels, continueExecution, resolveApproval, resolveApprovalByToolCallId } = useChatStore();
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const gatewayStatus = useGatewayStore((s) => s.status);
   const { activeSkill, clearActiveSkill } = useSkillStore();
@@ -316,14 +315,8 @@ export function ChatPanel() {
           connectStream(selectedAgentId, getGatewayUrl());
         }
       }
-      // Load model from Gateway API FIRST (reads per-agent agent_model.json),
-      // THEN reload the model list. This ensures currentModel is set before
-      // setAvailableModels runs, preventing the fallback-to-first-model bug.
-      const initModel = async () => {
-        await loadAgentModel(selectedAgentId);
-        loadModels();
-      };
-      void initModel();
+      // Load available model list; per-session model comes from model_confirmed events.
+      loadModels();
 
       if (!isSameAgentRemount) {
         // Only load session messages on first switch to this agent if no messages yet.
@@ -403,7 +396,7 @@ export function ChatPanel() {
       // Only clear reconnect timers for the old agent to avoid stale reconnects.
       // The ws connections are per-agent and managed in wsMap.
     };
-  }, [selectedAgentId, selectedAgent?.running, selectedAgent?.ready, connectStream, loadAgentModel, loadModels]);
+  }, [selectedAgentId, selectedAgent?.running, selectedAgent?.ready, connectStream, loadModels]);
 
   // Load messages when active session changes (from SessionPanel or createSession)
   useEffect(() => {

@@ -61,6 +61,13 @@ pub struct SessionMetadata {
     /// Persisted so sessions restore their workspace on cold start.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    /// Per-session model selection (ADR-012).
+    /// Persisted so sessions restore their model on cold start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Per-session provider selection (ADR-012).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// Commands sent to the background writer thread.
@@ -170,6 +177,17 @@ impl ConversationWriter {
     }
 }
 
+/// Initial configuration for creating a new `ConversationSession`.
+///
+/// Replaces a long positional parameter list with named fields, making call
+/// sites self-documenting and trivial to extend.
+pub struct SessionConfig {
+    pub agent_id: String,
+    pub workspace_id: Option<String>,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+}
+
 /// Manages a single conversation session's JSONL file.
 ///
 /// `ConversationSession` is `Send + Sync` so it can be held by `AgentLoop`
@@ -187,17 +205,26 @@ pub struct ConversationSession {
     /// Wrapped in Mutex for interior mutability so that both file persistence
     /// and in-memory state are updated atomically on the API side.
     workspace_id: std::sync::Mutex<Option<String>>,
+    /// Per-session model selection (ADR-012).
+    model: std::sync::Mutex<Option<String>>,
+    /// Per-session provider selection (ADR-012).
+    provider: std::sync::Mutex<Option<String>>,
     sender: mpsc::UnboundedSender<WriterCommand>,
     /// Path to the JSONL file (for session-level distillation on close).
     session_file_path: PathBuf,
 }
 
 impl ConversationSession {
-    /// Create a new session.
+    /// Create a new session with optional initial metadata.
     ///
     /// Creates `{work_dir}/conversations/{session_id}.jsonl`, writes the
-    /// `SessionMetadata` header, and starts the background writer thread.
-    pub fn new(work_dir: &Path, session_id: &str, agent_id: &str) -> Result<Self> {
+    /// `SessionMetadata` header (including initial model/provider/workspace_id),
+    /// and starts the background writer thread.
+    pub fn new(
+        work_dir: &Path,
+        session_id: &str,
+        config: SessionConfig,
+    ) -> Result<Self> {
         let conversations_dir = work_dir.join("conversations");
         std::fs::create_dir_all(&conversations_dir)?;
 
@@ -215,12 +242,14 @@ impl ConversationSession {
             version: CONVERSATION_FORMAT_VERSION,
             session_id: session_id.to_string(),
             created_at: now.clone(),
-            agent_id: agent_id.to_string(),
+            agent_id: config.agent_id.clone(),
             title: None,
             updated_at: Some(now),
             message_count: Some(0),
             corrupted: false,
-            workspace_id: None,
+            workspace_id: config.workspace_id.clone(),
+            model: config.model.clone(),
+            provider: config.provider.clone(),
         };
 
         // Write metadata as the first line — build complete line then single write
@@ -236,11 +265,13 @@ impl ConversationSession {
 
         Ok(Self {
             session_id: session_id.to_string(),
-            agent_id: agent_id.to_string(),
+            agent_id: config.agent_id,
             created_at: now_for_self,
             title_set: AtomicBool::new(false),
             current_title: std::sync::Mutex::new(None),
-            workspace_id: std::sync::Mutex::new(None),
+            workspace_id: std::sync::Mutex::new(config.workspace_id),
+            model: std::sync::Mutex::new(config.model),
+            provider: std::sync::Mutex::new(config.provider),
             sender: tx,
             session_file_path: file_path,
         })
@@ -273,6 +304,8 @@ impl ConversationSession {
             title_set: AtomicBool::new(meta.title.is_some()),
             current_title: std::sync::Mutex::new(meta.title.clone()),
             workspace_id: std::sync::Mutex::new(meta.workspace_id.clone()),
+            model: std::sync::Mutex::new(meta.model.clone()),
+            provider: std::sync::Mutex::new(meta.provider.clone()),
             sender: tx,
             session_file_path: file_path,
         })
@@ -380,6 +413,8 @@ impl ConversationSession {
             message_count: None,
             corrupted: false,
             workspace_id: self.workspace_id.lock().ok().and_then(|w| w.clone()),
+            model: self.model.lock().ok().and_then(|m| m.clone()),
+            provider: self.provider.lock().ok().and_then(|p| p.clone()),
         };
         self.update_metadata(metadata);
         // Track current title for dedup
@@ -420,6 +455,8 @@ impl ConversationSession {
             message_count: None,
             corrupted: false,
             workspace_id: self.workspace_id.lock().ok().and_then(|w| w.clone()),
+            model: self.model.lock().ok().and_then(|m| m.clone()),
+            provider: self.provider.lock().ok().and_then(|p| p.clone()),
         };
         self.update_metadata(metadata);
         // Track current title for dedup
@@ -452,6 +489,8 @@ impl ConversationSession {
             message_count: None,
             corrupted: false,
             workspace_id: Some(workspace_id.to_string()),
+            model: self.model.lock().ok().and_then(|m| m.clone()),
+            provider: self.provider.lock().ok().and_then(|p| p.clone()),
         };
         self.update_metadata(metadata);
         tracing::info!(
@@ -464,6 +503,52 @@ impl ConversationSession {
     /// Return the persisted workspace_id, if any.
     pub fn workspace_id(&self) -> Option<String> {
         self.workspace_id.lock().ok().and_then(|w| w.clone())
+    }
+
+    /// Return the persisted model, if any (ADR-012).
+    pub fn model(&self) -> Option<String> {
+        self.model.lock().ok().and_then(|m| m.clone())
+    }
+
+    /// Return the persisted provider, if any (ADR-012).
+    pub fn provider(&self) -> Option<String> {
+        self.provider.lock().ok().and_then(|p| p.clone())
+    }
+
+    /// Persist the per-session model and provider selection to JSONL metadata (ADR-012).
+    ///
+    /// Rewrites the first line of the JSONL file so the model binding
+    /// survives cold restarts. Does NOT mutate the in-memory
+    /// `SessionState` — the caller is responsible for keeping the two in sync.
+    pub fn update_model_provider(&self, model: &str, provider: Option<&str>) {
+        // Update in-memory state FIRST so that subsequent metadata updates
+        // (e.g. set_title via first user message) don't lose model/provider.
+        if let Ok(mut m) = self.model.lock() {
+            *m = Some(model.to_string());
+        }
+        if let Ok(mut p) = self.provider.lock() {
+            *p = provider.map(|s| s.to_string());
+        }
+        let metadata = SessionMetadata {
+            version: CONVERSATION_FORMAT_VERSION,
+            session_id: self.session_id.clone(),
+            created_at: self.created_at.clone(),
+            agent_id: self.agent_id.clone(),
+            title: self.current_title.lock().ok().and_then(|t| t.clone()),
+            updated_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            message_count: None,
+            corrupted: false,
+            workspace_id: self.workspace_id.lock().ok().and_then(|w| w.clone()),
+            model: Some(model.to_string()),
+            provider: provider.map(|s| s.to_string()),
+        };
+        self.update_metadata(metadata);
+        tracing::info!(
+            session_id = %self.session_id,
+            model = %model,
+            provider = ?provider,
+            "Session model/provider persisted to JSONL"
+        );
     }
 }
 
@@ -497,6 +582,12 @@ pub struct SessionInfo {
     pub title: Option<String>,
     /// Whether the session metadata was recovered from a corrupted first line
     pub corrupted: bool,
+    /// Per-session model selection (ADR-012), from JSONL metadata
+    pub model: Option<String>,
+    /// Per-session provider selection (ADR-012), from JSONL metadata
+    pub provider: Option<String>,
+    /// Per-session workspace selection, from JSONL metadata
+    pub workspace_id: Option<String>,
 }
 
 /// Paginated message result.
@@ -736,6 +827,9 @@ pub fn scan_sessions_async(
                     message_count: meta.message_count.unwrap_or(0),
                     title: meta.title,
                     corrupted: meta.corrupted,
+                    model: meta.model,
+                    provider: meta.provider,
+                    workspace_id: meta.workspace_id,
                 });
             }
         }
@@ -778,6 +872,8 @@ pub fn read_session_metadata(path: &Path) -> Result<SessionMetadata> {
                 message_count: None,
                 corrupted: true,
                 workspace_id: None,
+                model: None,
+                provider: None,
             })
         }
     }
@@ -946,7 +1042,12 @@ mod tests {
         let agent_id = "com.test.agent";
 
         // Create session and write messages
-        let session = ConversationSession::new(work_dir, &session_id, agent_id).unwrap();
+        let session = ConversationSession::new(work_dir, &session_id, SessionConfig {
+            agent_id: agent_id.to_string(),
+            workspace_id: None,
+            model: None,
+            provider: None,
+        }).unwrap();
         session.append_message("user", "Hello", None);
         session.append_message(
             "assistant",
@@ -1018,6 +1119,8 @@ mod tests {
                 message_count: Some(0),
                 corrupted: false,
                 workspace_id: None,
+                model: None,
+                provider: None,
             };
             let mut file = std::fs::File::create(&path).unwrap();
             serde_json::to_writer(&mut file, &meta).unwrap();
@@ -1050,6 +1153,8 @@ mod tests {
                 message_count: Some(5),
                 corrupted: false,
                 workspace_id: None,
+                model: None,
+                provider: None,
             };
             serde_json::to_writer(&mut file, &meta).unwrap();
             writeln!(file).unwrap();
@@ -1124,7 +1229,12 @@ mod tests {
         let agent_id = "com.test.resume";
 
         // Create initial session
-        let session = ConversationSession::new(work_dir, session_id, agent_id).unwrap();
+        let session = ConversationSession::new(work_dir, session_id, SessionConfig {
+            agent_id: agent_id.to_string(),
+            workspace_id: None,
+            model: None,
+            provider: None,
+        }).unwrap();
         session.append_message("user", "First message", None);
         std::thread::sleep(std::time::Duration::from_millis(50));
 
@@ -1217,6 +1327,8 @@ mod tests {
             message_count: Some(3),
             corrupted: false,
             workspace_id: None,
+            model: None,
+            provider: None,
         };
         let mut file = std::fs::File::create(&file_path).unwrap();
         serde_json::to_writer(&mut file, &meta).unwrap();
@@ -1247,6 +1359,8 @@ mod tests {
             message_count: Some(0),
             corrupted: false,
             workspace_id: None,
+            model: None,
+            provider: None,
         };
         let mut file = std::fs::File::create(&valid_path).unwrap();
         serde_json::to_writer(&mut file, &valid_meta).unwrap();

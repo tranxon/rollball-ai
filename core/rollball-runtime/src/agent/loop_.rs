@@ -180,8 +180,13 @@ pub enum ChunkEvent {
     /// Session lifecycle status changed (ADR-014).
     /// Emitted whenever SessionState::status transitions, so the frontend
     /// can stay in sync without optimistic local writes.
+    /// ADR-012: Also carries per-session model/provider so the frontend
+    /// can display the correct model after session activation/resume.
     SessionStateChanged {
         status: SessionStatus,
+        model: Option<String>,
+        provider: Option<String>,
+        workspace_id: Option<String>,
     },
     /// Todo list updated — emitted after a `todo_write` tool call mutates
     /// SessionState.todos, so the frontend can render the current task list.
@@ -289,7 +294,12 @@ impl AgentLoop {
         if self.session.set_status(new_status) {
             let status = self.session.status.clone();
             // Emit chunk event to Gateway → frontend
-            if !self.core.try_send_chunk(ChunkEvent::SessionStateChanged { status: status.clone() }) {
+            if !self.core.try_send_chunk(ChunkEvent::SessionStateChanged {
+                status: status.clone(),
+                model: self.session.model().map(|s| s.to_string()),
+                provider: self.session.provider().map(|s| s.to_string()),
+                workspace_id: self.session.workspace_id(),
+            }) {
                 tracing::warn!(
                     "SessionStateChanged event dropped (channel full/closed), status={:?}. Pull repair will correct frontend.",
                     status

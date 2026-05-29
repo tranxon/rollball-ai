@@ -38,8 +38,8 @@ pub enum SessionMessage {
     },
     /// Continue execution after tool result or iteration pause
     ContinueExecution,
-    /// Switch the LLM model at runtime
-    ModelSwitch { model: String },
+    /// Switch the LLM model at runtime (ADR-012: per-session, carries provider)
+    ModelSwitch { model: String, provider: Option<String> },
     /// Update the LLM provider at runtime (hot-push from Gateway)
     UpdateProvider {
         provider_name: String,
@@ -101,7 +101,7 @@ impl std::fmt::Debug for SessionMessage {
                 .field("has_content_parts", &content_parts.is_some())
                 .finish(),
             SessionMessage::ContinueExecution => f.debug_tuple("ContinueExecution").finish(),
-            SessionMessage::ModelSwitch { model } => f.debug_struct("ModelSwitch").field("model", model).finish(),
+            SessionMessage::ModelSwitch { model, provider } => f.debug_struct("ModelSwitch").field("model", model).field("provider", provider).finish(),
             SessionMessage::UpdateProvider { provider_name, protocol_type, api_key, base_url, model, .. } => f
                 .debug_struct("UpdateProvider")
                 .field("provider_name", provider_name)
@@ -187,8 +187,6 @@ pub(crate) struct SessionTask {
     tool_definitions: Vec<serde_json::Value>,
     /// Identity context string injected by Gateway
     identity_context: Option<String>,
-    /// Model override from Gateway (takes precedence over manifest's suggested_model)
-    override_model: Option<String>,
     /// LLM protocol type (for image token estimation)
     protocol_type: rollball_core::protocol::ProtocolType,
     /// Debug controller (shared across sessions, only in DevMode).
@@ -230,7 +228,6 @@ impl SessionTask {
         session_id: String,
         tool_definitions: Vec<serde_json::Value>,
         identity_context: Option<String>,
-        override_model: Option<String>,
         protocol_type: rollball_core::protocol::ProtocolType,
         mcp_tools: Option<Vec<Arc<dyn Tool>>>,
     ) -> (Self, mpsc::Sender<InboundMessage>) {
@@ -258,7 +255,6 @@ impl SessionTask {
             session_id,
             tool_definitions,
             identity_context,
-            override_model,
             protocol_type,
             debug_ctrl,
             rewind_notify,
@@ -287,7 +283,6 @@ impl SessionTask {
             system_prompt,
             tool_definitions,
             identity_context,
-            override_model,
             protocol_type,
         } = self;
 
@@ -297,9 +292,10 @@ impl SessionTask {
             .with_identity(identity_context.clone())
             .with_tools(tool_definitions.clone());
 
-        // Apply Gateway-resolved model override so the first message uses
-        // the correct model (not the manifest's suggested_model fallback).
-        if let Some(ref model) = override_model {
+        // ADR-012: Apply per-session model from SessionState.
+        // For new sessions, model is set from manifest's suggested_model during creation.
+        // For resumed sessions, model is restored from JSONL metadata.
+        if let Some(ref model) = agent_loop.session.model {
             context_builder = context_builder.with_override_model(model.clone());
         }
 
@@ -623,12 +619,23 @@ impl SessionTask {
                         reason: "user_requested".to_string(),
                     }).await;
                 }
-                Some(SessionMessage::ModelSwitch { model }) => {
+                Some(SessionMessage::ModelSwitch { model, provider }) => {
                     tracing::info!(
                         session_id = %session_id,
                         model = %model,
-                        "SessionTask: model switch requested"
+                        provider = ?provider,
+                        "SessionTask: model switch requested (ADR-012: per-session)"
                     );
+                    // Update in-memory SessionState
+                    agent_loop.session.set_model(model.clone());
+                    if let Some(ref p) = provider {
+                        agent_loop.session.set_provider(p.clone());
+                    }
+                    // Persist to JSONL conversation file
+                    if let Some(ref conv) = agent_loop.session.conversation() {
+                        conv.update_model_provider(&model, provider.as_deref());
+                    }
+                    // Update context builder for next iteration
                     context_builder.set_override_model(model);
                 }
                 Some(SessionMessage::UpdateProvider { provider_name, protocol_type, api_key, base_url, model, compact_model }) => {

@@ -112,6 +112,11 @@ pub struct SessionState {
     /// - At session close: `true` means skip distillation (no new content),
     ///   `false` means distill the tail (new messages after last compaction).
     pub(crate) is_compacted: bool,
+    /// Per-session model selection (ADR-012).
+    /// Initialized from `suggested_model` in manifest or restored from JSONL metadata.
+    pub(crate) model: Option<String>,
+    /// Per-session provider selection (ADR-012).
+    pub(crate) provider: Option<String>,
 }
 
 impl SessionState {
@@ -131,6 +136,8 @@ impl SessionState {
             status: SessionStatus::Idle,
             todos: Vec::new(),
             is_compacted: false,
+            model: None,
+            provider: None,
         }
     }
 
@@ -230,5 +237,32 @@ impl SessionState {
             })
             .collect();
         Some(lines.join("\n"))
+    }
+
+    /// Get the per-session model (ADR-012).
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    /// Set the per-session model (ADR-012).
+    pub fn set_model(&mut self, model: String) {
+        self.model = Some(model);
+    }
+
+    /// Get the per-session provider (ADR-012).
+    pub fn provider(&self) -> Option<&str> {
+        self.provider.as_deref()
+    }
+
+    /// Set the per-session provider (ADR-012).
+    pub fn set_provider(&mut self, provider: String) {
+        self.provider = Some(provider);
+    }
+
+    /// Get the per-session workspace_id (from JSONL metadata, persisted by
+    /// ConversationSession::update_workspace_id).
+    /// Returns None if no conversation is attached or no workspace has been set.
+    pub fn workspace_id(&self) -> Option<String> {
+        self.conversation.as_ref().and_then(|c| c.workspace_id())
     }
 }

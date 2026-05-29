@@ -194,6 +194,8 @@ impl From<&protocol::SessionInfoDto> for proto::SessionInfoDto {
                 .map(|st| serde_json::to_string(st).unwrap_or_default())
                 .unwrap_or_default(),
             workspace_id: s.workspace_id.clone().unwrap_or_default(),
+            model: s.model.clone().unwrap_or_default(),
+            provider: s.provider.clone().unwrap_or_default(),
         }
     }
 }
@@ -212,6 +214,8 @@ impl From<proto::SessionInfoDto> for protocol::SessionInfoDto {
                 serde_json::from_str(&s.status_json).ok()
             },
             workspace_id: if s.workspace_id.is_empty() { None } else { Some(s.workspace_id) },
+            model: if s.model.is_empty() { None } else { Some(s.model) },
+            provider: if s.provider.is_empty() { None } else { Some(s.provider) },
         }
     }
 }
@@ -975,6 +979,8 @@ mod tests {
             corrupted: false,
             status: None,
             workspace_id: None,
+            model: None,
+            provider: None,
         };
 
         let proto_msg: proto::SessionInfoDto = (&original).into();
@@ -997,6 +1003,8 @@ mod tests {
             corrupted: false,
             status: Some(protocol::SessionStatusDto::Streaming { message_id: None }),
             workspace_id: None,
+            model: None,
+            provider: None,
         };
 
         let proto_msg: proto::SessionInfoDto = (&original).into();
@@ -1014,6 +1022,8 @@ mod tests {
             corrupted: false,
             status: Some(protocol::SessionStatusDto::WaitingApproval { request_id: "req-123".to_string() }),
             workspace_id: None,
+            model: None,
+            provider: None,
         };
 
         let proto_msg2: proto::SessionInfoDto = (&original2).into();
