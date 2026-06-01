@@ -118,24 +118,32 @@ fn find_gateway_binary(app_handle: tauri::AppHandle) -> Result<std::path::PathBu
         }
     }
 
-    // Also try the workspace target/ directory for dev convenience
+    // Also try the workspace target/ directory for dev convenience.
+    // Check release first, then debug.
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR")
         .or_else(|_| std::env::var("TAURI_DEV_DIR"))
     {
-        let workspace_target = std::path::PathBuf::from(&manifest_dir)
-            .parent() // src-tauri
-            .and_then(|p| p.parent()) // apps/rollball-desktop
-            .and_then(|p| p.parent()) // apps
-            .map(|p| p.join("target/release"));
-
-        if let Some(target_dir) = workspace_target {
-            let dev_gateway_exe = target_dir.join("rollball-gateway.exe");
-            let dev_gateway = target_dir.join("rollball-gateway");
-            if dev_gateway_exe.exists() {
-                return Ok(dev_gateway_exe);
+        let manifest_path = std::path::PathBuf::from(&manifest_dir);
+        // manifest_dir = .../apps/rollball-desktop/src-tauri
+        // Go up 3 levels to workspace root: .../apps/rollball-desktop/src-tauri -> .../
+        let mut base = manifest_path.clone();
+        for _ in 0..3 {
+            if let Some(parent) = base.parent() {
+                base = parent.to_path_buf();
+            } else {
+                break;
             }
-            if dev_gateway.exists() {
-                return Ok(dev_gateway);
+        }
+
+        for profile in &["release", "debug"] {
+            let target_dir = base.join("target").join(profile);
+            let exe = target_dir.join("rollball-gateway.exe");
+            let bin = target_dir.join("rollball-gateway");
+            if exe.exists() {
+                return Ok(exe);
+            }
+            if bin.exists() {
+                return Ok(bin);
             }
         }
     }

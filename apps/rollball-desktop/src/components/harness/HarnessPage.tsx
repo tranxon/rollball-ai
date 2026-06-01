@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { VaultKeyEntry, ModelInfo, ModelCapabilitiesInfo, ModelCapabilitiesMap, ProviderListEntry, McpServerConfigDef, McpTransportDef, McpPresetDef } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { inputBase, selectBase } from "../../lib/ui-styles";
-import { needsApiKey, keyPlaceholder } from "../../lib/providers";
+import { needsApiKey, keyPlaceholder, isLocalProvider } from "../../lib/providers";
 import { fetchProviderModels } from "../../lib/gateway-api";
 import { getGatewayUrl } from "../../lib/config";
 import { Star } from "lucide-react";
@@ -55,7 +55,13 @@ export function HarnessPage() {
 /** Compare two provider arrays by id for equality check (avoid unnecessary re-renders) */
 function providersEqual(a: ProviderListEntry[], b: ProviderListEntry[]): boolean {
   if (a.length !== b.length) return false;
-  return a.every((item, i) => item.id === b[i].id && item.name === b[i].name && item.model_count === b[i].model_count);
+  return a.every((item, i) =>
+    item.id === b[i].id &&
+    item.name === b[i].name &&
+    item.model_count === b[i].model_count &&
+    item.local === b[i].local &&
+    item.api === b[i].api,
+  );
 }
 
 /** Provider configuration */
@@ -101,6 +107,29 @@ function ProvidersTab() {
   // Dynamic provider list from Gateway API
   const [dynamicProviders, setDynamicProviders] = useState<ProviderListEntry[]>([]);
   const [dynamicProvidersLoading, setDynamicProvidersLoading] = useState(false);
+
+  // Collapsible remote providers section (folded by default when any local provider is configured)
+  const [showRemoteProviders, setShowRemoteProviders] = useState(false);
+
+  // Split providers into local / remote for UI grouping
+  const { localProviders, remoteProviders } = useMemo(() => {
+    const local: ProviderListEntry[] = [];
+    const remote: ProviderListEntry[] = [];
+    for (const p of dynamicProviders) {
+      if (p.local || isLocalProvider(p.id)) {
+        local.push(p);
+      } else {
+        remote.push(p);
+      }
+    }
+    return { localProviders: local, remoteProviders: remote };
+  }, [dynamicProviders]);
+
+  // Derived: is the current "add" target a local provider?
+  const newProviderIsLocal = useMemo(
+    () => isLocalProvider(newProvider),
+    [newProvider]
+  );
 
 
   const fetchKeys = useCallback(async () => {
@@ -254,9 +283,53 @@ function ProvidersTab() {
   }, []);
 
   const handleAdd = async () => {
-    // First test the API key
-    if (needsApiKey(newProvider) && !newKey.trim()) {
+    // First test the API key (skip for local providers which don't need keys)
+    if (!newProviderIsLocal && needsApiKey(newProvider) && !newKey.trim()) {
       setTestResult({ success: false, message: "Please enter an API Key first" });
+      return;
+    }
+
+    // For local providers, skip the key test and save directly
+    if (newProviderIsLocal) {
+      setTesting(true);
+      try {
+        // Build per-model capabilities map
+        const modelCapabilities: ModelCapabilitiesMap = {};
+        if (newModels.length > 0) {
+          for (const modelId of newModels) {
+            const mi = availableModels.find(m => m.id === modelId);
+            modelCapabilities[modelId] = {
+              context_window: mi?.context_window ?? 128000,
+              max_output_tokens: mi?.max_tokens ?? 0,
+              supports_tool_calling: mi?.tool_call ?? newSupportsToolCalling,
+              supports_reasoning: mi?.reasoning ?? undefined,
+              modalities: mi?.input_modalities?.length ? { input: mi.input_modalities } : undefined,
+            };
+          }
+        }
+        await invoke("add_key", {
+          provider: newProvider,
+          key: "",  // local providers don't need a key; Gateway will fill placeholder
+          baseUrl: newBaseUrl || undefined,
+          defaultModel: undefined,
+          models: newModels.length > 0 ? newModels : undefined,
+          modelCapabilities,
+          compactModel: newCompactModel || undefined,
+        });
+        setShowAddDialog(false);
+        setNewKey("");
+        setNewModels([]);
+        setNewContextWindow("");
+        setNewMaxOutputTokens("");
+        setNewSupportsToolCalling(true);
+        setTestResult(null);
+        await fetchKeys();
+        await fetchConfig();
+        window.dispatchEvent(new CustomEvent('models-added'));
+      } catch (e) {
+        alert(`Failed to connect local provider: ${e}`);
+      }
+      setTesting(false);
       return;
     }
 
@@ -388,10 +461,11 @@ function ProvidersTab() {
     setEditModels(keyEntry?.models?.length ? keyEntry.models : keyEntry?.default_model ? [keyEntry.default_model] : []);
     setEditModelSearchTerm("");
     setEditModelCapabilityFilter([]);
-    // Load existing capabilities from VaultKeyEntry
-    setEditContextWindow(keyEntry?.model_capabilities?.context_window?.toString() ?? "");
-    setEditMaxOutputTokens(keyEntry?.model_capabilities?.max_output_tokens?.toString() ?? "");
-    setEditSupportsToolCalling(keyEntry?.model_capabilities?.supports_tool_calling ?? true);
+    // Load existing capabilities from VaultKeyEntry (per-model map, take first entry)
+    const firstCaps = keyEntry?.model_capabilities ? Object.values(keyEntry.model_capabilities)[0] : undefined;
+    setEditContextWindow(firstCaps?.context_window?.toString() ?? "");
+    setEditMaxOutputTokens(firstCaps?.max_output_tokens?.toString() ?? "");
+    setEditSupportsToolCalling(firstCaps?.supports_tool_calling ?? true);
     setEditCompactModel(keyEntry?.compact_model ?? "");
     setShowEditDialog(provider);
     // Fetch models
@@ -486,6 +560,7 @@ function ProvidersTab() {
               {keys.map((keyEntry) => {
                 const provider = dynamicProviders.find((p) => p.id === keyEntry.provider);
                 const providerName = provider?.name || keyEntry.provider;
+                const isLocal = keyEntry.local || isLocalProvider(keyEntry.provider);
 
                 return (
                   <div key={keyEntry.provider} className="rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-700">
@@ -505,7 +580,13 @@ function ProvidersTab() {
                           <Star className="h-3.5 w-3.5" />
                         </button>
                         <span className="text-xs" style={{ color: "var(--color-accent)" }}>Active</span>
-                        <span className="text-xs text-zinc-400">Key: {keyEntry.key_preview}</span>
+                        {isLocal ? (
+                          <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700 dark:bg-green-900 dark:text-green-300" title="Local provider — no API key needed">
+                            🏠 Local
+                          </span>
+                        ) : (
+                          <span className="text-xs text-zinc-400">Key: {keyEntry.key_preview}</span>
+                        )}
                         <button
                           onClick={() => handleEdit(keyEntry.provider)}
                           className="text-xs hover:opacity-70" style={{ color: "var(--color-accent)" }}
@@ -545,7 +626,7 @@ function ProvidersTab() {
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
 
-        {/* Available Providers (bottom section) — renders independently */}
+        {/* Available Providers — split into Local / Remote sections */}
         <div>
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-xs font-medium text-zinc-500">
@@ -554,13 +635,10 @@ function ProvidersTab() {
             <div className="flex gap-1">
               <button
                 onClick={() => {
-                  // Clear localStorage cache only — keep current UI data
                   Object.keys(localStorage)
                     .filter(k => k.startsWith('rollball_models_'))
                     .forEach(k => localStorage.removeItem(k));
-                  // Mark refreshing, do NOT clear dynamicProviders
                   setDynamicProvidersLoading(true);
-                  // Re-fetch from API
                   fetchDynamicProviders(false);
                 }}
                 className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:text-red-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-red-400 dark:hover:bg-zinc-800"
@@ -578,57 +656,106 @@ function ProvidersTab() {
               </button>
             </div>
           </div>
-          <div className="space-y-1">
-            {/* Show loading indicator when no data and still loading */}
-            {dynamicProvidersLoading && dynamicProviders.length === 0 ? (
-              <div className="py-3 text-center text-xs text-zinc-400">Loading providers...</div>
-            ) : dynamicProviders.length === 0 && !dynamicProvidersLoading ? (
-              <div className="py-3 text-center text-xs text-zinc-400">No providers available</div>
-            ) : (
-              dynamicProviders.map((item) => {
-                const providerId = item.id;
-                const providerName = item.name || providerId;
-                const keyEntry = keys.find((k) => k.provider === providerId);
-                const modelCount = item.model_count;
 
-                // Skip if already configured (shown in top section)
-                if (keyEntry) return null;
-
-                // Skip local providers that don't need API keys
-                if (!needsApiKey(providerId)) return null;
-
-                return (
-                  <div key={providerId} className="rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-700">
-                    <div className="flex items-center justify-between">
-                      <div className="min-w-0 flex-1">
-                        <span className="text-xs font-medium">{providerName}</span>
-                        {modelCount && (
-                          <span className="ml-2 text-xs text-zinc-400">{modelCount} models available</span>
-                        )}
-
-                      </div>
-                      <button
-                        onClick={() => {
-                          setNewProvider(providerId);
-                          const dynamicProvider = dynamicProviders.find((p) => p.id === providerId);
-                          setNewBaseUrl(dynamicProvider?.api ?? "");
-                          fetchModels(providerId).then((models) => setAvailableModels(models));
-                          // Reset capabilities state
-                          setNewContextWindow("");
-                          setNewMaxOutputTokens("");
-                          setNewSupportsToolCalling(true);
-                          setShowAddDialog(true);
-                        }}
-                        className="rounded-md bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
-                      >
-                        Add Key
-                      </button>
-                    </div>
+          {/* Show loading indicator when no data and still loading */}
+          {dynamicProvidersLoading && dynamicProviders.length === 0 ? (
+            <div className="py-3 text-center text-xs text-zinc-400">Loading providers...</div>
+          ) : dynamicProviders.length === 0 && !dynamicProvidersLoading ? (
+            <div className="py-3 text-center text-xs text-zinc-400">No providers available</div>
+          ) : (
+            <div className="space-y-3">
+              {/* ── Local Providers (always visible) ── */}
+              {localProviders.length > 0 && (
+                <div>
+                  <h4 className="mb-1.5 text-xs font-medium text-green-600 dark:text-green-400">🏠 Local Providers</h4>
+                  <div className="space-y-1">
+                    {localProviders.map((item) => {
+                      const providerId = item.id;
+                      const providerName = item.name || providerId;
+                      const keyEntry = keys.find((k) => k.provider === providerId);
+                      if (keyEntry) return null;
+                      return (
+                        <div key={providerId} className="rounded-lg border border-green-200 px-3 py-1.5 dark:border-green-800">
+                          <div className="flex items-center justify-between">
+                            <div className="min-w-0 flex-1">
+                              <span className="text-xs font-medium">{providerName}</span>
+                              <span className="ml-2 rounded bg-green-100 px-1.5 py-0.5 text-[10px] text-green-700 dark:bg-green-900 dark:text-green-300">Local</span>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setNewProvider(providerId);
+                                setNewBaseUrl(item.api ?? "");
+                                setNewKey("");
+                                fetchModels(providerId).then((models) => setAvailableModels(models));
+                                setNewContextWindow("");
+                                setNewMaxOutputTokens("");
+                                setNewSupportsToolCalling(true);
+                                setShowAddDialog(true);
+                              }}
+                              className="rounded-md bg-green-100 px-3 py-1 text-xs font-medium text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-300 dark:hover:bg-green-800"
+                            >
+                              Connect
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })
-            )}
-          </div>
+                </div>
+              )}
+
+              {/* ── Remote Providers (collapsible) ── */}
+              {remoteProviders.length > 0 && (
+                <div>
+                  <button
+                    onClick={() => setShowRemoteProviders(!showRemoteProviders)}
+                    className="mb-1.5 flex w-full items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300"
+                  >
+                    <span className={cn("transition-transform", showRemoteProviders && "rotate-90")}>▶</span>
+                    ☁️ Remote Providers ({remoteProviders.filter(p => !keys.find(k => k.provider === p.id)).length} available)
+                  </button>
+                  {showRemoteProviders && (
+                    <div className="space-y-1">
+                      {remoteProviders.map((item) => {
+                        const providerId = item.id;
+                        const providerName = item.name || providerId;
+                        const keyEntry = keys.find((k) => k.provider === providerId);
+                        const modelCount = item.model_count;
+                        if (keyEntry) return null;
+                        return (
+                          <div key={providerId} className="rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-700">
+                            <div className="flex items-center justify-between">
+                              <div className="min-w-0 flex-1">
+                                <span className="text-xs font-medium">{providerName}</span>
+                                {modelCount ? (
+                                  <span className="ml-2 text-xs text-zinc-400">{modelCount} models available</span>
+                                ) : null}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setNewProvider(providerId);
+                                  const dynamicProvider = dynamicProviders.find((p) => p.id === providerId);
+                                  setNewBaseUrl(dynamicProvider?.api ?? "");
+                                  fetchModels(providerId).then((models) => setAvailableModels(models));
+                                  setNewContextWindow("");
+                                  setNewMaxOutputTokens("");
+                                  setNewSupportsToolCalling(true);
+                                  setShowAddDialog(true);
+                                }}
+                                className="rounded-md bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+                              >
+                                Add Key
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -636,7 +763,10 @@ function ProvidersTab() {
       {showAddDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-[440px] max-h-[85vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
-            <h3 className="mb-3 text-sm font-semibold">Add API Key: {dynamicProviders.find((p) => p.id === newProvider)?.name || newProvider}</h3>
+            <h3 className="mb-3 text-sm font-semibold">
+              {newProviderIsLocal ? "Connect Local Provider: " : "Add API Key: "}
+              {dynamicProviders.find((p) => p.id === newProvider)?.name || newProvider}
+            </h3>
 
             <div className="space-y-2">
               {/* Provider display (read-only) */}
@@ -971,6 +1101,7 @@ function ProvidersTab() {
             <h3 className="mb-3 text-sm font-semibold">Edit: {showEditDialog}</h3>
 
             <div className="space-y-2">
+              {!isLocalProvider(showEditDialog) && (
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">API Key</label>
                 <input
@@ -981,6 +1112,7 @@ function ProvidersTab() {
                   className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
               </div>
+              )}
 
               {(
                 <div>

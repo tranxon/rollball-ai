@@ -52,7 +52,9 @@
       "../../../examples/system-agent": "system-agent",
       "../../../assets/offline_providers.json": "offline_providers.json",
       "../../../target/release/rollball-gateway*": "./",
-      "../../../target/release/rollball-runtime*": "./"
+      "../../../target/release/rollball-runtime*": "./",
+      "../../../target/debug/rollball-gateway*": "./",
+      "../../../target/debug/rollball-runtime*": "./"
     }
   }
 }
