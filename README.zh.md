@@ -11,7 +11,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" /></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/language-Rust-ff6600" alt="Language" /></a>
   <a href="./docs/"><img src="https://img.shields.io/badge/docs-design-brightgreen" alt="Docs" /></a>
-  <a href="./docs/module-design/00-overview.md"><img src="https://img.shields.io/badge/status-design%20phase-yellow" alt="Status" /></a>
+  <a href="./apps/rollball-desktop/"><img src="https://img.shields.io/badge/status-alpha-orange" alt="Status" /></a>
 </p>
 
 <p align="center">
@@ -47,15 +47,31 @@ RollBall **同时服务于两类用户**：开发者用声明式包（manifest +
 
 ## 🚀 快速开始
 
-### 安装
+### 前置依赖
+
+- [Rust](https://rustup.rs/)（nightly）
+- [Node.js](https://nodejs.org/) >= 18
+- 本地运行的 [Gateway + Runtime](https://github.com/tranxon/rollball-ai#-running-the-backend)
+
+### 快速开始
 
 ```bash
-# Cargo（Rust 工具链）
-cargo install rollball-gateway rollball-runtime
+git clone https://github.com/tranxon/rollball-ai.git
+cd rollball-ai
 
-# 或从源码构建
-git clone https://github.com/rollball/agent-study.git
+# 1. 启动后端服务（Gateway + Runtime）
 cd core && cargo build --release
+# 运行 target/release/ 下的 Gateway 和 Runtime 二进制
+
+# 2. 启动桌面应用（浏览器模式）
+cd ../apps/rollball-desktop
+npm install
+npm run dev      # → http://localhost:5173
+
+# 3. 或构建完整 Tauri 桌面应用
+cd ../apps/rollball-desktop
+npm install
+npm run tauri dev
 ```
 
 ### 编写第一个 Agent
@@ -256,15 +272,15 @@ Desktop App（Tauri v2）提供：
 
 ## 📈 项目状态与路线图
 
-> 当前状态：**设计阶段**。核心模块的 Rust crate 架构已定义，详细设计文档已完成，实现尚未启动。
+> 当前状态：**Alpha 阶段**。核心 Gateway、Runtime、Grafeo 记忆引擎和 Desktop UI 正在积极开发中。架构设计文档见 [docs/](docs/)。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| Phase 1 | 基础框架 + LLM 交互（MVP）：包解析、签名验证、Runtime 主循环、循环检测、Tool 去重、Rate 分层、Gateway 基础 | 📝 设计中 |
-| Phase 2 | Memory 分层 + 系统 Agent：Grafeo 仿生分层、即时提取、关联扩散、AutobiographicalNode | 📝 设计中 |
+| Phase 1 | 基础框架 + LLM 交互（MVP）：包解析、签名验证、Runtime 主循环、循环检测、Tool 去重、Rate 分层、Gateway 基础 | 🚧 进行中 |
+| Phase 2 | Memory 分层 + 系统 Agent：Grafeo 仿生分层、即时提取、关联扩散、AutobiographicalNode | 🚧 进行中 |
 | Phase 3 | 权限与沙箱：文件系统隔离、WASM 沙箱（Wasmtime）、Approval Gate | 📝 设计中 |
 | Phase 4 | 通信与协调：Intent、Budget Tracker、Rate Limiter、Cron | 📝 设计中 |
-| Phase 5 | Desktop App + 开发框架：Tauri 应用、Debug Protocol、Skill 热加载、录制回放 | 🔮 规划中 |
+| Phase 5 | Desktop App + 开发框架：Debug Protocol、Skill 热加载、录制回放 | 🚧 进行中 |
 | Phase 6 | 云端与生态：Memory Sync、远程仓库、Agent 商店 | 🔮 规划中 |
 | Phase 7 | 跨平台适配：Windows / macOS / Android / iOS | 🔮 规划中 |
 
@@ -274,13 +290,13 @@ RollBall 采用 **7-crate Rust workspace** 架构：
 
 | Crate | 职责 | 状态 |
 |-------|------|------|
-| [`rollball-core`](./core/rollball-core/) | 共享类型、错误、配置 | 📝 设计中 |
-| [`rollball-runtime`](./core/rollball-runtime/) | Agent Runtime：主循环、工具调度、Provider | 📝 设计中 |
-| [`rollball-gateway`](./core/rollball-gateway/) | Gateway：包管理、生命周期、Intent 路由 | 📝 设计中 |
-| [`rollball-grafeo`](./core/rollball-grafeo/) | 图数据库引擎：HNSW 索引、BM25 检索、ACID 事务 | 📝 设计中 |
-| [`rollball-memory`](./core/rollball-memory/) | 记忆管理层：MemoryStore trait、Compaction 调度 | 📝 设计中 |
-| [`rollball-vault`](./core/rollball-vault/) | 加密密钥值存储 | 📝 设计中 |
-| [`rollball-sign`](./core/rollball-sign/) | 包签名与验证 | 📝 设计中 |
+| [`rollball-core`](./core/rollball-core/) | 共享类型、错误、配置 | 🚧 进行中 |
+| [`rollball-runtime`](./core/rollball-runtime/) | Agent Runtime：主循环、工具调度、Provider | 🚧 进行中 |
+| [`rollball-gateway`](./core/rollball-gateway/) | Gateway：包管理、生命周期、Intent 路由 | 🚧 进行中 |
+| [`rollball-grafeo`](./core/rollball-grafeo/) | 图数据库引擎：HNSW 索引、BM25 检索、ACID 事务 | 🚧 进行中 |
+| [`rollball-memory`](./core/rollball-memory/) | 记忆管理层：MemoryStore trait、Compaction 调度 | 🚧 进行中 |
+| [`rollball-vault`](./core/rollball-vault/) | 加密密钥值存储 | 🚧 进行中 |
+| [`rollball-sign`](./core/rollball-sign/) | 包签名与验证 | 🚧 进行中 |
 
 ---
 
@@ -344,7 +360,7 @@ RollBall.AI 的设计深受以下开源项目启发：
 
 ## 🤝 贡献
 
-项目目前处于**设计阶段**。欢迎参与讨论和设计审查：
+项目目前处于 **Alpha 阶段**。欢迎参与讨论和设计审查：
 
 - 在 `docs/review/` 中查看已有的设计评审报告
 - 通过 issue 提交设计反馈
