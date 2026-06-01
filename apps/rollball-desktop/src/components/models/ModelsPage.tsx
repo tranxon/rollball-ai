@@ -24,6 +24,7 @@ export function ModelsPage() {
   const [newKey, setNewKey] = useState("");
   const [newBaseUrl, setNewBaseUrl] = useState("");
   const [newDefaultModel, setNewDefaultModel] = useState("");
+  const [newCompactModel, setNewCompactModel] = useState("");
   const [customModelInput, setCustomModelInput] = useState(false);
   const [dynamicModels, setDynamicModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -88,6 +89,7 @@ export function ModelsPage() {
     const dynamicProvider = dynamicProviders.find((p) => p.id === id);
     setNewBaseUrl(dynamicProvider?.api ?? "");
     setNewDefaultModel("");
+    setNewCompactModel("");
     setCustomModelInput(false);
     // Fetch dynamic model list from Gateway (models.dev)
     setDynamicModels([]);
@@ -112,6 +114,7 @@ export function ModelsPage() {
         key: newKey,
         baseUrl: newBaseUrl || undefined,
         defaultModel: newDefaultModel || undefined,
+        compactModel: newCompactModel || undefined,
       });
       setShowAddDialog(false);
       setNewKey("");
@@ -332,6 +335,21 @@ export function ModelsPage() {
                     />
                   </div>
                 )}
+              </div>
+
+              {/* Compact model for LLM summarization */}
+              <div>
+                <label className="mb-1 block text-xs text-zinc-500">Compact Model (Summarization)</label>
+                <select
+                  value={newCompactModel}
+                  onChange={(e) => setNewCompactModel(e.target.value)}
+                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                >
+                  <option value="">Use default model (same as above)</option>
+                  {dynamicModels.map((m) => (
+                    <option key={m.id} value={m.id}>{m.id}</option>
+                  ))}
+                </select>
               </div>
 
             </div>

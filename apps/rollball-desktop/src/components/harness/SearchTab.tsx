@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type { SearchKeyEntry, SearchProviderDef } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { SEARCH_PROVIDERS, lookupSearchProvider, searchKeyPlaceholder } from "../../lib/search-providers";
-import { Star } from "lucide-react";
 
 /** Search Provider configuration tab — mirrors ProvidersTab layout */
 export function SearchTab() {

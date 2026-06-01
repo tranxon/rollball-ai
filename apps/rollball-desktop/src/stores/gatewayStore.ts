@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getGatewayUrl, getGatewayMode } from "../lib/config";
+import { getGatewayUrl } from "../lib/config";
 import type { HealthResponse, GatewayStatus, LocalGatewayState } from "../lib/types";
 
 interface GatewayStore {

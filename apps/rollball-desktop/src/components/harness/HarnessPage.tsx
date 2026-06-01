@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { VaultKeyEntry, ModelInfo, ModelCapabilitiesInfo, ModelCapabilitiesMap, ProviderListEntry, McpServerConfigDef, McpTransportDef, McpPresetDef } from "../../lib/types";
+import type { VaultKeyEntry, ModelInfo, ModelCapabilitiesMap, ProviderListEntry, McpServerConfigDef, McpTransportDef, McpPresetDef } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { inputBase, selectBase } from "../../lib/ui-styles";
 import { needsApiKey, keyPlaceholder, isLocalProvider } from "../../lib/providers";
@@ -382,12 +382,6 @@ function ProvidersTab() {
     const effectiveSupportsToolCalling = hasModelsDevData
       ? (modelInfo?.tool_call ?? newSupportsToolCalling)
       : newSupportsToolCalling;
-    const effectiveReasoning = hasModelsDevData
-      ? (modelInfo?.reasoning ?? undefined)
-      : undefined;
-    const effectiveModalities = hasModelsDevData && modelInfo?.input_modalities?.length
-      ? { input: modelInfo.input_modalities }
-      : undefined;
 
     // Rust requires context_window to be present (u64, not Option)
     // Default to 128000 if not specified (safe default for most models)
