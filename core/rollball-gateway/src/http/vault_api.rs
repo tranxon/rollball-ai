@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::http::routes::{ApiError, AppState};
 use crate::resource_cache;
 use crate::vault::StoredModelCapabilities;
+use crate::http::models_api;
 use std::path::PathBuf;
 
 /// Build the vault router
@@ -51,6 +52,9 @@ pub struct VaultKeyEntryResponse {
     /// Compact model for LLM summarization (ADR-010). None = use current model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_model: Option<String>,
+    /// Whether this is a local (self-hosted) provider (no API key required)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local: bool,
 }
 
 /// Add key request (supports full provider configuration)
@@ -156,14 +160,16 @@ pub async fn list_keys(
             ),
             Err(_) => (None, None, Vec::new(), std::collections::HashMap::new(), None),
         };
+        let is_local = models_api::is_local_provider(&k.provider);
         VaultKeyEntryResponse {
             provider: k.provider.clone(),
-            key_preview: k.key_preview.clone(),
+            key_preview: if is_local { "(local)".to_string() } else { k.key_preview.clone() },
             base_url,
             default_model,
             models,
             model_capabilities,
             compact_model,
+            local: is_local,
         }
     }).collect();
 
@@ -187,13 +193,16 @@ pub async fn add_key(
     if body.provider.is_empty() {
         return Err(ApiError::bad_request("provider must not be empty"));
     }
-    // Validate API key is not empty
-    if body.key.is_empty() {
+    // Validate API key is not empty (skip for local providers, which don't need keys)
+    let is_local = models_api::is_local_provider(&body.provider);
+    if !is_local && body.key.is_empty() {
         return Err(ApiError::bad_request("key must not be empty"));
     }
     // Per-model capabilities map; individual validation is done per-entry downstream
 
     let mut gw = state.gateway_state.write().await;
+    // Local providers use a placeholder key (no real API key needed)
+    let effective_key = if is_local { "local".to_string() } else { body.key.clone() };
     // Resolve models: prefer `models` field; fallback to `default_model` for backward compat
     let resolved_models = if !body.models.is_empty() {
         body.models.clone()
@@ -206,7 +215,7 @@ pub async fn add_key(
         &body.provider,
         body.base_url.as_deref(),
         &resolved_models,
-        &body.key,
+        &effective_key,
         &body.model_capabilities,
         body.compact_model.as_deref(),
     ).map_err(|e| ApiError::internal(&format!("Failed to store key: {}", e)))?;

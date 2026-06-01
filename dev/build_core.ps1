@@ -1,42 +1,56 @@
 #!/usr/bin/env pwsh
-# build_core.ps1 - One-click rebuild and restart Gateway + Runtime
-# Usage: .\dev\build_core.ps1
+# build_core.ps1 - Build Gateway + Runtime (release mode)
+# Usage:
+#   .\dev\build_core.ps1          Build only (default)
+#   .\dev\build_core.ps1 -Start   Build + stop old + start Gateway
+
+param([switch] $Start)
 
 $ErrorActionPreference = "Stop"
 $WorkspaceRoot = Split-Path -Parent $PSScriptRoot
 $CoreDir = Join-Path $WorkspaceRoot "core"
 
+$totalSteps = if ($Start) { 5 } else { 3 }
+
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Rollball Core Rebuild & Restart Script" -ForegroundColor Cyan
+Write-Host "Rollball Core Build Script" -ForegroundColor Cyan
+if ($Start) { Write-Host "Mode: Build + Restart" -ForegroundColor Cyan }
+else       { Write-Host "Mode: Build Only" -ForegroundColor Cyan }
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Step 1: Stop running processes
-Write-Host "[1/4] Stopping running Gateway and Runtime processes..." -ForegroundColor Yellow
+$step = 0
 
-$gatewayProcs = Get-Process -Name "rollball-gateway" -ErrorAction SilentlyContinue
-$runtimeProcs = Get-Process -Name "rollball-runtime" -ErrorAction SilentlyContinue
+if ($Start) {
+    # Step: Stop running processes
+    $step++
+    Write-Host "[$step/$totalSteps] Stopping running Gateway and Runtime processes..." -ForegroundColor Yellow
 
-if ($gatewayProcs) {
-    Write-Host "  Found Gateway processes: $($gatewayProcs.Id -join ', ')" -ForegroundColor Gray
-    Stop-Process -Name "rollball-gateway" -Force -ErrorAction SilentlyContinue
-    Write-Host "  Gateway stopped." -ForegroundColor Green
-} else {
-    Write-Host "  No Gateway process running." -ForegroundColor Gray
+    $gatewayProcs = Get-Process -Name "rollball-gateway" -ErrorAction SilentlyContinue
+    $runtimeProcs = Get-Process -Name "rollball-runtime" -ErrorAction SilentlyContinue
+
+    if ($gatewayProcs) {
+        Write-Host "  Found Gateway processes: $($gatewayProcs.Id -join ', ')" -ForegroundColor Gray
+        Stop-Process -Name "rollball-gateway" -Force -ErrorAction SilentlyContinue
+        Write-Host "  Gateway stopped." -ForegroundColor Green
+    } else {
+        Write-Host "  No Gateway process running." -ForegroundColor Gray
+    }
+
+    if ($runtimeProcs) {
+        Write-Host "  Found Runtime processes: $($runtimeProcs.Id -join ', ')" -ForegroundColor Gray
+        Stop-Process -Name "rollball-runtime" -Force -ErrorAction SilentlyContinue
+        Write-Host "  Runtime stopped." -ForegroundColor Green
+    } else {
+        Write-Host "  No Runtime process running." -ForegroundColor Gray
+    }
+
+    Write-Host ""
 }
 
-if ($runtimeProcs) {
-    Write-Host "  Found Runtime processes: $($runtimeProcs.Id -join ', ')" -ForegroundColor Gray
-    Stop-Process -Name "rollball-runtime" -Force -ErrorAction SilentlyContinue
-    Write-Host "  Runtime stopped." -ForegroundColor Green
-} else {
-    Write-Host "  No Runtime process running." -ForegroundColor Gray
-}
-
-Write-Host ""
-
-# Step 2: Build Gateway
-Write-Host "[2/4] Building Gateway (release mode)..." -ForegroundColor Yellow
+# Step: Build Gateway
+$step++
+Write-Host "[$step/$totalSteps] Building Gateway (release mode)..." -ForegroundColor Yellow
 Set-Location $CoreDir
 try {
     cargo build --release -p rollball-gateway 2>&1 | ForEach-Object {
@@ -52,8 +66,9 @@ try {
 
 Write-Host ""
 
-# Step 3: Build Runtime
-Write-Host "[3/4] Building Runtime (release mode)..." -ForegroundColor Yellow
+# Step: Build Runtime
+$step++
+Write-Host "[$step/$totalSteps] Building Runtime (release mode)..." -ForegroundColor Yellow
 try {
     cargo build --release -p rollball-runtime 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {
@@ -68,8 +83,9 @@ try {
 
 Write-Host ""
 
-# Step 4: Copy offline_providers.json from assets to target dirs
-Write-Host "[4/5] Copying offline_providers.json to target directories..." -ForegroundColor Yellow
+# Step: Copy offline_providers.json from assets to target dirs
+$step++
+Write-Host "[$step/$totalSteps] Copying offline_providers.json to target directories..." -ForegroundColor Yellow
 $offlineSrc = Join-Path $WorkspaceRoot "assets\offline_providers.json"
 $releaseDir = Join-Path $WorkspaceRoot "target\release"
 $debugDir = Join-Path $WorkspaceRoot "target\debug"
@@ -84,26 +100,35 @@ if (Test-Path $offlineSrc) {
 
 Write-Host ""
 
-# Step 5: Start Gateway
-Write-Host "[5/5] Starting Gateway in daemon mode (debug logging)..." -ForegroundColor Yellow
-$env:ROLLBALL_GATEWAY_DAEMON = "true"
-$env:ROLLBALL_GATEWAY_LOG_LEVEL = "debug"
+if ($Start) {
+    # Step: Start Gateway
+    $step++
+    Write-Host "[$step/$totalSteps] Starting Gateway in daemon mode (debug logging)..." -ForegroundColor Yellow
+    $env:ROLLBALL_GATEWAY_DAEMON = "true"
+    $env:ROLLBALL_GATEWAY_LOG_LEVEL = "debug"
 
-# Start Gateway in background
-$gatewayExe = Join-Path $WorkspaceRoot "target\release\rollball-gateway.exe"
-if (Test-Path $gatewayExe) {
-    Start-Process -FilePath $gatewayExe -NoNewWindow
-    Write-Host "  Gateway started." -ForegroundColor Green
+    # Start Gateway in background
+    $gatewayExe = Join-Path $WorkspaceRoot "target\release\rollball-gateway.exe"
+    if (Test-Path $gatewayExe) {
+        Start-Process -FilePath $gatewayExe -NoNewWindow
+        Write-Host "  Gateway started." -ForegroundColor Green
+    } else {
+        Write-Host "  Gateway executable not found at: $gatewayExe" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "Done! Gateway is running." -ForegroundColor Cyan
+    Write-Host "HTTP API: http://127.0.0.1:19876" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
 } else {
-    Write-Host "  Gateway executable not found at: $gatewayExe" -ForegroundColor Red
-    exit 1
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "Build complete (not started)." -ForegroundColor Cyan
+    Write-Host "To start: .\dev\build_core.ps1 -Start" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
 }
-
-Write-Host ""
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Done! Gateway is running." -ForegroundColor Cyan
-Write-Host "HTTP API: http://127.0.0.1:19876" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
 
 # Return to workspace root
 Set-Location $WorkspaceRoot

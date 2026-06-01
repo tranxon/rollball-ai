@@ -6,6 +6,13 @@ export function needsApiKey(providerId: string): boolean {
   return !['ollama', 'lmstudio'].includes(providerId);
 }
 
+/** Whether this provider is a local (self-hosted) provider.
+ *  Prefer the `local` field from API response when available;
+ *  this is a client-side fallback for contexts without API data. */
+export function isLocalProvider(providerId: string): boolean {
+  return ['ollama', 'lmstudio'].includes(providerId);
+}
+
 /** Authentication style for the provider */
 export function authStyle(providerId: string): 'bearer' | 'x-api-key' | 'zhipu-jwt' {
   if (providerId === 'zhipuai') return 'zhipu-jwt';

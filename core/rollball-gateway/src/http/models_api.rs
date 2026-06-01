@@ -30,7 +30,49 @@ const CACHE_TTL_SECS: u64 = 300;
 /// models.dev API base URL
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 
+// ── Local provider registry ───────────────────────────────────────────
 
+/// Static registry of local (self-hosted) LLM providers.
+///
+/// Local providers do NOT require an API key and are NOT listed on
+/// models.dev. Their models must be discovered at runtime by querying
+/// the local server (e.g. ollama `/api/tags`, LMStudio `/v1/models`).
+///
+/// To add a new local provider, add a tuple here — no other changes needed.
+///   (id, display_name, default_base_url)
+const LOCAL_PROVIDERS: &[(&str, &str, &str)] = &[
+    ("ollama",   "Ollama (Local)",    "http://localhost:11434"),
+    ("lmstudio", "LM Studio (Local)", "http://localhost:1234/v1"),
+];
+
+/// Check whether a provider ID refers to a local (self-hosted) provider.
+///
+/// Used by vault_api.rs to skip API key validation for local providers,
+/// and by the frontend to determine UI treatment (no key input, local badge).
+pub fn is_local_provider(id: &str) -> bool {
+    LOCAL_PROVIDERS.iter().any(|(pid, _, _)| *pid == id)
+}
+
+/// Get the default base URL for a local provider, if it exists in the registry.
+pub fn local_provider_default_url(id: &str) -> Option<&'static str> {
+    LOCAL_PROVIDERS
+        .iter()
+        .find_map(|(pid, _, url)| if *pid == id { Some(*url) } else { None })
+}
+
+/// Derive the protocol type for a local provider.
+///
+/// ollama → Ollama (native API), lmstudio → OpenAI (OpenAI-compatible).
+/// Other local providers default to OpenAI-compatible.
+fn local_protocol_type(id: &str) -> rollball_core::protocol::ProtocolType {
+    use rollball_core::protocol::ProtocolType;
+    match id {
+        "ollama" => ProtocolType::Ollama,
+        _ => ProtocolType::OpenAI,
+    }
+}
+
+// ── CN variant helpers ────────────────────────────────────────────────
 
 /// Providers that have both international and CN variants on models.dev
 const CN_VARIANT_PROVIDERS: &[&str] = &["minimax", "zhipuai", "moonshotai", "alibaba"];
@@ -478,12 +520,34 @@ async fn list_all_providers(
             "id": id,
             "name": name,
             "model_count": model_count,
+            "local": false,
         });
         // Include the provider's base API URL when available (from models.dev or offline data)
         if let Some(api_url) = provider_data.get("api").and_then(|v| v.as_str()) {
             entry["api"] = serde_json::json!(api_url);
         }
         result.push(entry);
+    }
+
+    // Append / overlay local providers from the static registry.
+    // Most local providers don't appear in models.dev, but some (e.g. lmstudio) do.
+    for (id, name, default_url) in LOCAL_PROVIDERS {
+        if let Some(existing) = result.iter_mut().find(|e| e.get("id").and_then(|v| v.as_str()) == Some(id)) {
+            // Already present in models.dev data — override to mark as local
+            existing["local"] = serde_json::json!(true);
+            existing["name"] = serde_json::json!(name);
+            if existing.get("api").is_none() {
+                existing["api"] = serde_json::json!(default_url);
+            }
+        } else {
+            result.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "model_count": 0,
+                "local": true,
+                "api": default_url,
+            }));
+        }
     }
 
     // Sort by id
@@ -714,7 +778,7 @@ pub(crate) async fn lookup_protocol_info_with_cache(
 
 /// Internal helper: look up protocol info from a JSON data source.
 ///
-/// Priority: model-level npm > provider-level npm > default OpenAI.
+/// Priority: local provider registry > model-level npm > provider-level npm > default OpenAI.
 /// Model-level api override is returned when present in the model's provider block.
 fn lookup_protocol_info_from_data(
     data: &serde_json::Value,
@@ -725,13 +789,29 @@ fn lookup_protocol_info_from_data(
 
     let providers = match data.as_object() {
         Some(obj) => obj,
-        None => return (ProtocolType::OpenAI, None),
+        None => {
+            // Check local provider registry when no offline data available
+            if is_local_provider(provider_id) {
+                let proto = local_protocol_type(provider_id);
+                let url = local_provider_default_url(provider_id).map(|s| s.to_string());
+                return (proto, url);
+            }
+            return (ProtocolType::OpenAI, None);
+        }
     };
 
     // Find the provider object
     let provider_obj = match providers.get(provider_id) {
         Some(p) => p,
-        None => return (ProtocolType::OpenAI, None),
+        None => {
+            // Check local provider registry when not found in offline data
+            if is_local_provider(provider_id) {
+                let proto = local_protocol_type(provider_id);
+                let url = local_provider_default_url(provider_id).map(|s| s.to_string());
+                return (proto, url);
+            }
+            return (ProtocolType::OpenAI, None);
+        }
     };
 
     // Provider-level npm

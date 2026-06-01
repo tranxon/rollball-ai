@@ -589,6 +589,9 @@ pub struct VaultKeyEntry {
     /// Compact model for LLM summarization (ADR-010). None = use current model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_model: Option<String>,
+    /// Whether this is a local (self-hosted) provider (no API key required)
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// Model capabilities info

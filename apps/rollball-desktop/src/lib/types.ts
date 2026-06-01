@@ -132,6 +132,8 @@ export interface VaultKeyEntry {
   model_capabilities?: ModelCapabilitiesMap;
   /** Compact model for LLM summarization (ADR-010). null = use current model. */
   compact_model?: string;
+  /** Whether this is a local (self-hosted) provider (no API key required) */
+  local?: boolean;
 }
 
 /** Gateway config response */
@@ -358,6 +360,8 @@ export interface ProviderListEntry {
   model_count: number;
   /** Provider's base API URL (from models.dev or offline data) */
   api?: string;
+  /** Whether this is a local (self-hosted) provider (no API key required) */
+  local?: boolean;
 }
 
 // ── Memory types ──────────────────────────────────────────────────────
