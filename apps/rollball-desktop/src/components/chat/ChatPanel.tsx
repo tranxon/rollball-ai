@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, Children, isValidElement, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, Children, isValidElement } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import { useAgentStore } from "../../stores/agentStore";
@@ -1727,6 +1727,7 @@ function AddModelDialog({
   const [contextWindow, setContextWindow] = useState("");
   const [maxOutputTokens, setMaxOutputTokens] = useState("");
   const [supportsToolCalling, setSupportsToolCalling] = useState(true);
+  const [compactModel, setCompactModel] = useState("");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -1807,6 +1808,7 @@ function AddModelDialog({
     setContextWindow("");
     setMaxOutputTokens("");
     setSupportsToolCalling(true);
+    setCompactModel("");
   }, [provider]);
 
   if (!open) return null;
@@ -1897,6 +1899,7 @@ function AddModelDialog({
         baseUrl: baseUrl || undefined,
         models: models.length > 0 ? models : undefined,
         modelCapabilities,
+        compactModel: compactModel || undefined,
       });
       emitAgentConfigRefresh();
       onSuccess();
@@ -2180,7 +2183,24 @@ function AddModelDialog({
               );
             })()}
 
-
+            {/* Compact model for LLM summarization */}
+            {models.length > 0 && (
+              <div>
+                <label className="mb-1 block text-xs text-zinc-500">
+                  Compact Model (Summarization)
+                </label>
+                <select
+                  value={compactModel}
+                  onChange={(e) => setCompactModel(e.target.value)}
+                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                >
+                  <option value="">Use current model (default)</option>
+                  {models.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Test result */}
             {testResult && (

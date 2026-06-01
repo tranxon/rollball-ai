@@ -91,8 +91,6 @@ export function ExploreBlock({ items, isStreaming, pendingApproval, currentSessi
   }, [hasFollowUpReply]);
 
   // Check if this block has any pending shell approval for current session
-  const pendingKeys = pendingApproval ? Object.keys(pendingApproval) : [];
-  const itemToolCallIds = items.filter(m => m.type === "tool_call").map(m => m.toolCallId);
   const hasPendingApproval = pendingApproval && Object.values(pendingApproval).some(
     (ev) => {
       const sessionMatch = approvalMatchesSession(ev, currentSessionId);

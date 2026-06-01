@@ -7,7 +7,7 @@ import { ConfirmDialog } from "../common/ConfirmDialog";
 import { RadioGroup } from "../common/RadioGroup";
 import { DEFAULT_GATEWAY_URL, getGatewayUrl } from "../../lib/config";
 import { Bug, Monitor } from "lucide-react";
-import { inputReadonly, selectBase, inputBase } from "../../lib/ui-styles";
+import { inputReadonly, inputBase } from "../../lib/ui-styles";
 import { ProfileTab } from "./ProfileTab";
 
 type SettingsTab = "gateway" | "appearance" | "general" | "profile";
