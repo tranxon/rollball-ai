@@ -900,6 +900,19 @@ pub enum GatewayResponse {
     /// messages so the agent loop can log and discard it without confusing
     /// it with a legitimate UsageReportAck or other response.
     Unknown {},
+
+    /// Enable debug mode on a running agent (Gateway → Runtime, push).
+    ///
+    /// Gateway pushes this when the user clicks "Restart in Debug" on a
+    /// running agent. The Runtime fires urgent_interrupt to cancel any
+    /// in-flight tools/LLM, starts the Debug WebSocket server on
+    /// `debug_port`, and injects DebugController + notify handles into
+    /// the shared AgentCore. If the agent loop is idle, the interrupt
+    /// step is skipped and debug mode is initialized directly.
+    EnableDebugMode {
+        /// Debug WebSocket port (allocated by Gateway)
+        debug_port: u32,
+    },
 }
 
 /// MCP server configuration definition (transport-agnostic, shared between Gateway and Runtime).

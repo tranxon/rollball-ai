@@ -2820,6 +2820,28 @@ async fn process_gateway_recv(
                     return LoopAction::Continue;
                 }
 
+                GatewayResponse::EnableDebugMode { debug_port } => {
+                    tracing::info!(
+                        debug_port = debug_port,
+                        "Received EnableDebugMode from Gateway — starting debug server"
+                    );
+
+                    // 1. Fire urgent_interrupt to cancel any in-flight tool/LLM execution.
+                    //    This notifies all sessions' AgentLoop select! branches so they
+                    //    abort current work and return to idle, at which point the
+                    //    SessionTask's main loop picks up the next message or restarts.
+                    //
+                    //    If the loop is idle (waiting for next user message), the notify
+                    //    is a no-op — there is nothing to cancel.
+                    session_manager.fire_urgent_interrupt();
+
+                    // 2. Start the DebugProtocolServer and store handles so that
+                    //    sessions created *after* this call inherit debug mode.
+                    session_manager.enable_debug_mode(debug_port).await;
+
+                    return LoopAction::Continue;
+                }
+
                 _ => {
                     tracing::debug!("Ignoring non-IntentReceived Gateway message");
                     return LoopAction::Continue;

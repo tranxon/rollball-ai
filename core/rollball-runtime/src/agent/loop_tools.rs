@@ -185,6 +185,17 @@ impl AgentLoop {
                             }
                         }
                     }
+                    // Urgent interrupt via Notify — fired by Gateway gRPC
+                    // (Stop / Restart-in-Debug) for immediate tool cancellation.
+                    // Takes priority over the 500ms poll fallback.
+                    _ = self.core.urgent_interrupt.as_ref().unwrap().notified() => {
+                        tracing::info!("Urgent interrupt via Notify — aborting tools");
+                        for handle in &handles {
+                            handle.abort();
+                        }
+                        interrupted = true;
+                        break;
+                    }
                     // Periodic interrupt polling during tool execution.
                     // Without this branch, a slow tool (e.g. file_read on large file)
                     // would block the select! at rx.recv() until timeout, making
@@ -204,7 +215,7 @@ impl AgentLoop {
                 }
             }
         } else {
-            // ── CLI / test mode: 3-way select (results / timeout / interrupt) ──
+            // ── CLI / test mode: 4-way select (results / timeout / interrupt / notify) ──
             while collected.len() < total {
                 tokio::select! {
                     entry = rx.recv() => {
@@ -222,6 +233,14 @@ impl AgentLoop {
                         for handle in &handles {
                             handle.abort();
                         }
+                        break;
+                    }
+                    _ = self.core.urgent_interrupt.as_ref().unwrap().notified() => {
+                        tracing::info!("Urgent interrupt via Notify — aborting tools");
+                        for handle in &handles {
+                            handle.abort();
+                        }
+                        interrupted = true;
                         break;
                     }
                     _ = tokio::time::sleep(Duration::from_millis(500)) => {

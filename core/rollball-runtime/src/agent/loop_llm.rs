@@ -268,6 +268,18 @@ impl AgentLoop {
                         }
                     }
                 }
+                // Urgent interrupt via Notify — fired by Gateway gRPC
+                // for immediate LLM stream cancellation.
+                _ = self.core.urgent_interrupt.as_ref().unwrap().notified() => {
+                    tracing::info!("LLM stream interrupted via Notify — aborting");
+                    let _ = self.core.try_send_chunk(ChunkEvent::Interrupted {
+                        content: accumulated_content.clone(),
+                    });
+                    return Ok(build_interrupted_response(
+                        accumulated_content,
+                        accumulated_reasoning_content,
+                    ));
+                }
                 // Periodic interrupt polling during stream idle periods.
                 // tokio::select! polls ALL branches simultaneously:
                 // - When stream has data ready: event branch wins immediately, sleep is dropped

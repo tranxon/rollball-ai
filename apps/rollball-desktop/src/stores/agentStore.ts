@@ -17,6 +17,7 @@ interface AgentStore {
   uninstallAgent: (agentId: string) => Promise<void>;
   startAgent: (agentId: string, devMode?: boolean) => Promise<void>;
   stopAgent: (agentId: string) => Promise<void>;
+  restartAgentInDebug: (agentId: string) => Promise<void>;
   getAgentDetail: (agentId: string) => Promise<AgentDetail>;
   /** Poll fetchAgents until agent.ready === true (max 30×500ms = 15s). */
   waitForAgentReady: (agentId: string) => Promise<void>;
@@ -105,6 +106,16 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   stopAgent: async (agentId) => {
     try {
       await invoke("stop_agent", { agentId });
+      await get().fetchAgents();
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  restartAgentInDebug: async (agentId) => {
+    try {
+      await invoke("restart_agent_in_debug", { agentId });
       await get().fetchAgents();
     } catch (e) {
       set({ error: String(e) });

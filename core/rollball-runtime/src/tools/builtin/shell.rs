@@ -12,8 +12,56 @@ use async_trait::async_trait;
 use rollball_core::tools::traits::{Tool, ToolResult, ToolSpec};
 use serde_json::Value;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use crate::tools::output;
+
+/// Guard that kills the child process on drop, ensuring cleanup on
+/// timeout, abort, or interrupt — no orphaned shell processes.
+///
+/// # Usage
+/// - **Normal path**: call `guard.take()` → marks completed → takes child
+///   → `wait_with_output()` → `drop(guard)` is a no-op.
+/// - **Abort path**: `spawn_blocking` future is cancelled → `guard` drops
+///   with `completed=false` → `child.kill()` + `child.wait()`.
+struct ProcessGuard {
+    child: Mutex<Option<std::process::Child>>,
+    /// Set to true when the child was explicitly taken for normal completion.
+    /// Prevents Drop from kill+wating an already-finished child.
+    completed: AtomicBool,
+}
+
+impl ProcessGuard {
+    fn new(child: std::process::Child) -> Self {
+        Self {
+            child: Mutex::new(Some(child)),
+            completed: AtomicBool::new(false),
+        }
+    }
+
+    /// Take ownership of the child for normal `wait_with_output`.
+    /// Marks the guard as completed so that Drop becomes a no-op.
+    fn take(&self) -> Option<std::process::Child> {
+        self.completed.store(true, Ordering::Release);
+        self.child.lock().unwrap().take()
+    }
+}
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        // If the child was already taken via take() (normal path), skip.
+        if self.completed.load(Ordering::Acquire) {
+            return;
+        }
+        // Abort path: the spawn_blocking future was cancelled before take()
+        // was called. Kill the child to prevent orphaned processes.
+        if let Some(mut child) = self.child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
 
 /// A concrete shell executor registered as a tool.
 ///
@@ -203,32 +251,26 @@ impl Tool for ShellTool {
         // - On Linux/macOS, std::process::Command is equally reliable and
         //   avoids an unnecessary dependency on tokio's process layer.
         //
-        // Timeout behavior: the outer tokio::time::timeout in AgentLoop
-        // cancels the .await on spawn_blocking's JoinHandle, which drops
-        // the handle but does NOT interrupt the blocking work. The child
-        // process continues until it exits naturally. This is acceptable
-        // because:
-        // 1. Shell commands are typically short-lived (seconds at most)
-        // 2. The LLM receives a proper timeout error and can retry/fallback
-        // 3. Tokio's blocking thread pool (default 512 threads) absorbs
-        //    occasional stragglers without resource exhaustion
-        //
-        // For future hardening: consider ProcessGuard with kill-on-drop
-        // using Arc<Mutex<Child>> to guarantee cleanup on timeout.
+        // ProcessGuard wraps the Child with kill-on-drop, so that when the
+        // outer tokio::time::timeout (or handle.abort()) cancels the
+        // spawn_blocking future, the guard drops → kill → wait, preventing
+        // orphaned shell processes.
         let shell_path = self.shell_path.clone();
         let shell_arg = self.shell_arg.clone();
         let command_owned = command.to_string();
         let work_dir = self.work_dir.clone();
         let tool_name = self.tool_name.clone();
 
-        let output = tokio::task::spawn_blocking(move || {
+        let output = tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
             // Use shell_path (fully-resolved path) instead of shell_binary
             // (just "bash") to avoid PATH resolution finding WSL bash
             // instead of Git Bash on Windows.
             let mut cmd = std::process::Command::new(&shell_path);
             cmd.arg(&shell_arg)
                 .arg(&command_owned)
-                .current_dir(&work_dir);
+                .current_dir(&work_dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
 
             // Ensure MSYS2 environment is properly initialized for Git Bash
             // so drive letter mounts (/c/, /d/) and Unix paths work correctly.
@@ -237,7 +279,15 @@ impl Tool for ShellTool {
                 cmd.env("CHERE_INVOKING", "1");
             }
 
-            cmd.output()
+            let child = cmd.spawn()?;
+
+            // ProcessGuard kills the child on drop — covers timeout,
+            // abort, and interrupt scenarios uniformly.
+            let guard = ProcessGuard::new(child);
+            // Normal path: take() marks guard as completed, then we
+            // wait for the child. Drop is now a no-op.
+            let output = guard.take().unwrap().wait_with_output()?;
+            Ok(output)
         })
         .await;
 

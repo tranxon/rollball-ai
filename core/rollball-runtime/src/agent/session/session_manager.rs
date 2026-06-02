@@ -13,6 +13,7 @@ use rollball_core::protocol::{SearchKeyEntry, SearchProviderListItem};
 use rollball_core::tools::traits::Tool;
 use rollball_core::Budget;
 use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::agent::agent_core::AgentCore;
@@ -22,6 +23,8 @@ use crate::agent::session::session_handle::SessionHandle;
 use crate::agent::session::session_task::{SessionMessage, SessionTask};
 use crate::agent::session_state::{SessionState, SessionStatus};
 use crate::conversation::ConversationSession;
+use crate::debug::controller::DebugController;
+use crate::debug::server::DebugEventSender;
 use crate::error::{Result, RuntimeError};
 use crate::tools::mcp_manager::McpManager;
 use crate::tools::workspace_resolver::{WorkspaceResolver, format_workspace_context_for_session};
@@ -151,6 +154,18 @@ struct CachedLLMConfig {
     compact_model: Option<String>,
 }
 
+/// Debug mode handles injected at runtime when Gateway pushes
+/// EnableDebugMode. Stored on SessionManager so that sessions
+/// created *after* debug mode is enabled inherit the debug
+/// controller, event sender, and notify handles.
+#[derive(Clone)]
+pub struct DebugHandles {
+    pub debug_ctrl: Arc<tokio::sync::Mutex<DebugController>>,
+    pub debug_event_tx: DebugEventSender,
+    pub rewind_notify: Arc<Notify>,
+    pub resume_notify: Arc<Notify>,
+}
+
 /// Lifecycle manager for multiple concurrent sessions.
 ///
 /// Owns a shared `Arc<AgentCore>` template and creates `SessionTask`s
@@ -194,6 +209,11 @@ pub struct SessionManager {
     /// Default workspace ID for new sessions (no persisted workspace).
     /// Falls back to "__agent_home__" when no last_active workspace is set.
     default_workspace_id: String,
+    /// Runtime-injected debug handles (set when Gateway pushes EnableDebugMode).
+    /// When Some, new sessions inherit the debug controller, event sender,
+    /// and notify handles. Existing sessions restart via urgent_interrupt
+    /// and pick up these handles on their next agent_loop.run().
+    pub(crate) runtime_debug_handles: Option<DebugHandles>,
 }
 
 impl SessionManager {
@@ -215,6 +235,7 @@ impl SessionManager {
             session_workspaces: HashMap::new(),
             pending_workspaces: HashMap::new(),
             default_workspace_id: "__agent_home__".to_string(),
+            runtime_debug_handles: None,
         }
     }
 
@@ -288,6 +309,7 @@ impl SessionManager {
             self.config.identity_context.clone(),
             self.config.protocol_type.clone(),
             self.mcp_tools.clone(),
+            self.runtime_debug_handles.clone(),
         );
 
         // ADR-014: Create watch channel for session status
@@ -1117,6 +1139,89 @@ impl SessionManager {
     /// Get the pending workspace ID for a session, if any.
     pub fn pending_workspace_id(&self, session_id: &str) -> Option<&str> {
         self.pending_workspaces.get(session_id).map(|s| s.as_str())
+    }
+
+    /// Fire the urgent_interrupt notify to cancel all in-flight tool/LLM
+    /// execution across all sessions. Uses notify_waiters() to wake every
+    /// waiter — since the Notify is shared across all sessions via Arc::clone,
+    /// notify_one() would only wake a single waiter.
+    /// This is a no-op in standalone mode (where urgent_interrupt is None on
+    /// the template core).
+    pub(crate) fn fire_urgent_interrupt(&self) {
+        if let Some(ref urgent) = self.core.urgent_interrupt {
+            urgent.notify_waiters();
+            tracing::info!("SessionManager: urgent_interrupt fired (all waiters)");
+        }
+    }
+
+    /// Initialize debug mode at runtime (called when Gateway pushes EnableDebugMode).
+    ///
+    /// Starts a DebugProtocolServer on `debug_port` and stores the resulting
+    /// controller, event sender, and notify handles. Then pushes the handles
+    /// to all existing sessions via `SessionMessage::EnableDebugMode` so they
+    /// can start emitting debug events immediately, without a restart.
+    pub async fn enable_debug_mode(&mut self, debug_port: u32) {
+        // Avoid double-init: if debug handles are already set, skip.
+        if self.runtime_debug_handles.is_some() {
+            tracing::warn!(
+                debug_port = debug_port,
+                "enable_debug_mode: debug handles already set, skipping"
+            );
+            return;
+        }
+
+        let port = debug_port as u16;
+        let debug_server = crate::debug::server::DebugProtocolServer::new(port);
+        let (debug_event_tx, debug_ctrl) = debug_server.start().await;
+        let rewind_notify = {
+            let guard = debug_ctrl.lock().await;
+            guard.rewind_notify_handle()
+        };
+        let resume_notify = {
+            let guard = debug_ctrl.lock().await;
+            guard.resume_notify_handle()
+        };
+
+        let handles = DebugHandles {
+            debug_ctrl,
+            debug_event_tx,
+            rewind_notify,
+            resume_notify,
+        };
+        self.runtime_debug_handles = Some(handles.clone());
+
+        tracing::info!(
+            port = port,
+            "enable_debug_mode: debug server started, handles stored for future sessions"
+        );
+
+        // Push debug handles to all existing sessions so their AgentCore
+        // gets debug_ctrl/debug_event_tx injected. Without this, existing
+        // sessions would continue without debug instrumentation while the
+        // DebugProtocolServer would show iteration:0 forever.
+        self.push_debug_mode_to_existing_sessions().await;
+    }
+
+    /// Push EnableDebugMode to every existing session so they inject the
+    /// debug handles into their AgentCore without a restart.
+    async fn push_debug_mode_to_existing_sessions(&self) {
+        let Some(ref handles) = self.runtime_debug_handles else {
+            return;
+        };
+        for (sid, session_handle) in &self.sessions {
+            let msg = SessionMessage::EnableDebugMode(handles.clone());
+            if session_handle.inbound_tx.send(msg).await.is_err() {
+                tracing::warn!(
+                    session_id = %sid,
+                    "SessionManager: failed to push EnableDebugMode to session (channel closed)"
+                );
+            } else {
+                tracing::info!(
+                    session_id = %sid,
+                    "SessionManager: pushed EnableDebugMode to existing session"
+                );
+            }
+        }
     }
 }
 

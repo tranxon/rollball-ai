@@ -846,6 +846,13 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                     proto::UsageReportAck {},
                 ))
             }
+            protocol::GatewayResponse::EnableDebugMode { debug_port } => {
+                Some(proto::server_message::Payload::EnableDebugMode(
+                    proto::EnableDebugMode {
+                        debug_port: *debug_port,
+                    },
+                ))
+            }
         };
 
         proto::ServerMessage {

@@ -1243,6 +1243,11 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 version: update.version,
             }
         }
+        Some(ServerPayload::EnableDebugMode(edm)) => {
+            GatewayResponse::EnableDebugMode {
+                debug_port: edm.debug_port,
+            }
+        }
 
         None => {
             tracing::warn!("Received ServerMessage with empty payload");

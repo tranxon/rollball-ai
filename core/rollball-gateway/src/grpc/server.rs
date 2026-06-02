@@ -285,6 +285,23 @@ impl GrpcSessionManager {
     pub fn cleanup_pending(&mut self, request_id: u64) {
         self.pending_requests.remove(&request_id);
     }
+
+    /// Push a domain GatewayResponse to the Runtime of a specific agent.
+    ///
+    /// Returns true if the message was pushed successfully.
+    /// Returns false if the agent is not connected or the push channel is closed.
+    pub async fn push_to_agent(&self, agent_id: &str, msg: GatewayResponse) -> bool {
+        match self.find_by_agent_id(agent_id) {
+            Some((_, session)) => session.push_message(msg).await,
+            None => {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    "Cannot push message to agent: not connected"
+                );
+                false
+            }
+        }
+    }
 }
 
 impl Default for GrpcSessionManager {

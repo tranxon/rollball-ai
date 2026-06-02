@@ -81,6 +81,16 @@ pub async fn stop_agent(
     client.stop_agent(&agent_id).await.map_err(|e| e.to_string())
 }
 
+/// Restart an agent in debug mode (atomic in-Runtime switch, no process restart)
+#[tauri::command]
+pub async fn restart_agent_in_debug(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> Result<GenericMessageResponse, String> {
+    let client = state.gateway.read().await;
+    client.restart_agent_in_debug(&agent_id).await.map_err(|e| e.to_string())
+}
+
 /// Clone an agent (skeleton or full mode)
 #[tauri::command]
 pub async fn clone_agent(

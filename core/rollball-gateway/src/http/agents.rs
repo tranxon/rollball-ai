@@ -34,6 +34,7 @@ pub fn agent_routes() -> Router<AppState> {
         .route("/api/agents/{id}/clone", post(clone_agent))
         .route("/api/agents/{id}/start", post(start_agent))
         .route("/api/agents/{id}/stop", post(stop_agent))
+        .route("/api/agents/{id}/restart-debug", post(restart_agent_in_debug))
         .route("/api/agents/{id}/model", get(get_agent_model))
         .route("/api/agents/{id}/config", get(get_agent_config).put(update_agent_config))
         .route("/api/agents/{id}/tools", get(get_agent_tools))
@@ -539,6 +540,94 @@ pub async fn stop_agent(
 
     Ok(Json(MessageResponse {
         message: format!("Agent stopped: {}", agent_id),
+    }))
+}
+
+/// `POST /api/agents/:id/restart-debug` — restart a running agent in debug mode
+///
+/// Unlike stop→start (which kills and spawns a new process), this endpoint
+/// pushes an `EnableDebugMode` message to the Runtime via gRPC. The Runtime
+/// then atomically switches to debug mode without process restart, preserving
+/// session state and avoiding frontend race conditions.
+pub async fn restart_agent_in_debug(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<MessageResponse>, (StatusCode, Json<ApiError>)> {
+    let mut gw = state.gateway_state.write().await;
+
+    if !gw.is_running(&agent_id) {
+        return Err(ApiError::bad_request(&format!(
+            "Agent {} is not running",
+            agent_id
+        )));
+    }
+
+    // Already in debug mode — no-op
+    if let Some(info) = gw.running_agents.get(&agent_id) {
+        if info.dev_mode && info.debug_port.is_some() {
+            return Ok(Json(MessageResponse {
+                message: format!(
+                    "Agent {} is already in debug mode (port {})",
+                    agent_id,
+                    info.debug_port.unwrap_or(0)
+                ),
+            }));
+        }
+    }
+
+    // Check gRPC session manager is available
+    let grpc_mgr = state
+        .grpc_session_mgr
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::internal("gRPC session manager not available")
+        })?;
+
+    let idle_timeout = 300;
+    let grpc_addr = crate::grpc::server::default_grpc_addr();
+    let gateway_grpc_endpoint = format!("http://{}", grpc_addr);
+    let log_file_size_mb = gw
+        .config
+        .as_ref()
+        .map(|c| c.log_file_size_mb)
+        .unwrap_or(10);
+    let lifecycle = crate::lifecycle::manager::LifecycleManager::new(
+        idle_timeout,
+        gateway_grpc_endpoint,
+        log_file_size_mb,
+    );
+
+    lifecycle
+        .restart_in_debug(&agent_id, &mut gw, &grpc_mgr)
+        .await
+        .map_err(|e| ApiError::internal(&format!("Restart in debug failed: {}", e)))?;
+
+    // Bump Gateway's log level to DEBUG so the Settings UI reflects it.
+    {
+        let level = "debug";
+        if let Some(config) = &mut gw.config {
+            config.log_level = level.to_string();
+        }
+        drop(gw);
+        if let Some(handle) = &state.log_reload_handle {
+            let new_filter = tracing_subscriber::EnvFilter::new(level);
+            if let Err(e) = handle.reload(new_filter) {
+                tracing::warn!(
+                    "Failed to reload Gateway tracing filter for debug mode: {}",
+                    e
+                );
+            } else {
+                tracing::info!(
+                    "Gateway log level set to {} (restart-in-debug)",
+                    level
+                );
+            }
+        }
+    }
+
+    Ok(Json(MessageResponse {
+        message: format!("Agent restarted in debug mode: {}", agent_id),
     }))
 }
 

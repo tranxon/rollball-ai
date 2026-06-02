@@ -76,6 +76,7 @@ message ServerMessage {
     SearchConfigDelivery    search_config_delivery = 36;
     UpdateSearchConfig      update_search_config = 37;
     UserProfileUpdate       user_profile_update  = 38;
+    EnableDebugMode         enable_debug_mode     = 39;
   }
 }
 
@@ -302,4 +303,16 @@ message MemoryDeleteResult {
   uint64 node_id = 1;
   bool deleted = 2;
   string message = 3;
+}
+
+// ── Debug Mode ────────────────────────────────────────────────────────
+
+/// Gateway pushes this to Runtime to switch into debug mode without
+/// restarting the process. The Runtime fires urgent_interrupt to cancel
+/// any in-flight tools/LLM, then initializes the Debug WebSocket server
+/// and DebugController. If the agent loop is idle, the interrupt step is
+/// skipped and debug mode is initialized directly.
+message EnableDebugMode {
+  /// Debug WebSocket port (allocated by Gateway)
+  uint32 debug_port = 1;
 }
