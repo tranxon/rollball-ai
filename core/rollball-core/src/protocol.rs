@@ -822,6 +822,15 @@ pub enum GatewayResponse {
     ///   1. Delete all *.log files in its workspace/logs/ directory
     ///   2. Force-rotate to create a fresh log file for subsequent writes
     LogRotate,
+    /// Log file count update (Gateway → Runtime, push)
+    ///
+    /// Gateway pushes the new maximum log file count when the user changes
+    /// it in Settings. The Runtime updates its SizeRollingFileAppender
+    /// and immediately enforces the limit by deleting the oldest files.
+    LogFileCountUpdate {
+        /// New maximum number of log files to keep (0 = unlimited)
+        log_file_count: u64,
+    },
     /// Runtime configuration update (Gateway → Runtime, push)
     ///
     /// Gateway pushes per-agent config overrides to the Runtime.

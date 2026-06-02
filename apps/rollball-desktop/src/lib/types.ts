@@ -158,6 +158,8 @@ export interface GatewayConfig {
   max_output_tokens_limit: number;
   /// Log file max size in MB before auto-split (0 = disabled)
   log_file_size_mb: number;
+  /** Maximum number of log files to keep (0 = unlimited, default 20) */
+  log_file_count: number;
 }
 
 /** Generic message response */

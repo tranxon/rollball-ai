@@ -37,12 +37,14 @@ model = "gpt-4"
 
 fn test_gateway_config(temp_dir: &Path) -> GatewayConfig {
     GatewayConfig {
+        config_source_path: None,
         socket_path: temp_dir.join("test.sock").to_string_lossy().to_string(),
         vault_dir: temp_dir.join("vault").to_string_lossy().to_string(),
         packages_dir: temp_dir.join("packages").to_string_lossy().to_string(),
         data_dir: temp_dir.join("data").to_string_lossy().to_string(),
         log_level: "warn".to_string(),
         log_file_size_mb: 10,
+        log_file_count: 20,
         idle_timeout_secs: 0,
         max_iterations: 20,
         iteration_timeout_ms: 30000,

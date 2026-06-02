@@ -67,6 +67,10 @@ pub struct Cli {
     #[arg(long, default_value = "10", env = "ROLLBALL_LOG_FILE_SIZE_MB")]
     pub log_file_size_mb: u64,
 
+    /// Maximum number of log files to keep (0 = unlimited, default 20)
+    #[arg(long, default_value = "20", env = "ROLLBALL_LOG_FILE_COUNT")]
+    pub log_file_count: u64,
+
     /// Path to manifest.toml (overrides package-embedded manifest)
     #[arg(long)]
     pub manifest_path: Option<String>,
@@ -150,8 +154,13 @@ impl Cli {
         } else {
             10
         };
+        let max_file_count = if self.log_file_count > 0 {
+            self.log_file_count as usize
+        } else {
+            0
+        };
         let file_appender = Arc::new(rollball_core::logging::SizeRollingFileAppender::new(
-            log_dir, max_mb,
+            log_dir, max_mb, max_file_count,
         ));
 
         // Store for LogRotate IPC handler
@@ -2589,6 +2598,22 @@ async fn process_gateway_recv(
                         tracing::info!("Deleted {} runtime log files", deleted);
                     }
 
+                    return LoopAction::Continue;
+                }
+
+                GatewayResponse::LogFileCountUpdate { log_file_count } => {
+                    tracing::info!(
+                        count = log_file_count,
+                        "Received LogFileCountUpdate from Gateway — enforcing limit"
+                    );
+                    if let Some(appender) = FILE_APPENDER.get() {
+                        let max = if log_file_count > 0 { log_file_count as usize } else { 0 };
+                        appender.set_max_file_count(max);
+                        tracing::info!(
+                            log_file_count = log_file_count,
+                            "Runtime log file count updated dynamically"
+                        );
+                    }
                     return LoopAction::Continue;
                 }
 

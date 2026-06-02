@@ -11,6 +11,7 @@ const STORAGE_KEY_ACCENT_COLOR = "rollball-accent-color";
 const STORAGE_KEY_GATEWAY_URL = "rollball-gateway-url";
 const STORAGE_KEY_GATEWAY_MODE = "rollball-gateway-mode";
 const STORAGE_KEY_LOG_FILE_SIZE = "rollball-log-file-size";
+const STORAGE_KEY_LOG_FILE_COUNT = "rollball-log-file-count";
 
 const DEFAULT_ACCENT_COLOR = "#3b82f6";
 
@@ -67,7 +68,7 @@ function getPersistedFontSize(): number {
       const val = parseFloat(stored);
       if (!isNaN(val) && val > 0) return val;
     }
-  } catch {}
+  } catch { }
   return 0.875;
 }
 
@@ -76,7 +77,7 @@ function getPersistedLogLevel(): string {
   try {
     const stored = localStorage.getItem(STORAGE_KEY_LOG_LEVEL);
     if (stored) return stored;
-  } catch {}
+  } catch { }
   return "info";
 }
 
@@ -88,7 +89,7 @@ function getPersistedContentWidth(): number {
       const val = parseInt(stored, 10);
       if (!isNaN(val) && val >= 40 && val <= 100) return val;
     }
-  } catch {}
+  } catch { }
   return 90;
 }
 
@@ -97,7 +98,7 @@ function getPersistedAccentColor(): string {
   try {
     const stored = localStorage.getItem(STORAGE_KEY_ACCENT_COLOR);
     if (stored && /^#[0-9a-fA-F]{6}$/.test(stored)) return stored;
-  } catch {}
+  } catch { }
   return DEFAULT_ACCENT_COLOR;
 }
 
@@ -106,7 +107,7 @@ function getPersistedGatewayUrl(): string {
   try {
     const stored = localStorage.getItem(STORAGE_KEY_GATEWAY_URL);
     if (stored) return stored;
-  } catch {}
+  } catch { }
   return DEFAULT_GATEWAY_URL;
 }
 
@@ -115,7 +116,7 @@ function getPersistedGatewayMode(): GatewayMode {
   try {
     const stored = localStorage.getItem(STORAGE_KEY_GATEWAY_MODE);
     if (stored === "local" || stored === "remote") return stored;
-  } catch {}
+  } catch { }
   return "local";
 }
 
@@ -127,8 +128,20 @@ function getPersistedLogFileSizeMb(): number {
       const val = parseInt(stored, 10);
       if (!isNaN(val) && val >= 0) return val;
     }
-  } catch {}
+  } catch { }
   return 10;
+}
+
+/** Read persisted log file count from localStorage, fallback to 20 */
+function getPersistedLogFileCount(): number {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_LOG_FILE_COUNT);
+    if (stored) {
+      const val = parseInt(stored, 10);
+      if (!isNaN(val) && val >= 0) return val;
+    }
+  } catch { }
+  return 20;
 }
 
 /** Read persisted opacity from localStorage, fallback to 1.0 (opaque) */
@@ -139,7 +152,7 @@ function getPersistedOpacity(): number {
       const val = parseFloat(stored);
       if (!isNaN(val) && val >= 0.0 && val <= 1.0) return val;
     }
-  } catch {}
+  } catch { }
   return 1.0;
 }
 
@@ -153,6 +166,7 @@ interface SettingsStore {
   gatewayMode: GatewayMode;
   logLevel: string;
   logFileSizeMb: number;
+  logFileCount: number;
   setTheme: (theme: Theme) => void;
   setFontSize: (size: number) => void;
   setContentWidth: (width: number) => void;
@@ -162,6 +176,7 @@ interface SettingsStore {
   setGatewayMode: (mode: GatewayMode) => void;
   setLogLevel: (level: string) => void;
   setLogFileSizeMb: (size: number) => void;
+  setLogFileCount: (count: number) => void;
 }
 
 export const useSettingsStore = create<SettingsStore>((set) => {
@@ -188,52 +203,57 @@ export const useSettingsStore = create<SettingsStore>((set) => {
     gatewayMode: getPersistedGatewayMode(),
     logLevel: initialLogLevel,
     logFileSizeMb: getPersistedLogFileSizeMb(),
+    logFileCount: getPersistedLogFileCount(),
 
     setTheme: (theme) => {
       applyTheme(theme);
-      try { localStorage.setItem(STORAGE_KEY_THEME, theme); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_THEME, theme); } catch { }
       set({ theme });
     },
 
     setFontSize: (fontSize) => {
       applyFontSize(fontSize);
-      try { localStorage.setItem(STORAGE_KEY_FONT_SIZE, String(fontSize)); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_FONT_SIZE, String(fontSize)); } catch { }
       set({ fontSize });
     },
 
     setContentWidth: (contentWidth) => {
       applyContentWidth(contentWidth);
-      try { localStorage.setItem(STORAGE_KEY_CONTENT_WIDTH, String(contentWidth)); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_CONTENT_WIDTH, String(contentWidth)); } catch { }
       set({ contentWidth });
     },
 
     setOpacity: (opacity) => {
       applyOpacity(opacity);
-      try { localStorage.setItem(STORAGE_KEY_OPACITY, String(opacity)); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_OPACITY, String(opacity)); } catch { }
       set({ opacity });
     },
 
     setAccentColor: (accentColor) => {
       applyAccentColor(accentColor);
-      try { localStorage.setItem(STORAGE_KEY_ACCENT_COLOR, accentColor); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_ACCENT_COLOR, accentColor); } catch { }
       set({ accentColor });
     },
 
     setGatewayUrl: (gatewayUrl) => {
-      try { localStorage.setItem(STORAGE_KEY_GATEWAY_URL, gatewayUrl); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_GATEWAY_URL, gatewayUrl); } catch { }
       set({ gatewayUrl });
     },
     setGatewayMode: (gatewayMode) => {
-      try { localStorage.setItem(STORAGE_KEY_GATEWAY_MODE, gatewayMode); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_GATEWAY_MODE, gatewayMode); } catch { }
       set({ gatewayMode });
     },
     setLogLevel: (logLevel) => {
-      try { localStorage.setItem(STORAGE_KEY_LOG_LEVEL, logLevel); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_LOG_LEVEL, logLevel); } catch { }
       set({ logLevel });
     },
     setLogFileSizeMb: (logFileSizeMb) => {
-      try { localStorage.setItem(STORAGE_KEY_LOG_FILE_SIZE, String(logFileSizeMb)); } catch {}
+      try { localStorage.setItem(STORAGE_KEY_LOG_FILE_SIZE, String(logFileSizeMb)); } catch { }
       set({ logFileSizeMb });
+    },
+    setLogFileCount: (logFileCount) => {
+      try { localStorage.setItem(STORAGE_KEY_LOG_FILE_COUNT, String(logFileCount)); } catch { }
+      set({ logFileCount });
     },
   };
 });

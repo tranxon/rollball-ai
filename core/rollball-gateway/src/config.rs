@@ -15,6 +15,11 @@ use crate::error::GatewayError;
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
+    /// Path to the TOML config file this was loaded from (if any).
+    /// Used by `save()` to persist runtime config changes back to disk.
+    /// Skipped in serialization — not stored in the TOML file itself.
+    #[serde(skip)]
+    pub config_source_path: Option<String>,
     /// Socket path for IPC (Unix Socket on Linux, Named Pipe on Windows)
     pub socket_path: String,
     /// Vault directory for encrypted key storage
@@ -29,6 +34,9 @@ pub struct GatewayConfig {
     /// Log file maximum size in MB before auto-split (0 = no split, default 10)
     #[serde(default = "default_log_file_size_mb")]
     pub log_file_size_mb: u64,
+    /// Maximum number of log files to keep (0 = unlimited, default 20)
+    #[serde(default = "default_log_file_count")]
+    pub log_file_count: u64,
     /// Default idle timeout in seconds (0 = no timeout)
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout_secs: u64,
@@ -104,6 +112,7 @@ impl Default for HttpConfig {
 
 fn default_log_level() -> String { "info".to_string() }
 fn default_log_file_size_mb() -> u64 { 10 }
+fn default_log_file_count() -> u64 { 20 }
 fn default_idle_timeout() -> u64 { 300 } // 5 minutes
 fn default_max_iterations() -> u32 { 20 }
 fn default_iteration_timeout_ms() -> u64 { 30_000 }
@@ -155,8 +164,16 @@ impl GatewayConfig {
         let data_dir = Self::project_data_dir();
         let default_data = data_dir.to_string_lossy().to_string();
 
+        // Determine config source path (for runtime persistence)
+        let config_path = if let Some(path) = &cli.config_path {
+            Some(path.clone())
+        } else {
+            Self::default_config_path().ok().map(|p| p.to_string_lossy().to_string())
+        };
+
         // Merge: CLI > env > file > defaults
         Ok(Self {
+            config_source_path: config_path,
             socket_path: cli.socket_path.clone()
                 .or(file_config.as_ref().map(|c| c.socket_path.clone()))
                 .unwrap_or(default_socket),
@@ -177,6 +194,9 @@ impl GatewayConfig {
             log_file_size_mb: file_config.as_ref()
                 .map(|c| c.log_file_size_mb)
                 .unwrap_or_else(default_log_file_size_mb),
+            log_file_count: file_config.as_ref()
+                .map(|c| c.log_file_count)
+                .unwrap_or_else(default_log_file_count),
             idle_timeout_secs: file_config.as_ref().map(|c| c.idle_timeout_secs)
                 .unwrap_or_else(default_idle_timeout),
             max_iterations: file_config.as_ref().map(|c| c.max_iterations)
@@ -203,7 +223,7 @@ impl GatewayConfig {
     }
 
     /// Default config file path
-    fn default_config_path() -> Result<std::path::PathBuf, GatewayError> {
+    pub fn default_config_path() -> Result<std::path::PathBuf, GatewayError> {
         let base_dir = Self::project_config_dir();
         Ok(base_dir.join("gateway.toml"))
     }
@@ -214,6 +234,30 @@ impl GatewayConfig {
             std::fs::create_dir_all(dir)
                 .map_err(GatewayError::Io)?;
         }
+        Ok(())
+    }
+
+    /// Persist the current configuration to its source TOML file.
+    /// Falls back to `default_config_path()` if `config_source_path` is not set.
+    pub fn save(&self) -> Result<(), GatewayError> {
+        let path = self.config_source_path.as_ref()
+            .map(std::path::PathBuf::from)
+            .or_else(|| Self::default_config_path().ok())
+            .ok_or_else(|| GatewayError::Config("Cannot determine config file path".to_string()))?;
+
+        // Ensure parent directory exists
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| GatewayError::Io(e))?;
+        }
+
+        let toml_str = toml::to_string_pretty(self)
+            .map_err(|e| GatewayError::Config(format!("Failed to serialize config: {}", e)))?;
+
+        std::fs::write(&path, &toml_str)
+            .map_err(|e| GatewayError::Config(format!("Failed to write config to '{}': {}", path.display(), e)))?;
+
+        tracing::info!(path = %path.display(), "Configuration persisted");
         Ok(())
     }
 }
@@ -230,12 +274,14 @@ impl Default for GatewayConfig {
         };
 
         Self {
+            config_source_path: None,
             socket_path: default_socket,
             vault_dir: base_dir.join("vault").to_string_lossy().to_string(),
             packages_dir: base_dir.join("packages").to_string_lossy().to_string(),
             data_dir: data_dir.to_string_lossy().to_string(),
             log_level: default_log_level(),
             log_file_size_mb: default_log_file_size_mb(),
+            log_file_count: default_log_file_count(),
             idle_timeout_secs: default_idle_timeout(),
             max_iterations: default_max_iterations(),
             iteration_timeout_ms: default_iteration_timeout_ms(),
@@ -291,6 +337,7 @@ mod tests {
     #[test]
     fn test_ensure_dirs() {
         let config = GatewayConfig {
+            config_source_path: None,
             socket_path: "/tmp/test-gw/gateway.sock".to_string(),
             vault_dir: format!("/tmp/test-gw-{}", std::process::id()),
             packages_dir: format!("/tmp/test-gw-pkg-{}", std::process::id()),

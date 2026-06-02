@@ -509,7 +509,7 @@ function GeneralTab() {
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showResetOnboardingConfirm, setShowResetOnboardingConfirm] = useState(false);
-  const { logLevel, setLogLevel, logFileSizeMb, setLogFileSizeMb } = useSettingsStore();
+  const { logLevel, setLogLevel, logFileSizeMb, setLogFileSizeMb, logFileCount, setLogFileCount } = useSettingsStore();
 
   useEffect(() => {
     fetch(`${getGatewayUrl()}/api/config`)
@@ -521,12 +521,16 @@ function GeneralTab() {
         if (cfg.log_file_size_mb !== undefined) {
           setLogFileSizeMb(cfg.log_file_size_mb);
         }
+        if (cfg.log_file_count !== undefined) {
+          setLogFileCount(cfg.log_file_count);
+        }
       })
       .catch(() => { });
-  }, [setLogLevel, setLogFileSizeMb]);
+  }, [setLogLevel, setLogFileSizeMb, setLogFileCount]);
 
   const currentLogLevel = config?.log_level || logLevel || "info";
   const currentLogFileSize = config?.log_file_size_mb ?? logFileSizeMb;
+  const currentLogFileCount = config?.log_file_count ?? logFileCount;
 
   const handleDeleteLogs = async () => {
     setShowDeleteConfirm(false);
@@ -610,6 +614,40 @@ function GeneralTab() {
           </div>
           <p className="mt-1 text-[10px] text-zinc-400">
             0 = disable split. Files named as YYYYMMDD_HHMMSS.log
+          </p>
+        </div>
+
+        {/* Max log file count */}
+        <div className="mb-3">
+          <label className="block mb-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+            Max Log Files
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={999}
+              value={currentLogFileCount}
+              onChange={async (e) => {
+                const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                setLogFileCount(val);
+                try {
+                  await fetch(`${getGatewayUrl()}/api/config`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ log_file_count: val }),
+                  });
+                  setConfig((prev) => (prev ? { ...prev, log_file_count: val } : prev));
+                } catch { /* ignore */ }
+              }}
+              className="w-16 rounded-md border border-zinc-200 px-2 py-[var(--ui-input-py)] text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            />
+            <span className="text-xs text-zinc-400">
+              {currentLogFileCount === 0 ? "Unlimited" : `Keep ${currentLogFileCount} files`}
+            </span>
+          </div>
+          <p className="mt-1 text-[10px] text-zinc-400">
+            0 = unlimited. Oldest files are deleted when limit is exceeded.
           </p>
         </div>
 

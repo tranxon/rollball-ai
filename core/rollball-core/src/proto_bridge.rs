@@ -740,6 +740,11 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                     proto::LogRotate {},
                 ))
             }
+            protocol::GatewayResponse::LogFileCountUpdate { log_file_count } => {
+                Some(proto::server_message::Payload::LogFileCountUpdate(
+                    proto::LogFileCountUpdate { log_file_count: *log_file_count },
+                ))
+            }
             protocol::GatewayResponse::RuntimeConfigUpdate {
                 max_output_tokens,
                 max_iterations,

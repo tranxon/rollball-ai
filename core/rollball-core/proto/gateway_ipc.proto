@@ -77,6 +77,7 @@ message ServerMessage {
     UpdateSearchConfig      update_search_config = 37;
     UserProfileUpdate       user_profile_update  = 38;
     EnableDebugMode         enable_debug_mode     = 39;
+    LogFileCountUpdate      log_file_count_update = 40;
   }
 }
 
@@ -210,6 +211,7 @@ message UpdateSearchConfig      { string providers_json = 1; }
 message IterationLimitPaused    { uint32 iteration = 1; uint32 max_iterations = 2; string message = 3; }
 message LogLevelUpdate           { string log_level = 1; }
 message LogRotate               {}
+message LogFileCountUpdate      { uint64 log_file_count = 1; }
 message RuntimeConfigUpdate      {
     optional uint64 max_output_tokens = 1;
     optional uint32 max_iterations = 2;

@@ -18,11 +18,13 @@ pub struct LifecycleManager {
     gateway_grpc_endpoint: String,
     /// Log file max size in MB before auto-split
     log_file_size_mb: u64,
+    /// Maximum number of log files to keep (0 = unlimited)
+    log_file_count: u64,
 }
 
 impl LifecycleManager {
-    pub fn new(idle_timeout_secs: u64, gateway_grpc_endpoint: String, log_file_size_mb: u64) -> Self {
-        Self { idle_timeout_secs, gateway_grpc_endpoint, log_file_size_mb }
+    pub fn new(idle_timeout_secs: u64, gateway_grpc_endpoint: String, log_file_size_mb: u64, log_file_count: u64) -> Self {
+        Self { idle_timeout_secs, gateway_grpc_endpoint, log_file_size_mb, log_file_count }
     }
 
     /// Start an agent process
@@ -61,6 +63,7 @@ impl LifecycleManager {
             dev_mode,
             debug_port,
             self.log_file_size_mb,
+            self.log_file_count,
         ).await?;
 
         let pid = child.id();
@@ -229,13 +232,13 @@ mod tests {
 
     #[test]
     fn test_lifecycle_manager_new() {
-        let mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10);
+        let mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10, 20);
         assert_eq!(mgr.idle_timeout_secs, 300);
     }
 
     #[test]
     fn test_lifecycle_manager_zero_timeout() {
-        let mgr = LifecycleManager::new(0, "http://127.0.0.1:19877".to_string(), 10);
+        let mgr = LifecycleManager::new(0, "http://127.0.0.1:19877".to_string(), 10, 20);
         let dir = temp_vault_dir("zero");
         let state = GatewayState::new(&dir);
         let result = mgr.check_idle_timeouts(&state);
@@ -244,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_agent_not_installed() {
-        let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10);
+        let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10, 20);
         let dir = temp_vault_dir("start");
         let mut state = GatewayState::new(&dir);
         let result = mgr.start_agent("com.test.unknown", &mut state, false).await;
@@ -253,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_agent_not_running() {
-        let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10);
+        let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10, 20);
         let dir = temp_vault_dir("stop");
         let mut state = GatewayState::new(&dir);
         let result = mgr.stop_agent("com.test.unknown", &mut state).await;
@@ -267,7 +270,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_system_agent_rejected() {
-        let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10);
+        let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10, 20);
         let dir = temp_vault_dir("sysstop");
         let mut state = GatewayState::new(&dir);
         let result = mgr.stop_agent(SYSTEM_AGENT_ID, &mut state).await;
@@ -278,7 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_auto_start_system_agent_not_installed() {
-        let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10);
+        let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string(), 10, 20);
         let dir = temp_vault_dir("autostart");
         let mut state = GatewayState::new(&dir);
         // System Agent not installed — should succeed gracefully with warning

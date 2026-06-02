@@ -487,7 +487,8 @@ pub async fn start_agent(
     let grpc_addr = crate::grpc::server::default_grpc_addr();
     let gateway_grpc_endpoint = format!("http://{}", grpc_addr);
     let log_file_size_mb = gw.config.as_ref().map(|c| c.log_file_size_mb).unwrap_or(10);
-    let mut lifecycle = crate::lifecycle::manager::LifecycleManager::new(idle_timeout, gateway_grpc_endpoint, log_file_size_mb);
+    let log_file_count = gw.config.as_ref().map(|c| c.log_file_count).unwrap_or(20);
+    let mut lifecycle = crate::lifecycle::manager::LifecycleManager::new(idle_timeout, gateway_grpc_endpoint, log_file_size_mb, log_file_count);
     lifecycle.start_agent(&agent_id, &mut gw, req.dev_mode).await
         .map_err(|e| ApiError::internal(&format!("Start failed: {}", e)))?;
     drop(gw);
@@ -534,7 +535,7 @@ pub async fn stop_agent(
     let idle_timeout = 300;
     let grpc_addr = crate::grpc::server::default_grpc_addr();
     let gateway_grpc_endpoint = format!("http://{}", grpc_addr);
-    let mut lifecycle = crate::lifecycle::manager::LifecycleManager::new(idle_timeout, gateway_grpc_endpoint, 10);
+    let mut lifecycle = crate::lifecycle::manager::LifecycleManager::new(idle_timeout, gateway_grpc_endpoint, 10, 20);
     lifecycle.stop_agent(&agent_id, &mut gw).await
         .map_err(|e| ApiError::internal(&format!("Stop failed: {}", e)))?;
 
@@ -592,10 +593,16 @@ pub async fn restart_agent_in_debug(
         .as_ref()
         .map(|c| c.log_file_size_mb)
         .unwrap_or(10);
+    let log_file_count = gw
+        .config
+        .as_ref()
+        .map(|c| c.log_file_count)
+        .unwrap_or(20);
     let lifecycle = crate::lifecycle::manager::LifecycleManager::new(
         idle_timeout,
         gateway_grpc_endpoint,
         log_file_size_mb,
+        log_file_count,
     );
 
     lifecycle

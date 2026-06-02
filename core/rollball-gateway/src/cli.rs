@@ -7,6 +7,12 @@ use clap::{Parser, Subcommand};
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::gateway::Gateway;
+use std::sync::Arc;
+
+/// Global reference to the SizeRollingFileAppender for Gateway log file count
+/// dynamic updates. Set by init_tracing() and read by update_log_file_count().
+static FILE_APPENDER: std::sync::OnceLock<Arc<rollball_core::logging::SizeRollingFileAppender>> =
+    std::sync::OnceLock::new();
 
 /// Print RollBall logo with cyan (宝蓝) ANSI color on startup.
 fn print_logo() {
@@ -125,7 +131,7 @@ impl Cli {
         // Load config first (needed for log file settings)
         let config = GatewayConfig::from_cli(&self)?;
         // Initialize tracing with reload support
-        let log_reload_handle = init_tracing(&config.log_level, config.log_file_size_mb);
+        let log_reload_handle = init_tracing(&config.log_level, config.log_file_size_mb, config.log_file_count);
 
         let mut gateway = Gateway::new(config)?;
 
@@ -216,7 +222,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CrlfStderr {
 ///
 /// Returns the reload handle so the Gateway can dynamically change
 /// the log level at runtime via the HTTP config API.
-fn init_tracing(level: &str, log_file_size_mb: u64) -> Option<crate::LogReloadHandle> {
+fn init_tracing(level: &str, log_file_size_mb: u64, log_file_count: u64) -> Option<crate::LogReloadHandle> {
     use tracing_subscriber::{reload, EnvFilter, layer::SubscriberExt};
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::fmt::time::LocalTime;
@@ -249,10 +255,14 @@ fn init_tracing(level: &str, log_file_size_mb: u64) -> Option<crate::LogReloadHa
     }
 
     // Size-based rolling file appender: splits when file exceeds log_file_size_mb
-    let file_appender = rollball_core::logging::SizeRollingFileAppender::new(
+    let max_file_count = if log_file_count > 0 { log_file_count as usize } else { 0 };
+    let file_appender = Arc::new(rollball_core::logging::SizeRollingFileAppender::new(
         log_dir,
         if log_file_size_mb > 0 { log_file_size_mb } else { 10 },
-    );
+        max_file_count,
+    ));
+    // Store for dynamic log file count updates
+    let _ = FILE_APPENDER.set(file_appender.clone());
     let (filter, handle) = reload::Layer::new(env_filter);
 
     // Stderr layer (for terminal output, compact format, no colors)
@@ -282,6 +292,17 @@ fn init_tracing(level: &str, log_file_size_mb: u64) -> Option<crate::LogReloadHa
         .init();
 
     Some(handle)
+}
+
+/// Dynamically update the Gateway's own log file maximum count.
+/// Immediately enforces the limit by deleting the oldest files
+/// from the Gateway log directory.
+pub(crate) fn update_log_file_count(count: u64) {
+    if let Some(appender) = FILE_APPENDER.get() {
+        let max = if count > 0 { count as usize } else { 0 };
+        appender.set_max_file_count(max);
+        tracing::info!(log_file_count = count, "Gateway log file count updated dynamically");
+    }
 }
 
 // Re-export from rollball-core (shared with Agent Runtime)

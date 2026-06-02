@@ -34,6 +34,8 @@ pub struct ConfigResponse {
     pub log_level: String,
     /// Log file maximum size in MB (0 = disabled, default 10)
     pub log_file_size_mb: u64,
+    /// Maximum number of log files to keep (0 = unlimited, default 20)
+    pub log_file_count: u64,
     pub idle_timeout_secs: u64,
     pub dev_mode: bool,
     pub http: HttpConfigResponse,
@@ -65,6 +67,9 @@ pub struct UpdateConfigRequest {
     /// Log file maximum size in megabytes (0 = disable split)
     #[serde(default)]
     pub log_file_size_mb: Option<u64>,
+    /// Maximum number of log files to keep (0 = unlimited)
+    #[serde(default)]
+    pub log_file_count: Option<u64>,
     /// Idle timeout in seconds
     #[serde(default)]
     pub idle_timeout_secs: Option<u64>,
@@ -114,6 +119,7 @@ pub async fn get_config(
         default_provider: config.default_provider.clone(),
         default_model: config.default_model.clone(),
         max_output_tokens_limit: config.max_output_tokens_limit,
+        log_file_count: config.log_file_count,
         log_file_size_mb: config.log_file_size_mb,
     }))
 }
@@ -155,6 +161,9 @@ pub async fn update_config(
         }
         updates.push(format!("log_file_size_mb={}", size));
     }
+    if let Some(count) = body.log_file_count {
+        updates.push(format!("log_file_count={}", count));
+    }
 
     if updates.is_empty() {
         return Err(ApiError::bad_request("No configuration fields to update"));
@@ -191,8 +200,48 @@ pub async fn update_config(
         if let Some(size) = body.log_file_size_mb {
             config.log_file_size_mb = size;
         }
+        if let Some(count) = body.log_file_count {
+            config.log_file_count = count;
+        }
     }
+    let config_snapshot = gw.config.clone();
     drop(gw);
+
+    // Persist config to disk (so changes survive Gateway restart)
+    if let Some(ref cfg) = config_snapshot {
+        if let Err(e) = cfg.save() {
+            tracing::warn!("Failed to persist configuration: {}", e);
+        }
+    }
+
+    // Apply log file count change immediately
+    if let Some(count) = body.log_file_count {
+        // 1. Update Gateway's own file appender
+        crate::cli::update_log_file_count(count);
+
+        // 2. Push to all connected Runtime agents
+        if let Some(session_mgr) = &state.session_mgr {
+            let mgr = session_mgr.lock().await;
+            let agent_ids: Vec<String> = {
+                let gw = state.gateway_state.read().await;
+                gw.running_agents.keys().cloned().collect()
+            };
+            for agent_id in agent_ids {
+                if let Some((_conn_id, session)) = mgr.find_by_agent_id(&agent_id) {
+                    let push_result = session.push_message(
+                        rollball_core::protocol::GatewayResponse::LogFileCountUpdate {
+                            log_file_count: count,
+                        }
+                    ).await;
+                    if push_result {
+                        tracing::info!(agent = %agent_id, "Pushed LogFileCountUpdate to Runtime");
+                    } else {
+                        tracing::warn!(agent = %agent_id, "Failed to push LogFileCountUpdate (channel closed)");
+                    }
+                }
+            }
+        }
+    }
 
     // Apply log level change immediately via tracing reload
     if let Some(level) = &body.log_level {
@@ -351,6 +400,7 @@ mod tests {
             default_model: Some("deepseek-chat".to_string()),
             max_output_tokens_limit: 32768,
             log_file_size_mb: 10,
+            log_file_count: 20,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("19876"));
