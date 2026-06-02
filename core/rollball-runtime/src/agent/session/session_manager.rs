@@ -22,6 +22,7 @@ use crate::agent::session::session_handle::SessionHandle;
 use crate::agent::session::session_task::{SessionMessage, SessionTask};
 use crate::agent::session_state::{SessionState, SessionStatus};
 use crate::conversation::ConversationSession;
+use crate::debug::controller::DebugController;
 use crate::error::{Result, RuntimeError};
 use crate::tools::mcp_manager::McpManager;
 use crate::tools::workspace_resolver::{WorkspaceResolver, format_workspace_context_for_session};
@@ -151,6 +152,14 @@ struct CachedLLMConfig {
     compact_model: Option<String>,
 }
 
+/// Debug mode handles injected at runtime when Gateway pushes
+/// EnableDebugMode. Stored on SessionManager so that sessions
+/// created *after* debug mode is enabled inherit the debug
+/// controller, event sender, and notify handles.
+///
+/// Re-exported from `crate::debug::DebugHandles` for convenience.
+use crate::debug::DebugHandles;
+
 /// Lifecycle manager for multiple concurrent sessions.
 ///
 /// Owns a shared `Arc<AgentCore>` template and creates `SessionTask`s
@@ -174,10 +183,6 @@ pub struct SessionManager {
     /// Cached LLM config from LLMConfigDelivery (provider params, caps, limit)
     /// that must be re-applied to every newly created session.
     cached_llm: Option<CachedLLMConfig>,
-    /// The currently active session ID — used as the default routing target
-    /// when an incoming message does not specify an explicit session_id.
-    /// Owned here (not in cli.rs) so SessionManager is the single source of truth.
-    current_session_id: String,
     /// MCP tool wrappers, built when MCP servers are connected.
     /// Merged into each new session's tools at creation time.
     mcp_tools: Option<Vec<Arc<dyn Tool>>>,
@@ -194,14 +199,21 @@ pub struct SessionManager {
     /// Default workspace ID for new sessions (no persisted workspace).
     /// Falls back to "__agent_home__" when no last_active workspace is set.
     default_workspace_id: String,
+    /// Runtime-injected debug handles (set when Gateway pushes EnableDebugMode).
+    /// When Some, new sessions inherit the debug controller, event sender,
+    /// and notify handles. Existing sessions restart via urgent_interrupt
+    /// and pick up these handles on their next agent_loop.run().
+    pub(crate) runtime_debug_handles: Option<DebugHandles>,
+    /// Per-session debug controllers, shared with DebugProtocolServer for
+    /// request routing. Each session adds its controller when created with
+    /// debug mode active.
+    pub(crate) debug_controllers:
+        Arc<tokio::sync::RwLock<HashMap<String, Arc<tokio::sync::Mutex<DebugController>>>>>,
 }
 
 impl SessionManager {
-    /// Create a new SessionManager with the given shared core, config, and initial session ID.
-    ///
-    /// The `initial_session_id` is set as the current active session for routing
-    /// messages that don't specify an explicit session_id.
-    pub fn new(core: Arc<AgentCore>, config: SessionManagerConfig, initial_session_id: String) -> Self {
+    /// Create a new SessionManager with the given shared core and config.
+    pub fn new(core: Arc<AgentCore>, config: SessionManagerConfig) -> Self {
         Self {
             core,
             sessions: HashMap::new(),
@@ -209,12 +221,13 @@ impl SessionManager {
             runtime_overrides: RuntimeConfigOverrides::default(),
             workspace_context: None,
             cached_llm: None,
-            current_session_id: initial_session_id,
             mcp_tools: None,
             mcp_manager: McpManager::new(),
             session_workspaces: HashMap::new(),
             pending_workspaces: HashMap::new(),
             default_workspace_id: "__agent_home__".to_string(),
+            runtime_debug_handles: None,
+            debug_controllers: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -277,6 +290,11 @@ impl SessionManager {
             session_state.set_provider(p.clone());
         }
 
+        // Shared channel for bypass-injecting debug handles into AgentCore
+        // while the agent loop is running (its message channel is blocked).
+        let pending_debug_handles: Arc<tokio::sync::Mutex<Option<DebugHandles>>> =
+            Arc::new(tokio::sync::Mutex::new(None));
+
         let (mut task, agent_inbound_tx) = SessionTask::new(
             self.core.clone(),
             session_state,
@@ -288,6 +306,8 @@ impl SessionManager {
             self.config.identity_context.clone(),
             self.config.protocol_type.clone(),
             self.mcp_tools.clone(),
+            self.runtime_debug_handles.clone(),
+            pending_debug_handles.clone(),
         );
 
         // ADR-014: Create watch channel for session status
@@ -306,6 +326,7 @@ impl SessionManager {
             join_handle,
             status_rx,
             last_active_at: std::sync::Mutex::new(std::time::Instant::now()),
+            pending_debug_handles: pending_debug_handles.clone(),
         };
 
         self.sessions.insert(session_id.clone(), handle);
@@ -917,42 +938,23 @@ impl SessionManager {
         }
     }
 
-    /// Get the current session ID (used as the default routing target).
-    pub fn current_session_id(&self) -> &str {
-        &self.current_session_id
-    }
-
-    /// Set the current session ID (called when the user activates a session).
-    pub fn set_current_session_id(&mut self, session_id: String) {
-        tracing::info!(
-            old_session_id = %self.current_session_id,
-            new_session_id = %session_id,
-            "SessionManager: current session updated"
-        );
-        self.current_session_id = session_id;
-    }
-
-    /// Resolve the target session ID for an incoming message.
+    /// Extract the target session ID from request params.
     ///
-    /// If `explicit_id` is Some and non-empty, use it; otherwise fall back
-    /// to the current session ID. This replaces the scattered logic in
-    /// cli.rs that was doing the same thing inline.
-    ///
-    /// Returns `None` when both explicit_id and current_session_id are
-    /// absent/empty (e.g. before any session has been created).
-    pub fn resolve_target_session(&self, explicit_id: Option<&str>) -> Option<String> {
-        explicit_id
+    /// Every message MUST carry an explicit `session_id` — the backend is
+    /// stateless with respect to "which session is current".  Returns an
+    /// error when `session_id` is missing or empty so the caller can
+    /// reject the message cleanly.
+    pub fn require_session_id(params: &serde_json::Value) -> Result<String> {
+        params
+            .get("session_id")
+            .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
-            .or_else(|| {
-                if self.current_session_id.is_empty() {
-                    tracing::warn!(
-                        "resolve_target_session: no explicit session_id and current_session_id is empty — no session created yet?"
-                    );
-                    None
-                } else {
-                    Some(self.current_session_id.clone())
-                }
+            .ok_or_else(|| {
+                RuntimeError::Config(
+                    "Missing or empty session_id parameter — every message must carry a session_id"
+                        .to_string(),
+                )
             })
     }
 
@@ -961,19 +963,14 @@ impl SessionManager {
     /// A session is evicted when ALL of the following conditions are met:
     /// 1. Its status is `Idle` (not Streaming/WaitingApproval/Paused)
     /// 2. It has been idle for longer than `idle_timeout`
-    /// 3. It is NOT the current active session
     ///
     /// Eviction destroys the in-memory SessionTask but leaves the JSONL
     /// file on disk. The session can be re-activated later via lazy resume
     /// in the `activate_session` handler.
     pub async fn evict_idle_sessions(&mut self, idle_timeout: std::time::Duration) {
-        let current = self.current_session_id.clone();
         let mut to_evict = Vec::new();
 
         for (session_id, handle) in &self.sessions {
-            if *session_id == current {
-                continue;
-            }
             if handle.status() != SessionStatus::Idle {
                 continue;
             }
@@ -1118,6 +1115,109 @@ impl SessionManager {
     pub fn pending_workspace_id(&self, session_id: &str) -> Option<&str> {
         self.pending_workspaces.get(session_id).map(|s| s.as_str())
     }
+
+    /// Fire the urgent_interrupt notify to cancel all in-flight tool/LLM
+    /// execution across all sessions. Uses notify_waiters() to wake every
+    /// waiter — since the Notify is shared across all sessions via Arc::clone,
+    /// notify_one() would only wake a single waiter.
+    /// This is a no-op in standalone mode (where urgent_interrupt is None on
+    /// the template core).
+    pub(crate) fn fire_urgent_interrupt(&self) {
+        if let Some(ref urgent) = self.core.urgent_interrupt {
+            urgent.notify_waiters();
+            tracing::info!("SessionManager: urgent_interrupt fired (all waiters)");
+        }
+    }
+
+    /// Initialize debug mode at runtime (called when Gateway pushes EnableDebugMode).
+    ///
+    /// Starts a DebugProtocolServer on `debug_port` and stores the resulting
+    /// controller, event sender, and notify handles. Then pushes the handles
+    /// to all existing sessions via `SessionMessage::EnableDebugMode` so they
+    /// can start emitting debug events immediately, without a restart.
+    pub async fn enable_debug_mode(&mut self, debug_port: u32) {
+        // Avoid double-init: if debug handles are already set, skip.
+        if self.runtime_debug_handles.is_some() {
+            tracing::warn!(
+                debug_port = debug_port,
+                "enable_debug_mode: debug handles already set, skipping"
+            );
+            return;
+        }
+
+        let port = debug_port as u16;
+        let debug_server = crate::debug::server::DebugProtocolServer::new(
+            port,
+            self.debug_controllers.clone(),
+        );
+        let debug_event_tx = debug_server.start().await;
+
+        // Create debug controllers for ALL existing sessions and register
+        // them in the shared debug_controllers map. New sessions created
+        // while debug mode is active register their own controllers at
+        // creation time via pending_debug_handles.
+        {
+            let session_ids: Vec<String> = self.sessions.keys().cloned().collect();
+            let mut controllers = self.debug_controllers.write().await;
+            for sid in session_ids {
+                let debug_ctrl = Arc::new(tokio::sync::Mutex::new(DebugController::new()));
+                controllers.insert(sid, debug_ctrl);
+            }
+        }
+
+        // Build handles from the first session's controller (all sessions
+        // share the same event_tx and notify handles via DebugHandles).
+        let debug_ctrl = Arc::new(tokio::sync::Mutex::new(DebugController::new()));
+        let rewind_notify = {
+            let guard = debug_ctrl.lock().await;
+            guard.rewind_notify_handle()
+        };
+        let resume_notify = {
+            let guard = debug_ctrl.lock().await;
+            guard.resume_notify_handle()
+        };
+
+        let handles = DebugHandles {
+            debug_ctrl,
+            debug_event_tx,
+            rewind_notify,
+            resume_notify,
+        };
+        self.runtime_debug_handles = Some(handles.clone());
+
+        tracing::info!(
+            port = port,
+            "enable_debug_mode: debug server started, handles stored for future sessions"
+        );
+
+        // Push debug handles to all existing sessions so their AgentCore
+        // gets debug_ctrl/debug_event_tx injected. Without this, existing
+        // sessions would continue without debug instrumentation while the
+        // DebugProtocolServer would show iteration:0 forever.
+        self.push_debug_mode_to_existing_sessions().await;
+    }
+
+    /// Push EnableDebugMode to every existing session so they inject the
+    /// debug handles into their AgentCore without a restart.
+    async fn push_debug_mode_to_existing_sessions(&self) {
+        let Some(ref handles) = self.runtime_debug_handles else {
+            return;
+        };
+        for (sid, session_handle) in &self.sessions {
+            let msg = SessionMessage::EnableDebugMode(handles.clone());
+            if session_handle.inbound_tx.send(msg).await.is_err() {
+                tracing::warn!(
+                    session_id = %sid,
+                    "SessionManager: failed to push EnableDebugMode to session (channel closed)"
+                );
+            } else {
+                tracing::info!(
+                    session_id = %sid,
+                    "SessionManager: pushed EnableDebugMode to existing session"
+                );
+            }
+        }
+    }
 }
 
 /// Format a `UserProfile` into an identity context text block for the LLM system prompt.
@@ -1230,7 +1330,7 @@ mod tests {
         let mut mgr_config = SessionManagerConfig::default();
         mgr_config.full_tool_specs = vec![make_tool_spec("tool_a"), make_tool_spec("tool_b")];
 
-        let mut mgr = SessionManager::new(core, mgr_config, String::new());
+        let mut mgr = SessionManager::new(core, mgr_config);
 
         // Apply active_tools
         let failed = mgr.apply_active_tools(Some(vec!["tool_a".to_string()]));
@@ -1260,7 +1360,7 @@ mod tests {
         let core = Arc::new(AgentCore::new(config, manifest, provider, vec![], None));
 
         let mgr_config = SessionManagerConfig::default();
-        let mut mgr = SessionManager::new(core, mgr_config, String::new());
+        let mut mgr = SessionManager::new(core, mgr_config);
 
         // apply_active_tools(None) should return empty and not crash
         let failed = mgr.apply_active_tools(None);
@@ -1289,7 +1389,7 @@ mod tests {
 
         let mut mgr_config = SessionManagerConfig::default();
         mgr_config.full_tool_specs = vec![make_tool_spec("tool_x")];
-        let mut mgr = SessionManager::new(core, mgr_config, String::new());
+        let mut mgr = SessionManager::new(core, mgr_config);
 
         // Create a session first
         let sid = mgr.create_session_with_id("s1".to_string()).await.unwrap();
@@ -1300,9 +1400,9 @@ mod tests {
         assert!(failed.is_empty());
     }
 
-    // ── resolve_target_session ─────────────────────────────────────────
+    // ── require_session_id ─────────────────────────────────────────────
 
-    fn make_manager_with_current_id(current_id: &str) -> SessionManager {
+    fn make_manager() -> SessionManager {
         let manifest = rollball_core::AgentManifest::from_toml(
             r#"
             agent_id = "com.test.resolve"
@@ -1319,36 +1419,27 @@ mod tests {
         let config = RuntimeConfig::default();
         let provider = Arc::new(MockProvider::single_text("OK"));
         let core = Arc::new(AgentCore::new(config, manifest, provider, vec![], None));
-        SessionManager::new(core, SessionManagerConfig::default(), current_id.to_string())
+        SessionManager::new(core, SessionManagerConfig::default())
     }
 
     #[test]
-    fn test_resolve_target_session_explicit_id_wins() {
-        let mgr = make_manager_with_current_id("current-sid");
-        assert_eq!(mgr.resolve_target_session(Some("explicit-sid")), Some("explicit-sid".to_string()));
+    fn test_require_session_id_valid() {
+        let params = serde_json::json!({ "session_id": "test-sid" });
+        assert_eq!(
+            SessionManager::require_session_id(&params).unwrap(),
+            "test-sid"
+        );
     }
 
     #[test]
-    fn test_resolve_target_session_empty_explicit_falls_back() {
-        let mgr = make_manager_with_current_id("current-sid");
-        assert_eq!(mgr.resolve_target_session(Some("")), Some("current-sid".to_string()));
+    fn test_require_session_id_missing() {
+        let params = serde_json::json!({});
+        assert!(SessionManager::require_session_id(&params).is_err());
     }
 
     #[test]
-    fn test_resolve_target_session_none_falls_back() {
-        let mgr = make_manager_with_current_id("current-sid");
-        assert_eq!(mgr.resolve_target_session(None), Some("current-sid".to_string()));
-    }
-
-    #[test]
-    fn test_resolve_target_session_both_empty_returns_none() {
-        let mgr = make_manager_with_current_id("");
-        assert_eq!(mgr.resolve_target_session(None), None);
-    }
-
-    #[test]
-    fn test_resolve_target_session_empty_explicit_and_empty_current_returns_none() {
-        let mgr = make_manager_with_current_id("");
-        assert_eq!(mgr.resolve_target_session(Some("")), None);
+    fn test_require_session_id_empty() {
+        let params = serde_json::json!({ "session_id": "" });
+        assert!(SessionManager::require_session_id(&params).is_err());
     }
 }

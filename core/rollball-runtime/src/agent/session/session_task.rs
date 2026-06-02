@@ -16,6 +16,7 @@ use crate::agent::context::ContextBuilder;
 use crate::agent::inbound::InboundMessage;
 use crate::agent::loop_::{AgentLoop, ChunkEvent, SessionChunkEvent};
 use crate::agent::session_state::SessionState;
+use crate::debug::DebugHandles;
 use crate::debug::controller::DebugController;
 
 /// Messages that can be sent to a SessionTask.
@@ -85,6 +86,11 @@ pub enum SessionMessage {
     UpdateIdentityContext { identity_context: Option<String> },
     /// Interrupt signal to stop the current agent loop iteration
     Interrupt { reason: String },
+    /// Enable debug mode at runtime (after Gateway pushes EnableDebugMode).
+    /// Carries the DebugController, event sender, and notify handles so the
+    /// SessionTask can inject them into its AgentCore and start emitting
+    /// debug events without a process restart.
+    EnableDebugMode(DebugHandles),
     /// Stop the session gracefully
     Stop,
 }
@@ -154,6 +160,7 @@ impl std::fmt::Debug for SessionMessage {
                 .debug_struct("Interrupt")
                 .field("reason", reason)
                 .finish(),
+            SessionMessage::EnableDebugMode(_) => f.debug_tuple("EnableDebugMode").finish(),
             SessionMessage::Stop => f.debug_tuple("Stop").finish(),
         }
     }
@@ -230,19 +237,35 @@ impl SessionTask {
         identity_context: Option<String>,
         protocol_type: rollball_core::protocol::ProtocolType,
         mcp_tools: Option<Vec<Arc<dyn Tool>>>,
+        runtime_debug: Option<DebugHandles>,
+        pending_debug_handles: Arc<tokio::sync::Mutex<Option<DebugHandles>>>,
     ) -> (Self, mpsc::Sender<InboundMessage>) {
         // Build the AgentLoop eagerly so its inbound sender can be exposed.
         // Heavy fields (provider, tools) are Arc-cloned (refcount only).
-        // Extract debug_ctrl, rewind_notify, and resume_notify from the original
-        // core BEFORE clone_for_session — both the AgentLoop (via clone_for_session)
-        // and SessionTask hold an Arc to the same DebugController and Notify handles.
-        let debug_ctrl = core.debug_ctrl().cloned();
-        let rewind_notify = core.debug_rewind_notify().cloned();
-        let resume_notify = core.debug_resume_notify().cloned();
         let mut core_for_session = core.clone_for_session(chunk_tx.clone(), session_id.clone());
         // Set MCP tools and rebuild the merged dispatch list
         core_for_session.mcp_tools = mcp_tools;
         core_for_session.rebuild_all_tools();
+
+        // Inject the shared pending-debug-handles channel so SessionManager
+        // can bypass the message queue when enabling debug mode on a running
+        // session (whose message loop is blocked on agent_loop.run().await).
+        core_for_session.pending_debug_handles = Some(pending_debug_handles);
+
+        // Inject runtime debug handles into the session's core if provided.
+        // This enables debug mode on sessions created AFTER Gateway pushes
+        // EnableDebugMode, without requiring a process restart.
+        if let Some(handles) = runtime_debug {
+            core_for_session.set_debug_mode(
+                handles.debug_ctrl,
+                handles.debug_event_tx,
+                handles.rewind_notify,
+                handles.resume_notify,
+            );
+        }
+        let debug_ctrl = core_for_session.debug_ctrl().cloned();
+        let rewind_notify = core_for_session.debug_rewind_notify().cloned();
+        let resume_notify = core_for_session.debug_resume_notify().cloned();
         let (agent_loop, agent_inbound_tx) =
             AgentLoop::from_core_and_session(core_for_session, session);
 
@@ -274,9 +297,9 @@ impl SessionTask {
         let Self {
             mut agent_loop,
             agent_inbound_tx,
-            debug_ctrl,
-            rewind_notify,
-            resume_notify,
+            mut debug_ctrl,
+            mut rewind_notify,
+            mut resume_notify,
             session_id,
             chunk_tx,
             mut inbound_rx,
@@ -586,6 +609,13 @@ impl SessionTask {
                         }
                     }
 
+                    // Check for bypass-injected debug handles before each agent
+                    // loop run. This covers the idle-session case where the
+                    // message loop is not blocked and EnableDebugMode arrives
+                    // between runs (handled by the existing EnableDebugMode arm),
+                    // but is a safety net if handles arrive during an idle window.
+                    agent_loop.core.check_and_apply_pending_debug();
+
                     match agent_loop.run(&enriched_content, &mut context_builder, content_parts).await {
                         Ok(response) => {
                             tracing::info!(
@@ -774,6 +804,32 @@ impl SessionTask {
                         "SessionTask: forwarding interrupt signal"
                     );
                     let _ = agent_inbound_tx.send(crate::agent::inbound::InboundMessage::Interrupt { reason }).await;
+                }
+                Some(SessionMessage::EnableDebugMode(handles)) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        "SessionTask: injecting debug mode into existing session"
+                    );
+                    // Inject debug controller, event sender, and notify handles
+                    // into the AgentCore so the next agent_loop.run() emits debug
+                    // events and the DebugProtocolServer can read state.
+                    // Clone the Arc/UnboundedSender handles first to avoid
+                    // partial-move issues with the owned `handles` binding.
+                    let ctrl = handles.debug_ctrl;
+                    let event_tx = handles.debug_event_tx;
+                    let rewind = handles.rewind_notify;
+                    let resume = handles.resume_notify;
+                    agent_loop.core.set_debug_mode(
+                        ctrl.clone(),
+                        event_tx.clone(),
+                        rewind.clone(),
+                        resume.clone(),
+                    );
+                    // Update the local variables so the select! loop picks up
+                    // the rewind/resume notifies for future iterations.
+                    debug_ctrl = Some(ctrl);
+                    rewind_notify = Some(rewind);
+                    resume_notify = Some(resume);
                 }
                 Some(SessionMessage::Stop) => {
                     tracing::info!(

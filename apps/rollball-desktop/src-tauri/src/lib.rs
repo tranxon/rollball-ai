@@ -40,6 +40,7 @@ pub fn run() {
             commands::agent::uninstall_agent,
             commands::agent::start_agent,
             commands::agent::stop_agent,
+            commands::agent::restart_agent_in_debug,
             commands::agent::clone_agent,
             commands::chat::send_message,
             commands::chat::upload_document,

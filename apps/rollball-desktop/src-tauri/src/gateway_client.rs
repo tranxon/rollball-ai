@@ -147,6 +147,16 @@ impl GatewayClient {
         parse_gateway_response(resp).await
     }
 
+    /// `POST /api/agents/:id/restart-debug`
+    pub async fn restart_agent_in_debug(&self, agent_id: &str) -> Result<GenericMessageResponse> {
+        let resp = self
+            .client
+            .post(format!("{}/api/agents/{}/restart-debug", self.base_url, agent_id))
+            .send()
+            .await?;
+        parse_gateway_response(resp).await
+    }
+
     // ── Clone ──────────────────────────────────────────────────────────
 
     /// `POST /api/agents/:id/clone`

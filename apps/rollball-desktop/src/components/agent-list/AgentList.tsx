@@ -21,7 +21,7 @@ interface AgentListProps {
 }
 
 export function AgentList({ width }: AgentListProps) {
-  const { agents, selectedAgentId, loading, fetchAgents, selectAgent, startAgent, stopAgent, uninstallAgent } =
+  const { agents, selectedAgentId, loading, fetchAgents, selectAgent, startAgent, stopAgent, uninstallAgent, restartAgentInDebug } =
     useAgentStore();
   const sessionTitles = useSessionStore((s) => s.sessionTitles);
   const agentProfiles = useAgentProfileStore((s) => s.profiles);
@@ -172,18 +172,7 @@ export function AgentList({ width }: AgentListProps) {
 
   const handleRestartDebug = async (agentId: string) => {
     try {
-      // Synchronously disconnect the WebSocket and clear chat store state
-      // BEFORE stopping the agent.  This prevents a lingering sending=true
-      // (set by a previous sendMessage) from surviving the restart when
-      // the new connectStream WebSocket creation fails because the Gateway
-      // is not yet ready.
-      const chatStore = useChatStore.getState();
-      chatStore.disconnectStream(agentId);
-
-      await stopAgent(agentId);
-      await startAgent(agentId, true);
-      // Poll until ready, then connect WebSocket
-      waitForAgentReady(agentId, true);
+      await restartAgentInDebug(agentId);
     } catch (e) {
       addToast({ type: "error", message: `Failed to restart in debug: ${String(e)}` });
     }

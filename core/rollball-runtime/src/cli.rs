@@ -7,7 +7,7 @@ use crate::error::{Result, RuntimeError};
 use clap::Parser;
 use rollball_core::protocol::{McpListItem, ProtocolType, ProviderListItem};
 use std::sync::Arc;
-use tokio::sync::Notify;
+
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, reload, util::SubscriberInitExt};
 
 /// Type alias for the reload handle used to dynamically change log level.
@@ -314,41 +314,6 @@ async fn async_main(
 
     // Step 0 (DevMode): Start debug protocol server as early as possible.
     //
-    // The debug WS must be available before the frontend debug panel
-    // tries to connect — which happens immediately after Gateway's
-    // start_agent HTTP response.  By starting the TCP listener here
-    // (before package loading, gRPC, skills, etc.) we eliminate
-    // ~400ms of latency where the debug panel shows "Connecting…".
-    // The debug_ctrl handles are stored and injected into AgentCore
-    // later (after it is created).
-    let mut early_debug_ctrl: Option<
-        Arc<tokio::sync::Mutex<crate::debug::controller::DebugController>>,
-    > = None;
-    let mut early_debug_event_tx: Option<crate::debug::server::DebugEventSender> = None;
-    let mut early_rewind_notify: Option<Arc<Notify>> = None;
-    let mut early_resume_notify: Option<Arc<Notify>> = None;
-    if config.dev_mode {
-        tracing::info!(
-            port = config.debug_port,
-            "DevMode enabled, starting debug protocol server on ws://127.0.0.1:{}",
-            config.debug_port
-        );
-        let debug_server = crate::debug::server::DebugProtocolServer::new(config.debug_port);
-        let (debug_event_tx, debug_ctrl) = debug_server.start().await;
-        let rewind_notify = {
-            let guard = debug_ctrl.lock().await;
-            guard.rewind_notify_handle()
-        };
-        let resume_notify = {
-            let guard = debug_ctrl.lock().await;
-            guard.resume_notify_handle()
-        };
-        early_debug_ctrl = Some(debug_ctrl);
-        early_debug_event_tx = Some(debug_event_tx);
-        early_rewind_notify = Some(rewind_notify);
-        early_resume_notify = Some(resume_notify);
-    }
-
     // Step 1: Load .agent package (before Gateway connection so we know agent_id)
     tracing::info!(path = %config.package_path, "Loading .agent package");
     let loaded = load_package(std::path::Path::new(&config.package_path))?;
@@ -931,22 +896,6 @@ async fn async_main(
             c.init_memory_store(work_dir_path);
         }
 
-        // Inject debug controller into AgentCore (server was started in Step 0)
-        if let Some(c) = Arc::get_mut(&mut core) {
-            if let (
-                Some(debug_ctrl),
-                Some(debug_event_tx),
-                Some(rewind_notify),
-                Some(resume_notify),
-            ) = (
-                early_debug_ctrl.take(),
-                early_debug_event_tx.take(),
-                early_rewind_notify.take(),
-                early_resume_notify.take(),
-            ) {
-                c.set_debug_mode(debug_ctrl, debug_event_tx, rewind_notify, resume_notify);
-            }
-        }
 
         let session_manager_config = SessionManagerConfig {
             inbound_channel_capacity: 64,
@@ -959,7 +908,7 @@ async fn async_main(
             identity_context: identity_context_for_session,
             protocol_type: protocol_type.clone(),
         };
-        let mut session_manager = SessionManager::new(core, session_manager_config, String::new());
+        let mut session_manager = SessionManager::new(core, session_manager_config);
 
         // Set the default workspace for new sessions from last_active in agent_workspaces.json
         // This makes new sessions inherit the user's last selected workspace instead of agent home.
@@ -994,7 +943,6 @@ async fn async_main(
         } else {
             session_manager.create_session().await?
         };
-        session_manager.set_current_session_id(initial_session_id.clone());
         tracing::info!(initial_session_id = %initial_session_id, "Initial session created");
 
         // If the resumed session's provider differs from the startup-resolved
@@ -1839,16 +1787,252 @@ async fn process_gateway_recv(
                 } => {
                     tracing::info!("Received intent from {}: {}", from, action);
 
-                    // Determine target session: explicit session_id param > current_session_id
-                    let target_session_id = match session_manager
-                        .resolve_target_session(params.get("session_id").and_then(|v| v.as_str()))
-                    {
-                        Some(sid) => sid,
+                    // ── Session management actions (no session_id required) ──
+                    // These handle session lifecycle and carry their own target
+                    // resolution.  Handle them BEFORE the routing block so
+                    // create_session / list_sessions don't fail the
+                    // require_session_id check.
 
-                        None => {
+                    if action == "list_sessions" {
+                        handle_list_sessions(work_dir, grpc_client, &params, &session_manager)
+                            .await;
+                        return LoopAction::Continue;
+                    }
+
+                    if action == "get_session_messages" {
+                        handle_get_session_messages(work_dir, grpc_client, &params).await;
+                        return LoopAction::Continue;
+                    }
+
+                    if action == "create_session" {
+                        let request_id = params
+                            .get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        // ADR-012: Accept initial per-session metadata from frontend.
+                        let initial_workspace = params.get("workspace_id").and_then(|v| v.as_str());
+                        let initial_model = params.get("model").and_then(|v| v.as_str());
+                        let initial_provider = params.get("provider").and_then(|v| v.as_str());
+                        let new_session_id = crate::conversation::generate_session_id();
+                        match crate::conversation::ConversationSession::new(
+                            std::path::Path::new(work_dir),
+                            &new_session_id,
+                            crate::conversation::SessionConfig {
+                                agent_id: agent_id_for_reconnect.to_string(),
+                                workspace_id: initial_workspace.map(|s| s.to_string()),
+                                model: initial_model.map(|s| s.to_string()),
+                                provider: initial_provider.map(|s| s.to_string()),
+                            },
+                        ) {
+                            Ok(new_session) => {
+                                if let Err(e) = session_manager
+                                    .create_session_with_id_and_conversation(
+                                        new_session_id.clone(),
+                                        Some(new_session),
+                                    )
+                                    .await
+                                {
+                                    tracing::error!("Failed to create session: {}", e);
+                                    let data = serde_json::json!({ "error": format!("Failed to create session: {}", e) });
+                                    send_session_response(grpc_client, &request_id, data).await;
+                                } else {
+                                    tracing::info!(new_session_id = %new_session_id, "Created new session via Gateway request");
+                                    let data = serde_json::json!({ "session_id": new_session_id });
+                                    send_session_response(grpc_client, &request_id, data).await;
+                                }
+                            }
+
+                            Err(e) => {
+                                tracing::error!("Failed to create new session: {}", e);
+                                let data = serde_json::json!({ "error": format!("Failed to create session: {}", e) });
+                                send_session_response(grpc_client, &request_id, data).await;
+                            }
+                        }
+
+                        return LoopAction::Continue;
+                    }
+
+                    if action == "activate_session" {
+                        let request_id = params
+                            .get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+                            Some(sid) if !sid.is_empty() => sid.to_string(),
+
+                            _ => {
+                                let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+                        };
+
+                        // Check if session is already in memory
+                        if session_manager.get_session(&session_id).is_none() {
+                            // Session is not in memory — try lazy resume from disk.
+                            let conversations_dir =
+                                std::path::Path::new(work_dir).join("conversations");
+                            let file_path =
+                                conversations_dir.join(format!("{}.jsonl", session_id));
+                            match crate::conversation::ConversationSession::resume(
+                                std::path::Path::new(work_dir),
+                                &session_id,
+                            ) {
+                                Ok(conv) => {
+                                    match session_manager
+                                        .create_session_with_id_and_conversation(
+                                            session_id.clone(),
+                                            Some(conv),
+                                        )
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            tracing::info!(session_id = %session_id, "Lazy-resumed session from disk on activate");
+                                        }
+
+                                        Err(e) => {
+                                            tracing::error!(session_id = %session_id, error = %e, "Failed to create session task for lazy-resumed session");
+                                            let data = serde_json::json!({ "error": format!("Failed to activate session: {}", e) });
+                                            send_session_response(grpc_client, &request_id, data)
+                                                .await;
+                                            return LoopAction::Continue;
+                                        }
+                                    }
+                                }
+
+                                Err(e) => {
+                                    tracing::warn!(session_id = %session_id, error = %e, "Session JSONL not found on disk, cannot activate");
+                                    let data = serde_json::json!({ "error": format!("Session not found: {}", session_id) });
+                                    send_session_response(grpc_client, &request_id, data).await;
+                                    return LoopAction::Continue;
+                                }
+                            }
+                        }
+
+                        // Read session metadata from JSONL to return model/provider/workspace_id
+                        // to the frontend in the activation response, so it can populate the UI
+                        // immediately without waiting for a WS event.
+                        let (session_model, session_provider, session_workspace_id) = {
+                            let conversations_dir =
+                                std::path::Path::new(work_dir).join("conversations");
+                            let file_path =
+                                conversations_dir.join(format!("{}.jsonl", session_id));
+                            match crate::conversation::read_session_metadata(&file_path) {
+                                Ok(meta) => (meta.model, meta.provider, meta.workspace_id),
+                                Err(_) => (None, None, None),
+                            }
+                        };
+
+                        let data = serde_json::json!({
+                            "session_id": session_id,
+                            "activated": true,
+                            "model": session_model,
+                            "provider": session_provider,
+                            "workspace_id": session_workspace_id,
+                        });
+                        send_session_response(grpc_client, &request_id, data).await;
+                        return LoopAction::Continue;
+                    }
+
+                    if action == "delete_session" {
+                        let request_id = params
+                            .get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+                            Some(sid) if !sid.is_empty() => sid.to_string(),
+
+                            _ => {
+                                let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+                        };
+
+                        // Delete the JSONL file
+                        let conversations_dir =
+                            std::path::Path::new(work_dir).join("conversations");
+                        let file_path = conversations_dir.join(format!("{}.jsonl", session_id));
+                        if file_path.exists() {
+                            if let Err(e) = std::fs::remove_file(&file_path) {
+                                tracing::error!(session_id = %session_id, error = %e, "Failed to delete session file");
+                                let data = serde_json::json!({ "error": format!("Failed to delete session: {}", e) });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+
+                            tracing::info!(session_id = %session_id, "Deleted session JSONL file");
+                        }
+
+                        // Destroy the session task
+                        if let Err(e) = session_manager.destroy_session(&session_id).await {
+                            tracing::warn!("Failed to destroy session {}: {}", session_id, e);
+                        }
+
+                        let data = serde_json::json!({
+                            "deleted": true,
+                            "session_id": session_id,
+                        });
+                        send_session_response(grpc_client, &request_id, data).await;
+                        return LoopAction::Continue;
+                    }
+
+                    if action == "update_session_title" {
+                        let request_id = params
+                            .get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let title = match params.get("title").and_then(|v| v.as_str()) {
+                            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+
+                            _ => {
+                                let data = serde_json::json!({ "error": "Missing or empty title parameter" });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+                        };
+                        let target_sid = match params.get("session_id").and_then(|v| v.as_str()) {
+                            Some(sid) if !sid.is_empty() => sid.to_string(),
+                            _ => {
+                                let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+                        };
+                        if let Err(e) = session_manager.send_to_session(
+                            &target_sid,
+                            SessionMessage::UpdateSessionTitle {
+                                title: title.clone(),
+                            },
+                        ) {
+                            tracing::warn!("Failed to route update_session_title: {}", e);
+                            let data = serde_json::json!({ "error": format!("Session not found: {}", target_sid) });
+                            send_session_response(grpc_client, &request_id, data).await;
+                        } else {
+                            let data = serde_json::json!({
+                                "session_id": target_sid,
+                                "title": title,
+                                "updated": true,
+                            });
+                            send_session_response(grpc_client, &request_id, data).await;
+                        }
+
+                        return LoopAction::Continue;
+                    }
+
+                    // ── All remaining actions MUST carry session_id ──
+                    // Determine target session: every message MUST carry session_id.
+                    let target_session_id = match SessionManager::require_session_id(&params) {
+                        Ok(sid) => sid,
+                        Err(e) => {
                             tracing::warn!(
-                                "No target session resolved for action={}, skipping",
-                                action
+                                error = %e,
+                                action = %action,
+                                "Missing session_id in message, skipping"
                             );
                             return LoopAction::Continue;
                         }
@@ -2053,289 +2237,6 @@ async fn process_gateway_recv(
                             }
                         }
 
-                        return LoopAction::Continue;
-                    }
-
-                    // S1.14: Session query actions from Gateway HTTP API
-                    if action == "list_sessions" {
-                        handle_list_sessions(work_dir, grpc_client, &params, &session_manager)
-                            .await;
-                        return LoopAction::Continue;
-                    }
-
-                    if action == "get_session_messages" {
-                        handle_get_session_messages(work_dir, grpc_client, &params).await;
-                        return LoopAction::Continue;
-                    }
-
-                    if action == "create_session" {
-                        let request_id = params
-                            .get("request_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        // ADR-012: Accept initial per-session metadata from frontend.
-                        let initial_workspace = params.get("workspace_id").and_then(|v| v.as_str());
-                        let initial_model = params.get("model").and_then(|v| v.as_str());
-                        let initial_provider = params.get("provider").and_then(|v| v.as_str());
-                        let new_session_id = crate::conversation::generate_session_id();
-                        match crate::conversation::ConversationSession::new(
-                            std::path::Path::new(work_dir),
-                            &new_session_id,
-                            crate::conversation::SessionConfig {
-                                agent_id: agent_id_for_reconnect.to_string(),
-                                workspace_id: initial_workspace.map(|s| s.to_string()),
-                                model: initial_model.map(|s| s.to_string()),
-                                provider: initial_provider.map(|s| s.to_string()),
-                            },
-                        ) {
-                            Ok(new_session) => {
-                                if let Err(e) = session_manager
-                                    .create_session_with_id_and_conversation(
-                                        new_session_id.clone(),
-                                        Some(new_session),
-                                    )
-                                    .await
-                                {
-                                    tracing::error!("Failed to create session: {}", e);
-                                    let data = serde_json::json!({ "error": format!("Failed to create session: {}", e) });
-                                    send_session_response(grpc_client, &request_id, data).await;
-                                } else {
-                                    session_manager.set_current_session_id(new_session_id.clone());
-                                    tracing::info!(new_session_id = %new_session_id, "Created new session via Gateway request");
-                                    let data = serde_json::json!({ "session_id": new_session_id });
-                                    send_session_response(grpc_client, &request_id, data).await;
-                                }
-                            }
-
-                            Err(e) => {
-                                tracing::error!("Failed to create new session: {}", e);
-                                let data = serde_json::json!({ "error": format!("Failed to create session: {}", e) });
-                                send_session_response(grpc_client, &request_id, data).await;
-                            }
-                        }
-
-                        return LoopAction::Continue;
-                    }
-
-                    if action == "get_current_session_id" {
-                        handle_get_current_session_id(
-                            grpc_client,
-                            &params,
-                            session_manager.current_session_id(),
-                        )
-                        .await;
-                        return LoopAction::Continue;
-                    }
-
-                    if action == "activate_session" {
-                        let request_id = params
-                            .get("request_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
-                            Some(sid) if !sid.is_empty() => sid.to_string(),
-
-                            _ => {
-                                let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
-                                send_session_response(grpc_client, &request_id, data).await;
-                                return LoopAction::Continue;
-                            }
-                        };
-
-                        // Evict idle sessions before activating — amortized cleanup
-                        // that runs on every session switch without a separate timer.
-                        session_manager
-                            .evict_idle_sessions(std::time::Duration::from_secs(session_idle_timeout_secs))
-                            .await;
-
-                        // Lazy resume: if the session is not in memory (e.g. a historical
-                        // session that only exists on disk, or one that was just evicted),
-                        // load its JSONL and create a SessionTask so subsequent messages
-                        // can be routed to it.
-                        if session_manager.get_session(&session_id).is_none() {
-                            let work_dir_path = std::path::Path::new(work_dir);
-                            match crate::conversation::ConversationSession::resume(
-                                work_dir_path,
-                                &session_id,
-                            ) {
-                                Ok(conv) => {
-                                    match session_manager
-                                        .create_session_with_id_and_conversation(
-                                            session_id.clone(),
-                                            Some(conv),
-                                        )
-                                        .await
-                                    {
-                                        Ok(_) => {
-                                            tracing::info!(session_id = %session_id, "Lazy-resumed session from disk on activate");
-                                        }
-
-                                        Err(e) => {
-                                            tracing::error!(session_id = %session_id, error = %e, "Failed to create session task for lazy-resumed session");
-                                            let data = serde_json::json!({ "error": format!("Failed to activate session: {}", e) });
-                                            send_session_response(grpc_client, &request_id, data)
-                                                .await;
-                                            return LoopAction::Continue;
-                                        }
-                                    }
-                                }
-
-                                Err(e) => {
-                                    tracing::warn!(session_id = %session_id, error = %e, "Session JSONL not found on disk, cannot activate");
-                                    let data = serde_json::json!({ "error": format!("Session not found: {}", session_id) });
-                                    send_session_response(grpc_client, &request_id, data).await;
-                                    return LoopAction::Continue;
-                                }
-                            }
-                        }
-
-                        // In multi-session mode, activation updates current_session_id for routing
-                        session_manager.set_current_session_id(session_id.clone());
-
-                        // Read session metadata from JSONL to return model/provider/workspace_id
-                        // to the frontend in the activation response, so it can populate the UI
-                        // immediately without waiting for a WS event.
-                        let (session_model, session_provider, session_workspace_id) = {
-                            let conversations_dir =
-                                std::path::Path::new(work_dir).join("conversations");
-                            let file_path =
-                                conversations_dir.join(format!("{}.jsonl", session_id));
-                            match crate::conversation::read_session_metadata(&file_path) {
-                                Ok(meta) => (meta.model, meta.provider, meta.workspace_id),
-                                Err(_) => (None, None, None),
-                            }
-                        };
-
-                        let data = serde_json::json!({
-                            "session_id": session_id,
-                            "activated": true,
-                            "model": session_model,
-                            "provider": session_provider,
-                            "workspace_id": session_workspace_id,
-                        });
-                        send_session_response(grpc_client, &request_id, data).await;
-                        return LoopAction::Continue;
-                    }
-
-                    if action == "update_session_title" {
-                        let request_id = params
-                            .get("request_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let title = match params.get("title").and_then(|v| v.as_str()) {
-                            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-
-                            _ => {
-                                let data = serde_json::json!({ "error": "Missing or empty title parameter" });
-                                send_session_response(grpc_client, &request_id, data).await;
-                                return LoopAction::Continue;
-                            }
-                        };
-                        if let Err(e) = session_manager.send_to_session(
-                            &target_session_id,
-                            SessionMessage::UpdateSessionTitle {
-                                title: title.clone(),
-                            },
-                        ) {
-                            tracing::warn!("Failed to route update_session_title: {}", e);
-                            let data = serde_json::json!({ "error": format!("Session not found: {}", target_session_id) });
-                            send_session_response(grpc_client, &request_id, data).await;
-                        } else {
-                            let data = serde_json::json!({
-                                "session_id": target_session_id,
-                                "title": title,
-                                "updated": true,
-                            });
-                            send_session_response(grpc_client, &request_id, data).await;
-                        }
-
-                        return LoopAction::Continue;
-                    }
-
-                    if action == "delete_session" {
-                        let request_id = params
-                            .get("request_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
-                            Some(sid) if !sid.is_empty() => sid.to_string(),
-
-                            _ => {
-                                let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
-                                send_session_response(grpc_client, &request_id, data).await;
-                                return LoopAction::Continue;
-                            }
-                        };
-
-                        // Delete the JSONL file
-                        let conversations_dir =
-                            std::path::Path::new(work_dir).join("conversations");
-                        let file_path = conversations_dir.join(format!("{}.jsonl", session_id));
-                        if file_path.exists() {
-                            if let Err(e) = std::fs::remove_file(&file_path) {
-                                tracing::error!(session_id = %session_id, error = %e, "Failed to delete session file");
-                                let data = serde_json::json!({ "error": format!("Failed to delete session: {}", e) });
-                                send_session_response(grpc_client, &request_id, data).await;
-                                return LoopAction::Continue;
-                            }
-
-                            tracing::info!(session_id = %session_id, "Deleted session JSONL file");
-                        }
-
-                        // Destroy the session task
-                        let is_current = session_manager.current_session_id() == session_id;
-                        if let Err(e) = session_manager.destroy_session(&session_id).await {
-                            tracing::warn!("Failed to destroy session {}: {}", session_id, e);
-                        }
-
-                        // If the deleted session was current, create a replacement
-                        if is_current {
-                            let new_session_id = crate::conversation::generate_session_id();
-                            match crate::conversation::ConversationSession::new(
-                                std::path::Path::new(work_dir),
-                                &new_session_id,
-                                crate::conversation::SessionConfig {
-                                    agent_id: agent_id_for_reconnect.to_string(),
-                                    workspace_id: None,
-                                    model: None,
-                                    provider: None,
-                                },
-                            ) {
-                                Ok(new_session) => {
-                                    if let Err(e) = session_manager
-                                        .create_session_with_id_and_conversation(
-                                            new_session_id.clone(),
-                                            Some(new_session),
-                                        )
-                                        .await
-                                    {
-                                        tracing::error!(
-                                            "Failed to create replacement session: {}",
-                                            e
-                                        );
-                                    } else {
-                                        session_manager
-                                            .set_current_session_id(new_session_id.clone());
-                                        tracing::info!(new_session_id = %new_session_id, "Switched to new session after deletion");
-                                    }
-                                }
-
-                                Err(e) => {
-                                    tracing::error!("Failed to create replacement session: {}", e);
-                                }
-                            }
-                        }
-
-                        let data = serde_json::json!({
-                            "deleted": true,
-                            "session_id": session_id,
-                            "new_session_id": if is_current { session_manager.current_session_id().to_string() } else { String::new() },
-                        });
-                        send_session_response(grpc_client, &request_id, data).await;
                         return LoopAction::Continue;
                     }
 
@@ -2584,14 +2485,8 @@ async fn process_gateway_recv(
                     }
 
                     // 4. Refresh context for CURRENT session only (not broadcast).
-                    // Workspace list CRUD only affects the foreground session;
-                    // other sessions reconcile lazily when switched to foreground.
-                    let current_sid = session_manager.current_session_id().to_string();
-                    if !current_sid.is_empty() {
-                        session_manager
-                            .update_session_workspace_context(&current_sid, &resolver_guard);
-                    }
-
+                    // Workspace list CRUD: all sessions reconcile lazily when
+                    // switched to foreground.
                     // 4. For all other sessions: check if their selected workspace
                     //    still exists. If deleted → move to pending, fallback to agent home.
                     session_manager.reconcile_deleted_workspaces(&resolver_guard);
@@ -2816,6 +2711,28 @@ async fn process_gateway_recv(
                             );
                         }
                     }
+
+                    return LoopAction::Continue;
+                }
+
+                GatewayResponse::EnableDebugMode { debug_port } => {
+                    tracing::info!(
+                        debug_port = debug_port,
+                        "Received EnableDebugMode from Gateway — starting debug server"
+                    );
+
+                    // 1. Fire urgent_interrupt to cancel any in-flight tool/LLM execution.
+                    //    This notifies all sessions' AgentLoop select! branches so they
+                    //    abort current work and return to idle, at which point the
+                    //    SessionTask's main loop picks up the next message or restarts.
+                    //
+                    //    If the loop is idle (waiting for next user message), the notify
+                    //    is a no-op — there is nothing to cancel.
+                    session_manager.fire_urgent_interrupt();
+
+                    // 2. Start the DebugProtocolServer and store handles so that
+                    //    sessions created *after* this call inherit debug mode.
+                    session_manager.enable_debug_mode(debug_port).await;
 
                     return LoopAction::Continue;
                 }
@@ -3469,31 +3386,6 @@ async fn handle_get_session_messages(
             send_session_response(grpc_client, &request_id, data).await;
         }
     }
-}
-
-/// Handle "get_current_session_id" action from Gateway (S1.14)
-///
-
-/// Returns the currently active session ID.
-async fn handle_get_current_session_id(
-    grpc_client: &mut crate::grpc::client::GatewayGrpcClient,
-    params: &serde_json::Value,
-    current_session_id: &str,
-) {
-    let request_id = params
-        .get("request_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let session_id = if current_session_id.is_empty() {
-        None
-    } else {
-        Some(current_session_id.to_string())
-    };
-    let data = serde_json::json!({
-        "session_id": session_id,
-    });
-    send_session_response(grpc_client, &request_id, data).await;
 }
 
 /// Send a session response back to Gateway via IntentSend (S1.14)

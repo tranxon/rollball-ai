@@ -437,11 +437,6 @@ impl GatewayRequestToProto for protocol::GatewayRequest {
                     proto::CreateSessionRequest {},
                 ))
             }
-            protocol::GatewayRequest::GetCurrentSessionId => {
-                Some(proto::client_message::Payload::GetCurrentSessionId(
-                    proto::GetCurrentSessionIdRequest {},
-                ))
-            }
             protocol::GatewayRequest::DeleteSession { session_id } => {
                 Some(proto::client_message::Payload::DeleteSession(
                     proto::DeleteSessionRequest { session_id: session_id.clone() },
@@ -730,11 +725,6 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                     proto::SessionCreated { session_id: session_id.clone() },
                 ))
             }
-            protocol::GatewayResponse::CurrentSessionId { session_id } => {
-                Some(proto::server_message::Payload::CurrentSessionId(
-                    proto::CurrentSessionId { session_id: session_id.clone().unwrap_or_default() },
-                ))
-            }
             protocol::GatewayResponse::SessionDeleted { success, error } => {
                 Some(proto::server_message::Payload::SessionDeleted(
                     proto::SessionDeleted { success: *success, error: error.clone().unwrap_or_default() },
@@ -844,6 +834,13 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
             protocol::GatewayResponse::Unknown {} => {
                 Some(proto::server_message::Payload::UsageReportAck(
                     proto::UsageReportAck {},
+                ))
+            }
+            protocol::GatewayResponse::EnableDebugMode { debug_port } => {
+                Some(proto::server_message::Payload::EnableDebugMode(
+                    proto::EnableDebugMode {
+                        debug_port: *debug_port,
+                    },
                 ))
             }
         };
