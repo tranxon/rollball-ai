@@ -53,6 +53,8 @@ pub enum SessionMessage {
     },
     /// Update gateway model capabilities at runtime
     UpdateCapabilities {
+        /// Model identifier (e.g. "deepseek-v4-flash") — used as HashMap key
+        model: String,
         caps: rollball_core::protocol::ModelCapabilitiesInfo,
     },
     /// Update max output tokens limit from Gateway config
@@ -119,8 +121,9 @@ impl std::fmt::Debug for SessionMessage {
                 .field("base_url", base_url)
                 .field("model", model)
                 .finish(),
-            SessionMessage::UpdateCapabilities { caps } => f
+            SessionMessage::UpdateCapabilities { model, caps } => f
                 .debug_struct("UpdateCapabilities")
+                .field("model", model)
                 .field("caps", caps)
                 .finish(),
             SessionMessage::UpdateMaxOutputTokens { limit } => f
@@ -721,13 +724,14 @@ impl SessionTask {
                     );
                     agent_loop.update_provider(new_provider, model, Some(provider_name));
                 }
-                Some(SessionMessage::UpdateCapabilities { caps }) => {
+                Some(SessionMessage::UpdateCapabilities { model, caps }) => {
                     tracing::info!(
                         session_id = %session_id,
-                        model = ?caps.name,
+                        model = %model,
+                        caps_name = ?caps.name,
                         "SessionTask: updating model capabilities"
                     );
-                    agent_loop.update_gateway_model_capabilities(caps);
+                    agent_loop.update_gateway_model_capabilities(&model, caps);
                 }
                 Some(SessionMessage::UpdateMaxOutputTokens { limit }) => {
                     tracing::info!(

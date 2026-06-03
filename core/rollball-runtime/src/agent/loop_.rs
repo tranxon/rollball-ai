@@ -336,9 +336,9 @@ impl AgentLoop {
 
     /// Update gateway model capabilities at runtime (e.g., after receiving a
     /// hot-pushed LLMConfigDelivery from Gateway).
-    /// The capabilities are stored keyed by model name for multi-model support.
-    pub fn update_gateway_model_capabilities(&mut self, caps: ModelCapabilitiesInfo) {
-        self.core.update_gateway_model_capabilities(caps);
+    /// The capabilities are stored keyed by model ID for multi-model support.
+    pub fn update_gateway_model_capabilities(&mut self, model_id: &str, caps: ModelCapabilitiesInfo) {
+        self.core.update_gateway_model_capabilities(model_id, caps);
     }
 
     /// Update the max output tokens limit from Gateway config.

@@ -286,20 +286,23 @@ impl AgentCore {
 
     /// Update gateway model capabilities at runtime (e.g., after receiving a
     /// hot-pushed LLMConfigDelivery from Gateway).
-    /// The capabilities are stored keyed by model name for multi-model support.
-    pub fn update_gateway_model_capabilities(&mut self, caps: ModelCapabilitiesInfo) {
-        let model_name = caps.name.clone().unwrap_or_else(|| "default".to_string());
+    /// The capabilities are stored keyed by model ID for multi-model support.
+    /// `model_id` is the model identifier string (e.g. "deepseek-v4-flash"),
+    /// always provided by the caller — never derived from `caps.name` which
+    /// may be None for models not in models.dev.
+    pub fn update_gateway_model_capabilities(&mut self, model_id: &str, caps: ModelCapabilitiesInfo) {
         tracing::info!(
-            model = %model_name,
+            model = %model_id,
             context_window = caps.context_window,
             max_output_tokens = caps.max_output_tokens,
             supports_tool_calling = caps.supports_tool_calling,
             supports_reasoning = ?caps.supports_reasoning,
             cost = ?caps.cost.as_ref().map(|c| (c.input_per_million, c.output_per_million)),
+            caps_name = ?caps.name,
             source = "gateway",
             "AgentCore received model capabilities from Gateway"
         );
-        self.gateway_model_capabilities.insert(model_name, caps);
+        self.gateway_model_capabilities.insert(model_id.to_string(), caps);
     }
 
     /// Update the max output tokens limit from Gateway config.

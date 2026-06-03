@@ -451,6 +451,7 @@ impl SessionManager {
                 });
                 if let Some(ref caps) = cached.capabilities {
                     let _ = handle.send(SessionMessage::UpdateCapabilities {
+                        model: cached.model.clone(),
                         caps: caps.clone(),
                     });
                 }
@@ -797,6 +798,7 @@ impl SessionManager {
             }
             if let Some(ref caps) = capabilities {
                 if handle.send(SessionMessage::UpdateCapabilities {
+                    model: model.clone(),
                     caps: caps.clone(),
                 }).is_err() {
                     if !failed.contains(sid) {

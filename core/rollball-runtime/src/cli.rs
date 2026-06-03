@@ -407,6 +407,7 @@ async fn async_main(
     // In Standalone mode: no Gateway provider available (development only).
     let mut gateway_model_capabilities: Option<rollball_core::protocol::ModelCapabilitiesInfo> =
         None;
+    let mut gateway_model_id: Option<String> = None;
     let mut gateway_current_provider_id: Option<String> = None;
     let mut gateway_max_output_tokens_limit: u64 = 32_768;
 
@@ -462,6 +463,7 @@ async fn async_main(
                     // Look up capabilities for the selected model
                     if let Some(m) = prov.models.iter().find(|m| m.id == model_id) {
                         gateway_model_capabilities = Some(m.capabilities.clone());
+                        gateway_model_id = Some(model_id.clone());
                         gateway_max_output_tokens_limit = m.max_output_tokens_limit;
                     }
 
@@ -868,7 +870,8 @@ async fn async_main(
         // and makes get_mut always return None).
         if let Some(c) = Arc::get_mut(&mut core) {
             if let Some(caps) = gateway_model_capabilities {
-                c.update_gateway_model_capabilities(caps);
+                let mid = gateway_model_id.as_deref().unwrap_or("default");
+                c.update_gateway_model_capabilities(mid, caps);
             }
 
             c.update_max_output_tokens_limit(gateway_max_output_tokens_limit);
@@ -1460,7 +1463,8 @@ async fn async_main(
         // Inject user display name from identity delivery
         agent_loop.core.user_display_name = user_display_name.clone();
         if let Some(caps) = gateway_model_capabilities {
-            agent_loop.update_gateway_model_capabilities(caps);
+            let mid = gateway_model_id.as_deref().unwrap_or("default");
+            agent_loop.update_gateway_model_capabilities(mid, caps);
         }
 
         agent_loop.update_max_output_tokens_limit(gateway_max_output_tokens_limit);
