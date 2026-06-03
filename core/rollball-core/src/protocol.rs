@@ -110,6 +110,43 @@ pub struct ModelCapabilitiesInfo {
     pub knowledge_cutoff: Option<String>,
 }
 
+impl ModelCapabilitiesInfo {
+    /// Effective input token budget.
+    ///
+    /// Derivation:
+    /// 1. `max_input_tokens` provided — authoritative, use directly.
+    /// 2. `max_input_tokens` missing — reserve output space capped by
+    ///    `max_output_tokens_limit`, then `context_window - output_reserve`.
+    ///
+    /// `max_output_tokens_limit` is the global cap (default 32K, configurable
+    /// by user). Set to 0 to disable capping models.dev values — but when
+    /// models.dev also provides nothing, the system default (32K) is used
+    /// as a safety floor so the model always has output space.
+    pub fn effective_input_budget(&self, max_output_tokens_limit: u64) -> u64 {
+        if let Some(max_input) = self.max_input_tokens {
+            return max_input;
+        }
+
+        // output_reserve derivation:
+        // - models.dev provides output → cap it by limit (if limit > 0),
+        //   otherwise use raw value (user disabled the cap).
+        // - models.dev missing, limit > 0 → use limit as default reserve.
+        // - both missing/0 → fall back to system default (32K).
+        let output_reserve = if self.max_output_tokens > 0 {
+            if max_output_tokens_limit > 0 {
+                self.max_output_tokens.min(max_output_tokens_limit)
+            } else {
+                self.max_output_tokens
+            }
+        } else if max_output_tokens_limit > 0 {
+            max_output_tokens_limit
+        } else {
+            default_max_output_tokens_limit()
+        };
+
+        self.context_window.saturating_sub(output_reserve)
+    }
+}
 
 /// Provider list entry — delivered by Gateway to Runtime via AgentHelloResult.
 ///

@@ -629,26 +629,25 @@ impl AgentLoop {
     }
 
     /// Trim history to fit within the context window budget.
-    /// Reserves 20% of the budget for new response + overhead.
     ///
-    /// Per [ADR-010], programmatic folding strategies have been removed.
-    /// This is a safety net only; LLM-based compaction at 80% token usage
-    /// (see [`compact_history_if_needed`]) is the primary compression mechanism.
+    /// The budget comes from [`context_trim_budget`] →
+    /// [`ModelCapabilitiesInfo::effective_input_budget`], which already
+    /// reserves output space (capped at `max_output_tokens_limit`, default 32K).
+    /// No additional margin is applied here — [`compact_history_if_needed`]
+    /// provides early warning at 80% usage.
     fn trim_history_to_budget(&mut self, model_name: &str) {
         let budget = self.context_trim_budget(model_name);
-        // Reserve 20% of context window for new response + overhead
-        let trim_budget = (budget as f64 * 0.8) as u64;
 
         // Stage 1: FIFO trim oldest non-system messages until within budget
         self.session.history.trim_fifo();
 
         // Stage 2: If still over budget after FIFO, use emergency trim as safety net
-        if self.session.history.token_count() > trim_budget {
+        if self.session.history.token_count() > budget {
             self.session.history.emergency_trim();
         }
 
         // Also truncate any single message that exceeds per-message limit
-        self.session.history.truncate_large_messages(trim_budget / 4);
+        self.session.history.truncate_large_messages(budget / 4);
     }
 
     /// Check context usage after LLM response and trigger compaction if needed.
@@ -1514,16 +1513,28 @@ impl AgentLoop {
                     if !self.core.try_send_chunk(ChunkEvent::ContextUsage(ctx_usage)) {
                         tracing::debug!("ContextUsage: on_chunk channel full/closed or session_id missing");
                     }
-
-                    // ADR-011: check if context usage triggers compaction
-                    self.compact_history_if_needed(&current_model).await;
                 } else {
-                    tracing::warn!(
-                        has_chunk_tx = self.core.on_chunk.is_some(),
-                        has_model_caps = model_caps.is_some(),
-                        "ContextUsage: NOT sent — missing model capabilities"
+                    // Model capabilities not found — notify frontend so the user is aware.
+                    // Context usage and compaction are still attempted with
+                    // history_max_tokens as fallback budget.
+                    let available: Vec<&str> = self.core.gateway_model_capabilities.keys().map(|s| s.as_str()).collect();
+                    let msg = format!(
+                        "Model capabilities not found for '{}'. Available: {:?}. \
+                         Check that the model name matches exactly (case-sensitive). \
+                         Context usage display and compaction accuracy may be affected.",
+                        current_model, available
                     );
+                    tracing::warn!("ContextUsage: NOT sent — missing model capabilities for '{}'", current_model);
+                    let _ = self.core.try_send_chunk(ChunkEvent::Error {
+                        message: msg,
+                        message_id: format!("caps-missing-{}", current_model),
+                    });
                 }
+
+                // ADR-011: check if context usage triggers compaction.
+                // Runs regardless of model_caps availability —
+                // context_trim_budget falls back to history_max_tokens when caps are missing.
+                self.compact_history_if_needed(&current_model).await;
             }
 
             if !has_tool_calls {

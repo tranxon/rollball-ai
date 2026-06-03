@@ -832,21 +832,16 @@ mod tests {
 }
 
 /// Compute context usage info from model capabilities and API usage response.
-/// Follows opencode's approach: usable context = context_window - maxOutputTokens,
-/// or max_input_tokens - reserved if available.
+///
+/// Usable context is derived from [`ModelCapabilitiesInfo::effective_input_budget`],
+/// which uses `max_input_tokens` when available, or reserves output space capped
+/// by `max_output_tokens_limit` (default 32K) otherwise.
 pub fn compute_context_usage(
     caps: &ModelCapabilitiesInfo,
     usage: &rollball_core::providers::traits::UsageInfo,
     max_output_tokens_limit: u64,
 ) -> rollball_core::protocol::ContextUsageInfo {
-    // Cap max_output_tokens at the configured limit (same cap used in build())
-    // Set max_output_tokens_limit to 0 to disable the limit.
-    let effective_limit = if max_output_tokens_limit == 0 { u64::MAX } else { max_output_tokens_limit };
-    let max_output = caps.max_output_tokens.min(effective_limit);
-    let usable = caps
-        .max_input_tokens
-        .map(|input| input.saturating_sub(max_output))
-        .unwrap_or_else(|| caps.context_window.saturating_sub(max_output));
+    let usable = caps.effective_input_budget(max_output_tokens_limit);
     let total = usage.prompt_tokens + usage.completion_tokens;
     let percent = if usable > 0 {
         ((total as f64 / usable as f64) * 100.0).min(100.0) as u8

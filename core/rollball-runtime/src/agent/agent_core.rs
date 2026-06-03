@@ -582,21 +582,26 @@ impl AgentCore {
     }
 
     /// Look up model capabilities by exact model name.
-    /// Falls back to any available capabilities with a warning when the
-    /// requested model is not found (e.g. model_switch raced with capability
-    /// delivery). The fallback prevents silent degradation of trim/token
-    /// planning but may use inaccurate values — callers should log a warn.
+    ///
+    /// Returns `None` when the requested model is not found — callers must
+    /// handle this case explicitly. The legacy `.values().next()` fallback
+    /// has been removed because it silently picks wrong model capabilities
+    /// when model names don't match (e.g. case sensitivity), causing incorrect
+    /// context usage percentages and preventing compaction from triggering.
     pub(crate) fn get_model_capabilities(&self, model_name: &str) -> Option<&ModelCapabilitiesInfo> {
-        self.gateway_model_capabilities.get(model_name).or_else(|| {
-            let fallback = self.gateway_model_capabilities.values().next();
-            if fallback.is_some() {
-                tracing::warn!(
-                    model = %model_name,
-                    "Model not found in gateway capabilities, using fallback — values may be inaccurate"
-                );
-            }
-            fallback
-        })
+        let caps = self.gateway_model_capabilities.get(model_name);
+        if caps.is_none() && !self.gateway_model_capabilities.is_empty() {
+            let available: Vec<&str> = self.gateway_model_capabilities.keys().map(|s| s.as_str()).collect();
+            tracing::warn!(
+                model = %model_name,
+                available = ?available,
+                "Model capabilities not found for '{}' — \
+                 context usage reporting and compaction will be skipped. \
+                 This indicates a model name mismatch between Runtime and Gateway (e.g. case sensitivity).",
+                model_name
+            );
+        }
+        caps
     }
 
     /// Set the debug controller, notify handles, and event sender (DevMode only).
@@ -704,22 +709,20 @@ impl AgentCore {
     }
 
     /// Get the usable context budget for history trimming.
-    /// Uses Gateway model capabilities if available: subtracts max_output_tokens
-    /// (capped at 20K) from context_window, consistent with compute_context_usage().
+    /// Uses Gateway model capabilities if available: delegates to
+    /// [`ModelCapabilitiesInfo::effective_input_budget`] with the global
+    /// `max_output_tokens_limit` as the output cap.
     /// Falls back to config.history_max_tokens when no capabilities are present.
     pub fn context_trim_budget(&self, model_name: &str) -> u64 {
         self.get_model_capabilities(model_name)
             .map(|caps| {
-                // Reserve space for the model's output. Cap at 20K so that
-                // models with very large max_output_tokens don't waste context.
-                let output_reserve = caps.max_output_tokens.min(20_000);
-                let usable = caps.context_window.saturating_sub(output_reserve);
+                let usable = caps.effective_input_budget(self.max_output_tokens_limit);
                 tracing::debug!(
                     model = %model_name,
                     context_window = caps.context_window,
-                    max_output_tokens = caps.max_output_tokens,
-                    output_reserve,
-                    usable_context = usable,
+                    max_input_tokens = ?caps.max_input_tokens,
+                    max_output_tokens_limit = self.max_output_tokens_limit,
+                    effective_input_budget = usable,
                     "Computed usable context budget from model capabilities"
                 );
                 usable
