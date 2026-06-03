@@ -57,6 +57,28 @@ RollBall treats every Agent like an **app on your phone**. Each `.agent` package
 
 ---
 
+## 🏛️ Core Architecture
+
+### Android Analogy
+
+| Android | RollBall | Role |
+|---------|----------|------|
+| ART | Agent Runtime | Universal execution engine (single binary) |
+| APK | `.agent` package | Declarative bundle (config + prompts + skills, no executable code) |
+| APK Signature | Signing Block | Package signing, verifies integrity and origin |
+| AMS | Gateway | Lifecycle management (install, start/stop, budget, rate) |
+| Binder IPC | Gateway Service API | Inter-process communication |
+| ContentProvider | System Agent | System-level data service (identity, preferences) |
+| PMS | Package Manager | Install/uninstall/upgrade |
+
+### System Architecture
+
+<p align="center">
+  <img src="./assets/architecture.svg" alt="RollBall.AI System Architecture" width="100%" />
+</p>
+
+---
+
 ## 🔥 Why RollBall?
 
 | Dimension | LangChain / CrewAI | OpenCode / OpenClaw | RollBall.AI |
@@ -143,28 +165,6 @@ rollball-gateway chat --agent com.example.qa-agent "Help me review this code"
 ```
 
 > **Status**: The project is in **design phase**. Core Rust crate architecture is defined, detailed design docs are complete, but implementation has not started. The above is the target API design.
-
----
-
-## 🏛️ Core Architecture
-
-### Android Analogy
-
-| Android | RollBall | Role |
-|---------|----------|------|
-| ART | Agent Runtime | Universal execution engine (single binary) |
-| APK | `.agent` package | Declarative bundle (config + prompts + skills, no executable code) |
-| APK Signature | Signing Block | Package signing, verifies integrity and origin |
-| AMS | Gateway | Lifecycle management (install, start/stop, budget, rate) |
-| Binder IPC | Gateway Service API | Inter-process communication |
-| ContentProvider | System Agent | System-level data service (identity, preferences) |
-| PMS | Package Manager | Install/uninstall/upgrade |
-
-### System Architecture
-
-<p align="center">
-  <img src="./assets/architecture.svg" alt="RollBall.AI System Architecture" width="100%" />
-</p>
 
 ---
 

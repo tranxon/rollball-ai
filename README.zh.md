@@ -58,6 +58,28 @@ RollBall 将每个 Agent 视为手机上的**应用**。`.agent` 包就是完整
 
 ---
 
+## 🏛️ 核心架构
+
+### Android 类比
+
+| Android | RollBall | 作用 |
+|---------|----------|------|
+| ART | Agent Runtime | 通用执行引擎（平台唯一二进制） |
+| APK | `.agent` 包 | 声明式打包（config + prompts + skills，无可执行代码） |
+| APK Signature | Signing Block | 包签名，验证完整性和来源 |
+| AMS | Gateway | 生命周期管理（安装、启停、预算、速率） |
+| Binder IPC | Gateway Service API | 进程间通信 |
+| ContentProvider | 系统 Agent | 系统级数据服务（身份、偏好） |
+| PMS | Package Manager | 安装/卸载/升级 |
+
+### 系统架构
+
+<p align="center">
+  <img src="./assets/architecture.svg" alt="RollBall.AI 系统架构" width="100%" />
+</p>
+
+---
+
 ## 🔥 为什么选择 RollBall？
 
 | 维度 | LangChain / CrewAI | OpenCode / OpenClaw | RollBall.AI |
@@ -144,28 +166,6 @@ rollball-gateway chat --agent com.example.qa-agent "帮我审查代码"
 ```
 
 > **现状**：项目处于**设计阶段**，核心 Rust crate 已定义但实现尚未完成。以上为最终 API 设计目标。
-
----
-
-## 🏛️ 核心架构
-
-### Android 类比
-
-| Android | RollBall | 作用 |
-|---------|----------|------|
-| ART | Agent Runtime | 通用执行引擎（平台唯一二进制） |
-| APK | `.agent` 包 | 声明式打包（config + prompts + skills，无可执行代码） |
-| APK Signature | Signing Block | 包签名，验证完整性和来源 |
-| AMS | Gateway | 生命周期管理（安装、启停、预算、速率） |
-| Binder IPC | Gateway Service API | 进程间通信 |
-| ContentProvider | 系统 Agent | 系统级数据服务（身份、偏好） |
-| PMS | Package Manager | 安装/卸载/升级 |
-
-### 系统架构
-
-<p align="center">
-  <img src="./assets/architecture.svg" alt="RollBall.AI 系统架构" width="100%" />
-</p>
 
 ---
 
