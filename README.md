@@ -47,7 +47,7 @@ RollBall.AI is a **decentralized, high-security, scalable AI Agent runtime platf
 
 Every Agent is an independent **"digital being"**: its own runtime process, private memory, workspace, and configuration — fully independent personalized cognition. Like having a team of AI specialists working alongside you — a QA analyst, a project manager, a senior engineer — each with their own expertise and memory, communicating and coordinating through the platform's Intent mechanism.
 
-RollBall **serves two types of users**: developers build agents declaratively (manifest + prompt + SKILL.md, no coding required), and end-users install agents from a repository. The signing toolchain + DevMode + publishing wizard form a complete developer toolkit — making **"can write prompt = can build an AI colleague"** a reality.
+RollBall **serves two types of users**: developers build agents declaratively by tuning three dimensions — **prompt, tools, and memory** — while end-users install agents from a repository. An agent's true intelligence comes from the interplay of its system prompt, available tools, and the experience accumulated in its private memory over time. The signing toolchain + DevMode + publishing wizard form a complete developer toolkit — making **"tune prompt, tools, and memory = build an AI colleague"** a reality.
 
 Agents can be freely shared between users — Personal/Sensitive data is automatically stripped during packaging, taking only the agent's capabilities away, leaving user's private memories behind.
 
@@ -297,7 +297,7 @@ Desktop App (Tauri v2) provides:
   Or share the .agent file directly (recipient verifies signature on install)
 ```
 
-Developers **don't need to write code** (unless they want to build WASM tools). The entire pipeline from authoring to debugging to publishing is supported by the platform.
+Developers build agents by **tuning declarative configurations** — crafting system prompts, declaring tool capabilities, and curating memory behavior — rather than writing imperative code. The entire pipeline from authoring to debugging to publishing is supported by the platform.
 
 ---
 
