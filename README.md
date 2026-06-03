@@ -1,21 +1,7 @@
 <h1 align="center">RollBall.AI — Collaborate with your AI Colleagues</h1>
 
 <p align="center">
-  <svg width="160" height="160" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="logoRing" x1="0" y1="0" x2="100" y2="100">
-        <stop offset="0%" stop-color="#3b82f6" />
-        <stop offset="100%" stop-color="#8b5cf6" />
-      </linearGradient>
-    </defs>
-    <circle cx="50" cy="50" r="48" stroke="url(#logoRing)" stroke-width="1.5" stroke-dasharray="80 220" stroke-linecap="round" fill="none" opacity="0.5" />
-    <rect x="30" y="30" width="40" height="40" rx="12" fill="url(#logoRing)" />
-    <g transform="translate(38, 38)" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
-      <circle cx="12" cy="12" r="10" />
-      <path d="M8 8h5a3 3 0 0 1 0 6H8V8Z" />
-      <path d="M8 14h4l3 3" />
-    </g>
-  </svg>
+  <img src="./assets/logo.svg" alt="RollBall.AI Logo" width="160" height="160" />
 </p>
 
 <p align="center">
