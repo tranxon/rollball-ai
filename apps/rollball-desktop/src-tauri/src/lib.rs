@@ -9,7 +9,7 @@ mod state;
 mod tray;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{Listener, Manager};
 
 /// System Agent ID — always bundled with Desktop App
 const SYSTEM_AGENT_ID: &str = "com.rollball.system";
@@ -62,6 +62,14 @@ pub fn run() {
         ])
         .setup(|app| {
             tray::setup(app)?;
+
+            // Show main window when frontend signals splash screen is rendered.
+            // Window starts hidden (visible: false in tauri.conf.json) to prevent
+            // white/transparent flash before React mounts the splash screen.
+            let main_window = app.get_webview_window("main").expect("no main window");
+            app.listen("splash-ready", move |_| {
+                let _ = main_window.show();
+            });
 
             // Auto-install bundled System Agent on first launch
             let app_handle = app.handle().clone();

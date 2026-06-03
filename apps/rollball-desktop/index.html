@@ -12,6 +12,18 @@
         }
       })();
     </script>
+    <style>
+      /* Inline background matching splash screen — eliminates white/transparent flash
+         before React mounts. Overridden by globals.css after load. */
+      html, body {
+        margin: 0;
+        padding: 0;
+        background-color: #fafafa;
+      }
+      html.dark, html.dark body {
+        background-color: #18181b;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
