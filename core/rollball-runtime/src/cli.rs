@@ -2137,6 +2137,16 @@ async fn process_gateway_recv(
                             .unwrap_or("unknown")
                             .to_string();
                         tracing::info!(reason = %reason, session_id = %target_session_id, "Routing stop to session");
+
+                        // 1. Fire urgent_stop Notify for ONLY the target session —
+                        //    other sessions' LLM streaming and tool execution
+                        //    are completely unaffected.
+                        session_manager.fire_urgent_stop(&target_session_id);
+
+                        // 2. Deliver InboundMessage::Stop to the specific session's
+                        //    AgentLoop inbox — this sets the stop flag that poll_stop()
+                        //    and drain_inbound_queue() check, ensuring the loop exits
+                        //    cleanly after the current operation is aborted.
                         match session_manager.get_session(&target_session_id) {
                             Some(handle) => {
                                 if let Err(e) =
@@ -2803,14 +2813,10 @@ async fn process_gateway_recv(
                         "Received EnableDebugMode from Gateway — starting debug server"
                     );
 
-                    // 1. Fire urgent_stop to cancel any in-flight tool/LLM execution.
-                    //    This notifies all sessions' AgentLoop select! branches so they
-                    //    abort current work and return to idle, at which point the
-                    //    SessionTask's main loop picks up the next message or restarts.
-                    //
-                    //    If the loop is idle (waiting for next user message), the notify
-                    //    is a no-op — there is nothing to cancel.
-                    session_manager.fire_urgent_stop();
+                    // 1. Fire urgent_stop to ALL sessions — EnableDebugMode
+                    //    requires all sessions to stop so they restart with
+                    //    debug capabilities injected.
+                    session_manager.fire_urgent_stop_all();
 
                     // 2. Start the DebugProtocolServer and store handles so that
                     //    sessions created *after* this call inherit debug mode.

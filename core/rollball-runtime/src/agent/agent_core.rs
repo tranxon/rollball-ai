@@ -120,7 +120,8 @@ pub struct AgentCore {
     pub(crate) debug_event_tx: Option<DebugEventSender>,
     /// Urgent stop notify — fired by Gateway gRPC (Stop / Restart-in-Debug)
     /// to cancel tool execution immediately without waiting for 500ms poll.
-    /// Shared across all sessions; each SessionTask's loop listens on this.
+    /// Each session gets its own independent Notify; fire_urgent_stop() only
+    /// wakes the target session's tokio::select! branches.
     pub(crate) urgent_stop: Option<Arc<Notify>>,
     /// User display name delivered by Gateway via identity delivery.
     /// Used for user-facing messages like stop confirmation.
@@ -574,7 +575,9 @@ impl AgentCore {
             debug_rewind_notify: self.debug_rewind_notify.clone(),
             debug_resume_notify: self.debug_resume_notify.clone(),
             debug_event_tx: self.debug_event_tx.clone(),
-            urgent_stop: self.urgent_stop.clone(),
+            // Per-session Notify — each session gets its own independent
+            // Notify so fire_urgent_stop() only wakes the target session.
+            urgent_stop: Some(Arc::new(Notify::new())),
             user_display_name: self.user_display_name.clone(),
             approval_gate: self.approval_gate.clone(),
             approval_handle: self.approval_handle.clone(),

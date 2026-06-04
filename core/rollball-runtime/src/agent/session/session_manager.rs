@@ -13,6 +13,7 @@ use rollball_core::protocol::{SearchKeyEntry, SearchProviderListItem};
 use rollball_core::tools::traits::Tool;
 use rollball_core::Budget;
 use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::agent::agent_core::AgentCore;
@@ -209,6 +210,10 @@ pub struct SessionManager {
     /// debug mode active.
     pub(crate) debug_controllers:
         Arc<tokio::sync::RwLock<HashMap<String, Arc<tokio::sync::Mutex<DebugController>>>>>,
+    /// Per-session urgent_stop Notify handles.
+    /// Keyed by session_id; fire_urgent_stop() looks up the target session's
+    /// Notify and wakes only that session's tokio::select! branches.
+    urgent_stops: HashMap<String, Arc<Notify>>,
 }
 
 impl SessionManager {
@@ -228,6 +233,7 @@ impl SessionManager {
             default_workspace_id: "__agent_home__".to_string(),
             runtime_debug_handles: None,
             debug_controllers: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            urgent_stops: HashMap::new(),
         }
     }
 
@@ -340,6 +346,12 @@ impl SessionManager {
         // ADR-014: Create watch channel for session status
         let (status_tx, status_rx) = tokio::sync::watch::channel(SessionStatus::Idle);
         task.set_status_tx(status_tx);
+
+        // Register per-session urgent_stop Notify so fire_urgent_stop()
+        // only wakes this session's tokio::select! branches.
+        if let Some(notify) = task.urgent_stop_notify() {
+            self.urgent_stops.insert(session_id.clone(), notify);
+        }
 
         // Spawn the session task with panic isolation.
         let join_handle = tokio::spawn(async move {
@@ -479,6 +491,7 @@ impl SessionManager {
         // Clean up per-session workspace mappings
         self.session_workspaces.remove(session_id);
         self.pending_workspaces.remove(session_id);
+        self.urgent_stops.remove(session_id);
 
         tracing::info!(session_id = %session_id, "SessionManager: closed session");
         Ok(())
@@ -505,6 +518,7 @@ impl SessionManager {
             // "Session not found" error instead of "channel closed".
             let was_finished = handle.join_handle.is_finished();
             self.sessions.remove(session_id);
+            self.urgent_stops.remove(session_id);
             tracing::warn!(
                 session_id = %session_id,
                 task_finished = was_finished,
@@ -1017,6 +1031,7 @@ impl SessionManager {
         for session_id in &to_evict {
             if let Some(handle) = self.sessions.remove(session_id) {
                 let _ = handle.inbound_tx.send(SessionMessage::Close).await;
+                self.urgent_stops.remove(session_id);
                 tracing::info!(session_id = %session_id, "Evicted idle session from memory (idle > {:?})", idle_timeout);
             }
         }
@@ -1146,17 +1161,32 @@ impl SessionManager {
         self.pending_workspaces.get(session_id).map(|s| s.as_str())
     }
 
-    /// Fire the urgent_stop notify to cancel all in-flight tool/LLM
-    /// execution across all sessions. Uses notify_waiters() to wake every
-    /// waiter — since the Notify is shared across all sessions via Arc::clone,
-    /// notify_one() would only wake a single waiter.
-    /// This is a no-op in standalone mode (where urgent_stop is None on
-    /// the template core).
-    pub(crate) fn fire_urgent_stop(&self) {
-        if let Some(ref urgent) = self.core.urgent_stop {
+    /// Fire the urgent_stop notify for a specific session.
+    ///
+    /// Wakes the target session's tokio::select! branches (LLM streaming,
+    /// tool execution) immediately, without waiting for the 500ms poll
+    /// interval. Other sessions are completely unaffected.
+    ///
+    /// This is a no-op in standalone mode (where urgent_stop is None).
+    pub(crate) fn fire_urgent_stop(&self, session_id: &str) {
+        if let Some(urgent) = self.urgent_stops.get(session_id) {
             urgent.notify_waiters();
-            tracing::info!("SessionManager: urgent_stop fired (all waiters)");
+            tracing::info!(session_id = %session_id, "SessionManager: urgent_stop fired");
+        } else {
+            tracing::debug!(session_id = %session_id, "SessionManager: fire_urgent_stop — session not found (may have already closed)");
         }
+    }
+
+    /// Fire the urgent_stop notify for ALL active sessions.
+    ///
+    /// Used by EnableDebugMode to cancel in-flight work across all sessions
+    /// so they restart with debug capabilities.
+    pub(crate) fn fire_urgent_stop_all(&self) {
+        let count = self.urgent_stops.len();
+        for urgent in self.urgent_stops.values() {
+            urgent.notify_waiters();
+        }
+        tracing::info!(session_count = count, "SessionManager: urgent_stop fired (all sessions)");
     }
 
     /// Initialize debug mode at runtime (called when Gateway pushes EnableDebugMode).

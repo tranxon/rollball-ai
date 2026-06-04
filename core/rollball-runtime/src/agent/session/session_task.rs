@@ -299,6 +299,13 @@ impl SessionTask {
         self.agent_loop.core.status_tx = Some(tx);
     }
 
+    /// Return the per-session urgent_stop Notify so SessionManager can
+    /// route fire_urgent_stop() to only the target session.
+    /// Returns None in standalone mode (where urgent_stop is not initialized).
+    pub(crate) fn urgent_stop_notify(&self) -> Option<Arc<Notify>> {
+        self.agent_loop.core.urgent_stop.clone()
+    }
+
     /// Run the session task, processing messages until Stop or channel close.
     pub async fn run(self) {
         let Self {
