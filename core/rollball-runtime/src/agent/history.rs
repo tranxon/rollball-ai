@@ -499,26 +499,59 @@ impl HistoryManager {
             .take_while(|m| matches!(m.role, MessageRole::System))
             .count();
 
-        // Find tail start: count User messages from the end.
-        // Each "round" starts with a User message, so counting User messages
-        // gives a more accurate round count than `keep_last_rounds * 2`.
+        // Find tail start: count User or Tool messages from the end.
+        // Each "round" starts with a User message (human input) or a Tool
+        // message (tool result that feeds the next assistant turn). Counting
+        // both ensures correct round detection in tool-calling scenarios
+        // where the only User messages are at the conversation start.
         let tail_start = {
-            let mut user_count = 0usize;
+            let mut round_count = 0usize;
             let mut idx = self.messages.len();
             for (i, msg) in self.messages.iter().enumerate().rev() {
-                if matches!(msg.role, MessageRole::User) {
-                    user_count += 1;
-                    if user_count >= keep_last_rounds {
+                if matches!(msg.role, MessageRole::User | MessageRole::Tool) {
+                    round_count += 1;
+                    if round_count >= keep_last_rounds {
                         idx = i;
                         break;
                     }
                 }
             }
             // Not enough rounds: keep everything after system messages
-            if user_count < keep_last_rounds {
+            if round_count < keep_last_rounds {
                 system_count
             } else {
-                idx
+                // ── Fix: expand tail boundary to include Assistant messages
+                // that own tool_calls referenced by Tool messages in the tail.
+                // Without this, sanitize_messages removes orphaned Tool results
+                // and the "kept" rounds become empty, defeating compaction.
+                //
+                // Collect tool_call_ids from Tool messages in [idx, end).
+                let tail_tool_ids: HashSet<String> = self.messages[idx..]
+                    .iter()
+                    .filter(|m| m.role == MessageRole::Tool)
+                    .filter_map(|m| m.tool_call_id.clone())
+                    .collect();
+
+                // Walk backward from idx-1 to expand tail_start to include
+                // any Assistant whose tool_calls match tail_tool_ids.
+                // Stop when hitting a User message (natural round boundary).
+                let mut expanded = idx;
+                if !tail_tool_ids.is_empty() {
+                    for j in (system_count..idx).rev() {
+                        match self.messages[j].role {
+                            MessageRole::User => break,
+                            MessageRole::Assistant | MessageRole::Tool => {
+                                if let Some(ref tcs) = self.messages[j].tool_calls {
+                                    if tcs.iter().any(|tc| tail_tool_ids.contains(&tc.id)) {
+                                        expanded = j;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                expanded
             }
         };
 
@@ -828,5 +861,154 @@ mod tests {
         assert!(assistant.tool_calls.is_none());
         // Content should be preserved since it's non-empty
         assert_eq!(assistant.content, "Let me check");
+    }
+
+    // ── replace_middle_with_summary tests ────────────────────────────────
+
+    #[test]
+    fn test_replace_middle_keeps_complete_tool_call_rounds() {
+        // Scenario: 4 user messages, each followed by Assistant tc + Tool result.
+        // With keep_last_rounds=3, Q4 should be complete, Q1 should be compacted.
+        // The core fix ensures any Tool message kept in tail has its matching
+        // Assistant preserved (no orphaned tool results that sanitize would remove).
+        let mut hm = HistoryManager::new(100000);
+        hm.append(make_message(MessageRole::System, "System prompt"));
+
+        // Q1
+        hm.append(make_message(MessageRole::User, "Question 1"));
+        hm.append(ChatMessage::assistant_with_tools("Searching", vec![
+            make_tool_call("tc_1", "search", "{}"),
+        ]));
+        hm.append(make_tool_result("tc_1", "Result for Q1"));
+        hm.append(make_message(MessageRole::Assistant, "Answer 1"));
+
+        // Q2
+        hm.append(make_message(MessageRole::User, "Question 2"));
+        hm.append(ChatMessage::assistant_with_tools("Searching again", vec![
+            make_tool_call("tc_2", "search", "{}"),
+        ]));
+        hm.append(make_tool_result("tc_2", "Result for Q2"));
+        hm.append(make_message(MessageRole::Assistant, "Answer 2"));
+
+        // Q3
+        hm.append(make_message(MessageRole::User, "Question 3"));
+        hm.append(ChatMessage::assistant_with_tools("Searching third", vec![
+            make_tool_call("tc_3", "search", "{}"),
+        ]));
+        hm.append(make_tool_result("tc_3", "Result for Q3"));
+        hm.append(make_message(MessageRole::Assistant, "Answer 3"));
+
+        // Q4
+        hm.append(make_message(MessageRole::User, "Question 4"));
+        hm.append(ChatMessage::assistant_with_tools("Searching fourth", vec![
+            make_tool_call("tc_4", "search", "{}"),
+        ]));
+        hm.append(make_tool_result("tc_4", "Result for Q4"));
+        hm.append(make_message(MessageRole::Assistant, "Answer 4"));
+
+        let removed = hm.replace_middle_with_summary("Summary Q1", 3);
+        assert!(removed > 0, "Should compact some messages");
+
+        let messages = hm.messages();
+
+        // Q1 (tc_1) should be compacted
+        let has_tc1 = messages.iter().any(|m| {
+            m.tool_calls.as_ref()
+                .is_some_and(|tcs| tcs.iter().any(|tc| tc.id == "tc_1"))
+        });
+        assert!(!has_tc1, "Q1 should be compacted");
+
+        // Q4 must be complete (User + Assistant tc + Tool result)
+        let has_tc4_call = messages.iter().any(|m| {
+            m.tool_calls.as_ref()
+                .is_some_and(|tcs| tcs.iter().any(|tc| tc.id == "tc_4"))
+        });
+        assert!(has_tc4_call, "Q4 tool_call should be preserved");
+        let has_tc4_result = messages.iter().any(|m| m.tool_call_id.as_deref() == Some("tc_4"));
+        assert!(has_tc4_result, "Q4 tool result should be preserved");
+
+        // Key assertion: sanitize should NOT remove any messages from the tail.
+        // Before the fix, orphaned Tool results (preserved without their
+        // Assistant) would be cleaned up here.
+        let mut messages_clone = messages.to_vec();
+        let len_before = messages_clone.len();
+        HistoryManager::sanitize_messages(&mut messages_clone);
+        assert_eq!(messages_clone.len(), len_before, "No orphans after fix");
+
+        // All Tool messages still present after sanitize must have matching
+        // Assistant with tool_calls.
+        for msg in &messages_clone {
+            if msg.role == MessageRole::Tool {
+                if let Some(ref tcid) = msg.tool_call_id {
+                    let has_call = messages_clone.iter().any(|m| {
+                        m.tool_calls.as_ref()
+                            .is_some_and(|tcs| tcs.iter().any(|tc| tc.id == *tcid))
+                    });
+                    assert!(has_call, "Tool result {tcid} has matching Assistant");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_replace_middle_single_user_many_tools() {
+        // Scenario: 1 user message followed by many tool-calling rounds.
+        // With keep_last_rounds=2, tail should keep the last 2 complete
+        // Assistant+Tool pairs (expanded from idx).
+        let mut hm = HistoryManager::new(100000);
+        hm.append(make_message(MessageRole::System, "System"));
+        hm.append(make_message(MessageRole::User, "Complex task"));
+
+        // 5 rounds of tool calls
+        for i in 1..=5 {
+            hm.append(ChatMessage::assistant_with_tools(&format!("Round {i}"), vec![
+                make_tool_call(&format!("tc_{i}"), "tool", "{}"),
+            ]));
+            hm.append(make_tool_result(&format!("tc_{i}"), &format!("Result {i}")));
+        }
+
+        let removed = hm.replace_middle_with_summary("Summary of rounds 1-3", 2);
+        assert!(removed > 0);
+
+        let messages = hm.messages();
+
+        // Should have: [System] [compaction_summary] [Assistant Round 4] [Tool tc_4]
+        //              [Assistant Round 5] [Tool tc_5]
+
+        // Verify compaction summary exists
+        let has_summary = messages.iter().any(|m| {
+            m.role == MessageRole::Assistant
+                && m.name.as_deref() == Some("compaction_summary")
+        });
+        assert!(has_summary, "Compaction summary should be present");
+
+        // Verify rounds 4 and 5 are complete (no orphans)
+        for i in 4..=5 {
+            let tc_id = format!("tc_{i}");
+            let has_call = messages.iter().any(|m| {
+                m.tool_calls.as_ref()
+                    .is_some_and(|tcs| tcs.iter().any(|tc| tc.id == tc_id))
+            });
+            assert!(has_call, "Tool call {tc_id} should be preserved");
+
+            let has_result = messages.iter().any(|m| m.tool_call_id.as_deref() == Some(&tc_id));
+            assert!(has_result, "Tool result {tc_id} should be preserved");
+        }
+
+        // Verify rounds 1-3 are NOT present (compacted)
+        for i in 1..=3 {
+            let tc_id = format!("tc_{i}");
+            let has_call = messages.iter().any(|m| {
+                m.tool_calls.as_ref()
+                    .is_some_and(|tcs| tcs.iter().any(|tc| tc.id == tc_id))
+            });
+            assert!(!has_call, "Tool call {tc_id} should be compacted");
+        }
+
+        // sanitize should not remove anything
+        let mut messages_clone = messages.to_vec();
+        let len_before = messages_clone.len();
+        HistoryManager::sanitize_messages(&mut messages_clone);
+        assert_eq!(messages_clone.len(), len_before, "No orphans after fix");
     }
 }

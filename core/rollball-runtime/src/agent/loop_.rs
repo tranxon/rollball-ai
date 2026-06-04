@@ -114,6 +114,9 @@ pub enum ChunkEvent {
     /// Context compaction started (emitted before auto/manual compact triggers),
     /// so the frontend can show a "Context compacting..." indicator.
     CompactingStarted,
+    /// Context compaction finished (emitted after compaction completes or fails),
+    /// so the frontend can clear the "compacting..." indicator.
+    CompactingEnded,
     /// Tool call event (routed through chunk channel for ordering guarantee)
     ToolCall {
         name: String,
@@ -635,8 +638,16 @@ impl AgentLoop {
     /// - 80% usage → LLM-based compaction (`compact_via_llm` + `replace_middle_with_summary`)
     /// - 95% usage → emergency trim (safety net)
     ///
-    /// Called after each LLM response when context usage is computed.
-    pub(crate) async fn compact_history_if_needed(&mut self, model_name: &str) {
+    /// When `force` is true (manual trigger from user), the 80% threshold is
+    /// bypassed and compaction proceeds regardless of current usage percentage.
+    ///
+    /// Called after each LLM response (force=false) and on manual user trigger
+    /// (force=true via `SessionMessage::CompactContext`).
+    pub(crate) async fn compact_history_if_needed(
+        &mut self,
+        model_name: &str,
+        force: bool,
+    ) {
         /// Number of conversational rounds to keep at the tail after compaction.
         /// Each round starts with a User message, so this keeps the last N user
         /// messages and everything after them.
@@ -650,13 +661,14 @@ impl AgentLoop {
 
         let usage_percent = (current_tokens as f64 / budget as f64) * 100.0;
 
-        // Stage 2: 80% → LLM-based compaction
-        if usage_percent >= 80.0 {
+        // Stage 2: 80% → LLM-based compaction (or force=true bypasses threshold)
+        if force || usage_percent >= 80.0 {
             tracing::info!(
                 usage_percent = ?usage_percent,
                 current_tokens,
                 budget,
-                "Context usage >= 80%, triggering LLM compaction"
+                force,
+                "Triggering LLM compaction"
             );
 
             // Notify frontend that compaction has started (both manual and auto paths).
@@ -748,6 +760,45 @@ impl AgentLoop {
                     if self.session.history.token_count() > budget {
                         self.session.history.emergency_trim();
                     }
+                }
+            }
+
+            // Notify frontend that compaction has finished, so it can clear
+            // the "compacting..." indicator (both success and error paths).
+            // Also send updated context usage so the frontend shows the new
+            // token count and percentage after compaction.
+            if let Some(ref tx) = self.core.on_chunk {
+                let session_id = self.core.session_id.clone().unwrap_or_default();
+                let _ = tx.try_send(SessionChunkEvent {
+                    session_id: session_id.clone(),
+                    event: ChunkEvent::CompactingEnded,
+                });
+
+                // Compute and send updated context usage after compaction.
+                // The history token count has changed, but the frontend still
+                // shows the old number from the last LLM API response.
+                let caps = self.core.gateway_model_capabilities.get(model_name);
+                if let Some(caps) = caps {
+                    let usable = caps.effective_input_budget(self.core.max_output_tokens_limit);
+                    let total_tokens = self.session.history.token_count();
+                    let usage_percent = if usable > 0 {
+                        ((total_tokens as f64 / usable as f64) * 100.0).min(100.0) as u8
+                    } else {
+                        0
+                    };
+                    let ctx_info = rollball_core::protocol::ContextUsageInfo {
+                        context_window: caps.context_window,
+                        input_tokens: total_tokens,
+                        output_tokens: 0,
+                        total_tokens,
+                        max_input_tokens: caps.max_input_tokens,
+                        usable_context: usable,
+                        usage_percent,
+                    };
+                    let _ = tx.try_send(SessionChunkEvent {
+                        session_id,
+                        event: ChunkEvent::ContextUsage(ctx_info),
+                    });
                 }
             }
         } else if usage_percent >= 95.0 {
@@ -1445,7 +1496,7 @@ impl AgentLoop {
                 // ADR-011: check if context usage triggers compaction.
                 // Runs regardless of model_caps availability —
                 // context_trim_budget falls back to history_max_tokens when caps are missing.
-                self.compact_history_if_needed(&current_model).await;
+                self.compact_history_if_needed(&current_model, false).await;
             }
 
             if !has_tool_calls {

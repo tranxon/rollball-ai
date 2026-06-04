@@ -9,6 +9,7 @@ use rollball_core::protocol::{McpListItem, ProtocolType, ProviderListItem};
 use std::sync::Arc;
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, reload, util::SubscriberInitExt};
+use tracing_subscriber::fmt::time::LocalTime;
 
 /// Type alias for the reload handle used to dynamically change log level.
 pub type LogReloadHandle = reload::Handle<EnvFilter, tracing_subscriber::Registry>;
@@ -143,6 +144,7 @@ impl Cli {
                         .with_target(false)
                         .with_thread_ids(false)
                         .with_file(false)
+                        .with_timer(LocalTime::rfc_3339())
                         .compact(),
                 )
                 .init();
@@ -171,13 +173,15 @@ impl Cli {
             .with_thread_ids(false)
             .with_file(false)
             .with_ansi(cfg!(not(windows))) // Enable ANSI on non-Windows, disable on Windows
+            .with_timer(LocalTime::rfc_3339())
             .compact();
         let file_layer = tracing_subscriber::fmt::layer()
             .with_writer(file_appender)
             .with_target(true)
             .with_thread_ids(true)
             .with_file(true)
-            .with_ansi(false);
+            .with_ansi(false)
+            .with_timer(LocalTime::rfc_3339());
         tracing_subscriber::registry()
             .with(filter)
             .with(stderr_layer)
@@ -1264,6 +1268,13 @@ async fn async_main(
                                 "session_id": sid,
                             });
                             relay_intent(&outbound_tx, "compacting_started", &params).await;
+                        }
+
+                        crate::agent::loop_::ChunkEvent::CompactingEnded => {
+                            let params = serde_json::json!({
+                                "session_id": sid,
+                            });
+                            relay_intent(&outbound_tx, "compacting_ended", &params).await;
                         }
 
                         crate::agent::loop_::ChunkEvent::ToolCall { name, args, id } => {

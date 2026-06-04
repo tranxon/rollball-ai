@@ -36,7 +36,7 @@ export function RadioGroup<T>({
                             onChange={() => onChange(opt.value)}
                             className="peer sr-only"
                         />
-                        <span className="block h-[var(--ui-radio-size)] w-[var(--ui-radio-size)] rounded-full bg-[var(--ui-radio-bg)] peer-checked:bg-[var(--color-accent)]" />
+                        <span className="block h-[var(--ui-radio-size)] w-[var(--ui-radio-size)] rounded-full bg-[var(--ui-radio-bg)] peer-checked:bg-[var(--color-accent)] peer-checked:ring-2 peer-checked:ring-[var(--color-accent)] peer-checked:ring-offset-1 peer-checked:ring-offset-white dark:peer-checked:ring-offset-zinc-800" />
                     </span>
                     {opt.label}
                 </label>

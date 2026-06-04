@@ -1408,7 +1408,7 @@ const CONTENT_EVENT_TYPES = new Set([
   "reasoning_started", "chunk", "tool_call", "tool_result",
   "done", "error", "tool_approval_needed", "ask_question", "iteration_limit_paused",
   "context_usage", "session_state_changed", "stopped", "todo_list_updated",
-  "compacting_started", "model_confirmed",
+  "compacting_started", "compacting_ended", "model_confirmed",
 ]);
 
 function handleMessageEvent(
@@ -1923,6 +1923,12 @@ function handleMessageEvent(
     case "compacting_started":
       if (sid) {
         set((state) => updateSessionState(state, agentId, sid, { isCompacting: true }));
+      }
+      break;
+
+    case "compacting_ended":
+      if (sid) {
+        set((state) => updateSessionState(state, agentId, sid, { isCompacting: false }));
       }
       break;
 

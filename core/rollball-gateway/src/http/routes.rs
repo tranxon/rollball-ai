@@ -56,6 +56,8 @@ pub enum BridgeEventType {
     ContextUsage,
     /// Context compaction started (Runtime → Desktop App, so frontend shows "compacting..." indicator)
     CompactingStarted,
+    /// Context compaction finished (Runtime → Desktop App, so frontend clears "compacting..." indicator)
+    CompactingEnded,
     /// LLM reasoning phase started — frontend shows pulsing "..." indicator
     ReasoningStarted,
     /// Session lifecycle status changed (ADR-014)
@@ -91,6 +93,7 @@ impl BridgeEventType {
             "ask_question" => Some(Self::AskQuestion),
             "todo_list_updated" => Some(Self::TodoListUpdated),
             "compacting_started" => Some(Self::CompactingStarted),
+            "compacting_ended" => Some(Self::CompactingEnded),
             _ => None,
         }
     }
@@ -122,6 +125,7 @@ impl BridgeEventType {
             Self::AskQuestion => "ask_question",
             Self::TodoListUpdated => "todo_list_updated",
             Self::CompactingStarted => "compacting_started",
+            Self::CompactingEnded => "compacting_ended",
             Self::Unknown => "unknown",
         }
     }
@@ -557,6 +561,8 @@ mod tests {
         assert_eq!(BridgeEventType::from_action("tool_approval_needed"), Some(BridgeEventType::ToolApprovalNeeded));
         assert_eq!(BridgeEventType::from_action("memory_updated"), Some(BridgeEventType::MemoryUpdated));
         assert_eq!(BridgeEventType::from_action("skill_executed"), Some(BridgeEventType::SkillExecuted));
+        assert_eq!(BridgeEventType::from_action("compacting_started"), Some(BridgeEventType::CompactingStarted));
+        assert_eq!(BridgeEventType::from_action("compacting_ended"), Some(BridgeEventType::CompactingEnded));
         assert_eq!(BridgeEventType::from_action("unknown_action"), None);
     }
 
@@ -571,6 +577,8 @@ mod tests {
         assert_eq!(BridgeEventType::ToolApprovalNeeded.as_str(), "tool_approval_needed");
         assert_eq!(BridgeEventType::MemoryUpdated.as_str(), "memory_updated");
         assert_eq!(BridgeEventType::SkillExecuted.as_str(), "skill_executed");
+        assert_eq!(BridgeEventType::CompactingStarted.as_str(), "compacting_started");
+        assert_eq!(BridgeEventType::CompactingEnded.as_str(), "compacting_ended");
         assert_eq!(BridgeEventType::Unknown.as_str(), "unknown");
     }
 

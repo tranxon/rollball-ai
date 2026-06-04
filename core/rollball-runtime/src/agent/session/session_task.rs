@@ -867,7 +867,7 @@ impl SessionTask {
                         "SessionTask: manual compact_context triggered"
                     );
                     let model_name = agent_loop.session.model().unwrap_or("default").to_string();
-                    agent_loop.compact_history_if_needed(&model_name).await;
+                    agent_loop.compact_history_if_needed(&model_name, true).await;
                 }
                 None => {
                     tracing::info!(
