@@ -182,6 +182,53 @@ impl super::loop_::AgentLoop {
         }
         Ok(())
     }
+
+    // ── Iteration result helpers ──────────────────────────────────────────
+
+    /// Handle pure text response (no tool calls).
+    ///
+    /// Persists think block + assistant response to JSONL, appends to
+    /// in-memory history, increments turn counter, and emits debug
+    /// phase events. Returns `TextResponse(content)`.
+    pub(crate) async fn handle_text_response(
+        &mut self,
+        response: &ChatResponse,
+        iteration: u32,
+    ) -> super::loop_::IterationResult {
+        let content = response.content.clone();
+
+        // Persist think block + assistant response to JSONL
+        if let Some(ref conversation) = self.session.conversation {
+            super::loop_session::persist_think_to_conversation(conversation, response);
+            let assistant_text = strip_think_block(&content);
+            conversation.append_message("assistant", &assistant_text, None);
+        }
+
+        self.session.history.append(ChatMessage {
+            ..ChatMessage::assistant(content.clone())
+        });
+
+        // Per ADR-011: per-turn episodic writes are removed.
+        // Grafeo is now written only via compaction summaries and
+        // session-close distillation.
+        self.session.turn_counter += 1;
+
+        tracing::info!(iteration, "Agent returned text response");
+
+        // Debug: enter AppendHistory phase and push step event
+        self.core.debug_observer.on_phase_enter(
+            crate::debug::protocol::DebugPhase::AppendHistory,
+        )
+        .await;
+        self.core.debug_observer.on_phase_step(
+            crate::debug::protocol::DebugPhase::Idle,
+            None,
+            Some(serde_json::json!({"content": content})),
+        );
+        self.core.debug_observer.on_phase_step_done().await;
+
+        super::loop_::IterationResult::TextResponse(content)
+    }
 }
 
 // ── Think block utilities (free functions) ──────────────────────────────
@@ -223,5 +270,24 @@ pub fn build_think_metadata(response: &ChatResponse) -> Option<serde_json::Value
         }))
     } else {
         None
+    }
+}
+
+/// Persist think block to conversation JSONL (if present).
+///
+/// Shared by text response path and tool calls path — D2 deduplication.
+/// DeepSeek `reasoning_content` (separate field) takes priority over
+/// `<think />` tags embedded in `content`.
+pub fn persist_think_to_conversation(
+    conversation: &crate::conversation::ConversationSession,
+    response: &ChatResponse,
+) {
+    let think_meta = build_think_metadata(response);
+    if let Some(ref reasoning) = response.reasoning_content {
+        if !reasoning.is_empty() {
+            conversation.append_message("thought", reasoning, think_meta);
+        }
+    } else if let Some(think_content) = extract_think_block(&response.content) {
+        conversation.append_message("thought", &think_content, think_meta);
     }
 }

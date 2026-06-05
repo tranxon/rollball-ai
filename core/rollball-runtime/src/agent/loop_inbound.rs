@@ -14,7 +14,9 @@
 use rollball_core::providers::traits::{ChatMessage, MessageRole};
 
 use crate::agent::inbound::InboundMessage;
-use crate::agent::loop_::AgentLoop;
+use crate::agent::loop_::{AgentLoop, ChunkEvent, IterationResult};
+use crate::agent::loop_session::strip_think_block;
+use crate::agent::session_state::SessionStatus;
 
 // ── D1 Deduplication: shared message injection helper ──
 
@@ -251,5 +253,36 @@ impl AgentLoop {
             }
         }
         should_stop
+    }
+
+    /// Handle agent stop (user clicked Stop or debug controller stopped).
+    ///
+    /// D3 deduplication: consolidates the nearly identical stopped-result
+    /// construction from pre-tool stop and post-tool stop paths.
+    /// Transitions to Idle, persists partial assistant response to JSONL,
+    /// emits Stopped chunk event, and pushes debug step event.
+    pub(crate) async fn handle_stopped(&mut self, content: &str) -> IterationResult {
+        self.transition_status(SessionStatus::Idle);
+
+        // Persist assistant message to JSONL conversation
+        if let Some(ref conversation) = self.session.conversation {
+            let assistant_text = strip_think_block(content);
+            conversation.append_message("assistant", &assistant_text, None);
+        }
+
+        // Notify frontend via chunk channel
+        let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
+            content: content.to_string(),
+        });
+
+        // Debug: push step event and auto-pause if stepping
+        self.core.debug_observer.on_phase_step(
+            crate::debug::protocol::DebugPhase::Idle,
+            None,
+            Some(serde_json::json!({"stopped": true, "content": content})),
+        );
+        self.core.debug_observer.on_phase_step_done().await;
+
+        IterationResult::Stopped(content.to_string())
     }
 }

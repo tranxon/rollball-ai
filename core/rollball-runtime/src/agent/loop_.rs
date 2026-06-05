@@ -7,7 +7,6 @@
 //! S1.6: InboundQueue for external message injection
 //! S1.7: Parallel tool execution with per-tool timeout
 
-use std::collections::HashSet;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
@@ -23,13 +22,11 @@ use crate::agent::agent_core::AgentCore;
 use crate::agent::context::ContextBuilder;
 use crate::agent::history::HistoryManager;
 use crate::agent::inbound::InboundMessage;
-use crate::agent::loop_detector::{LoopDetectionResult, LoopPattern, ResponseLevel};
 use crate::agent::session_state::SessionState;
 use crate::config::RuntimeConfig;
 use crate::conversation::ConversationSession;
 use crate::error::{Result, RuntimeError};
 use crate::agent::loop_approval::{ApprovalDecision, ApprovalHandle};
-use crate::agent::loop_session::{build_think_metadata, extract_think_block, strip_think_block};
 use crate::security::approval_gate::ApprovalRequest;
 use crate::tools::builtin::ask_user_question::QuestionOption;
 
@@ -531,6 +528,97 @@ impl AgentLoop {
         }
     }
 
+    /// Await resume from paused/stepping state (DevMode only).
+    ///
+    /// When a debug controller is active, this method loops until the
+    /// controller transitions to Running or Stepping (resume) or
+    /// Stopped (abort). It also handles rewind requests by truncating
+    /// history to the target snapshot.
+    ///
+    /// Returns `Some(IterationResult::Stopped)` if the loop should stop,
+    /// or `None` if execution should continue.
+    async fn await_debug_resume(&mut self) -> Option<IterationResult> {
+        let ctrl = self.core.debug_observer.debug_ctrl().cloned();
+        if let Some(ctrl) = ctrl {
+            let rewind_notify = self.core.debug_observer.rewind_notify().cloned();
+            loop {
+                // Check for Chat Panel STOP
+                if self.poll_stop() {
+                    tracing::info!("Debug: agent loop stopped via inbound channel");
+                    let mut ctrl_guard = ctrl.lock().await;
+                    let iteration = ctrl_guard.iteration;
+                    ctrl_guard.state = crate::debug::controller::DebugState::Stopped;
+                    drop(ctrl_guard);
+                    if let Some(event_tx) = self.core.debug_observer.debug_event_tx() {
+                        let _ = event_tx.send(
+                            crate::debug::server::DebugEvent::ExecutionStateChanged {
+                                new_state: crate::debug::controller::DebugState::Stopped,
+                                iteration,
+                            },
+                        );
+                    }
+                    return Some(IterationResult::Stopped(String::new()));
+                }
+
+                // Consume any pending rewind
+                {
+                    let mut ctrl_guard = ctrl.lock().await;
+                    if let Some(target_iter) = ctrl_guard.take_rewind_target() {
+                        let msg_count = ctrl_guard
+                            .conversation_snapshots
+                            .iter()
+                            .find(|s| s.iteration == target_iter)
+                            .map(|s| s.message_count);
+                        if let Some(count) = msg_count {
+                            self.session.history.truncate_to(count);
+                            tracing::info!(
+                                target_iteration = target_iter,
+                                messages_trimmed_to = count,
+                                "Debug rewind: history truncated"
+                            );
+                        }
+                        ctrl_guard.iteration = target_iter;
+                    }
+                }
+
+                let state = {
+                    let ctrl_guard = ctrl.lock().await;
+                    ctrl_guard.state.clone()
+                };
+                match state {
+                    crate::debug::controller::DebugState::Running => {
+                        self.transition_status(SessionStatus::Streaming { message_id: None });
+                        break;
+                    }
+                    crate::debug::controller::DebugState::Stepping => {
+                        self.transition_status(SessionStatus::Streaming { message_id: None });
+                        break;
+                    }
+                    crate::debug::controller::DebugState::Stopped => {
+                        tracing::info!("Debug: agent loop stopped");
+                        self.transition_status(SessionStatus::Idle);
+                        return Some(IterationResult::Stopped(String::new()));
+                    }
+                    crate::debug::controller::DebugState::Paused => {
+                        self.transition_status(SessionStatus::Paused {
+                            iteration: None,
+                            max_iterations: None,
+                        });
+                        if let Some(ref notify) = rewind_notify {
+                            tokio::select! {
+                                _ = notify.notified() => {},
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {},
+                            }
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Execute a single iteration of the agent loop (steps ① through ⑧).
     ///
     /// Shared between production [`run()`] and debug [`DebugSessionTask`].
@@ -555,547 +643,103 @@ impl AgentLoop {
         _retrieved_memory_ids: &[String],
         current_model: &str,
     ) -> Result<IterationResult> {
-            // ── Debug observer hooks (ADR-013: Observer Pipeline) ──
-            // Check for bypass-injected debug handles, then notify the
-            // observer of iteration start (which increments the debug
-            // iteration counter and creates a conversation snapshot).
-            self.core.debug_observer.check_pending_injection();
-            let debug_iter = self.core.debug_observer.on_iteration_start(
-                self.session.history.len(),
-            );
+        // ── ① Debug observer hooks + resume ──
+        self.core.debug_observer.check_pending_injection();
+        let debug_iter = self.core.debug_observer.on_iteration_start(
+            self.session.history.len(),
+        );
+        if let Some(result) = self.await_debug_resume().await {
+            return Ok(result);
+        }
+        self.core.debug_observer.apply_pending_patches(context_builder);
+        self.core.debug_observer.take_re_execute_pending();
 
-            // Await resume if paused (DevMode only).
-            {
-                let ctrl = self.core.debug_observer.debug_ctrl().cloned();
-                if let Some(ctrl) = ctrl {
-                    let rewind_notify = self.core.debug_observer.rewind_notify().cloned();
-                    loop {
-                        // Check for Chat Panel STOP
-                        if self.poll_stop() {
-                            tracing::info!("Debug: agent loop stopped via inbound channel");
-                            let mut ctrl_guard = ctrl.lock().await;
-                            let iteration = ctrl_guard.iteration;
-                            ctrl_guard.state = crate::debug::controller::DebugState::Stopped;
-                            drop(ctrl_guard);
-                            if let Some(event_tx) = self.core.debug_observer.debug_event_tx() {
-                                let _ = event_tx.send(
-                                    crate::debug::server::DebugEvent::ExecutionStateChanged {
-                                        new_state: crate::debug::controller::DebugState::Stopped,
-                                        iteration,
-                                    },
-                                );
-                            }
-                            return Ok(IterationResult::Stopped(String::new()));
-                        }
+        // ── ② Budget + context build ──
+        self.core.debug_observer.on_phase_enter(
+            crate::debug::protocol::DebugPhase::BudgetCheck,
+        ).await;
+        self.check_budget_and_warn()?;
+        self.trim_history_to_budget(&current_model);
+        let mut chat_request = self.build_chat_request(context_builder, &current_model);
+        if self.check_context_overflow_and_trim(&current_model) {
+            chat_request = self.build_chat_request(context_builder, &current_model);
+        }
+        self.core.debug_observer.on_phase_enter(
+            crate::debug::protocol::DebugPhase::BuildContext,
+        ).await;
+        self.core.debug_observer.on_context_built(
+            crate::debug::observer::ContextSnapshotRequest {
+                context_builder,
+                iteration: debug_iter,
+                model: &current_model,
+                all_tools: &self.core.all_tools,
+            },
+        ).await;
 
-                        // Consume any pending rewind
-                        {
-                            let mut ctrl_guard = ctrl.lock().await;
-                            if let Some(target_iter) = ctrl_guard.take_rewind_target() {
-                                let msg_count = ctrl_guard
-                                    .conversation_snapshots
-                                    .iter()
-                                    .find(|s| s.iteration == target_iter)
-                                    .map(|s| s.message_count);
-                                if let Some(count) = msg_count {
-                                    self.session.history.truncate_to(count);
-                                    tracing::info!(
-                                        target_iteration = target_iter,
-                                        messages_trimmed_to = count,
-                                        "Debug rewind: history truncated"
-                                    );
-                                }
-                                ctrl_guard.iteration = target_iter;
-                            }
-                        }
+        // ── ③ Call LLM + parse + usage ──
+        let response = self.call_llm_streaming(&chat_request, context_builder).await?;
+        self.core.debug_observer.on_phase_enter(
+            crate::debug::protocol::DebugPhase::LlmCall,
+        ).await;
+        let has_tool_calls = response.tool_calls.is_some();
+        self.core.debug_observer.on_phase_enter(
+            crate::debug::protocol::DebugPhase::ParseResponse,
+        ).await;
+        self.process_llm_response_usage(&response, &current_model).await;
 
-                        let state = {
-                            let ctrl_guard = ctrl.lock().await;
-                            ctrl_guard.state.clone()
-                        };
-                        match state {
-                            crate::debug::controller::DebugState::Running => {
-                                self.transition_status(SessionStatus::Streaming { message_id: None });
-                                break;
-                            }
-                            crate::debug::controller::DebugState::Stepping => {
-                                self.transition_status(SessionStatus::Streaming { message_id: None });
-                                break;
-                            }
-                            crate::debug::controller::DebugState::Stopped => {
-                                tracing::info!("Debug: agent loop stopped");
-                                self.transition_status(SessionStatus::Idle);
-                                return Ok(IterationResult::Stopped(String::new()));
-                            }
-                            crate::debug::controller::DebugState::Paused => {
-                                self.transition_status(SessionStatus::Paused {
-                                    iteration: None,
-                                    max_iterations: None,
-                                });
-                                if let Some(ref notify) = rewind_notify {
-                                    tokio::select! {
-                                        _ = notify.notified() => {},
-                                        _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {},
-                                    }
-                                } else {
-                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        // ── ④ Text response → early return ──
+        if !has_tool_calls {
+            return Ok(self.handle_text_response(&response, iteration).await);
+        }
 
-            // ── Apply pending patches to context_builder (DevMode only) ──
-            self.core.debug_observer.apply_pending_patches(context_builder);
-            self.core.debug_observer.take_re_execute_pending();
+        // ── ⑤ Prepare + pre-check tool calls ──
+        let deduped_calls = self.prepare_tool_calls(&response);
+        let (calls_to_execute, blocked_info) = self.pre_check_loop_detection(&deduped_calls);
 
-            // Enter BudgetCheck phase
-            self.core.debug_observer.on_phase_enter(
-                crate::debug::protocol::DebugPhase::BudgetCheck,
-            )
-            .await;
+        // ── ⑥ Pre-tool stop check ──
+        if self.poll_stop() {
+            tracing::info!("Stopped before tool execution — saving partial response");
+            return Ok(self.handle_stopped(&response.content).await);
+        }
 
-            // ① Budget pre-check (ADR-014: extracted to loop_context.rs)
-            self.check_budget_and_warn()?;
+        // ── ⑦ Dispatch + merge tool results ──
+        self.core.debug_observer.on_phase_enter(
+            crate::debug::protocol::DebugPhase::ToolExecution,
+        ).await;
+        let (tool_results, was_stopped) = self.dispatch_and_merge_tools(
+            calls_to_execute, &deduped_calls, &blocked_info, context_builder,
+        ).await;
 
-            // ② Preemptive trim — MUST happen BEFORE build() so the request
-            // is constructed with already-trimmed history.
-            self.trim_history_to_budget(&current_model);
-
-            // ②.5 Build context (ADR-014: extracted to loop_context.rs)
-            let mut chat_request = self.build_chat_request(context_builder, &current_model);
-
-            // ②.6 Context usage check / circuit-breaking (ADR-014: extracted to loop_context.rs)
-            if self.check_context_overflow_and_trim(&current_model) {
-                // Rebuild request with trimmed history
-                chat_request = self.build_chat_request(context_builder, &current_model);
-            }
-
-            // Debug: enter BuildContext phase
-            self.core.debug_observer.on_phase_enter(
-                crate::debug::protocol::DebugPhase::BuildContext,
-            )
-            .await;
-
-            // Debug: create context snapshot and push onContextBuilt event
-            self.core.debug_observer.on_context_built(
-                crate::debug::observer::ContextSnapshotRequest {
-                    context_builder,
-                    iteration: debug_iter,
-                    model: &current_model,
-                    all_tools: &self.core.all_tools,
-                },
-            ).await;
-
-
-
-            // ③ Call LLM with streaming (S1.5)
-            let response = self.call_llm_streaming(&chat_request, context_builder).await?;
-
-            // Debug: enter LlmCall phase
-            self.core.debug_observer.on_phase_enter(crate::debug::protocol::DebugPhase::LlmCall)
-                .await;
-
-            // ④ Parse response
-            let has_tool_calls = response.tool_calls.is_some();
-
-            // Debug: enter ParseResponse phase
-            self.core.debug_observer.on_phase_enter(
-                crate::debug::protocol::DebugPhase::ParseResponse,
-            )
-            .await;
-
-            // ④ Process usage + budget calibration + context usage report + compaction
-            // (ADR-014: extracted to loop_context.rs)
-            self.process_llm_response_usage(&response, &current_model).await;
-
-            if !has_tool_calls {
-                // Pure text response — normal exit
-                let content = response.content.clone();
-
-                // Persist think block (if present) and assistant response to JSONL
-                if let Some(ref conversation) = self.session.conversation {
-                    let think_meta = build_think_metadata(&response);
-                    if let Some(ref reasoning) = response.reasoning_content {
-                        if !reasoning.is_empty() {
-                            conversation.append_message("thought", reasoning, think_meta.clone());
-                        }
-                    } else if let Some(think_content) = extract_think_block(&content) {
-                        // Fallback: extract from <think> tags in content
-                        conversation.append_message("thought", &think_content, think_meta);
-                    }
-                    let assistant_text = strip_think_block(&content);
-                    conversation.append_message("assistant", &assistant_text, None);
-                }
-
-                self.session.history.append(ChatMessage {
-                    ..ChatMessage::assistant(response.content)
-                });
-
-                // Per ADR-011: per-turn episodic writes are removed.
-                // Grafeo is now written only via compaction summaries and
-                // session-close distillation.
-                self.session.turn_counter += 1;
-
-                tracing::info!(iteration, "Agent returned text response");
-
-                // Debug: enter AppendHistory phase and push step event
-                self.core.debug_observer.on_phase_enter(
-                    crate::debug::protocol::DebugPhase::AppendHistory,
-                )
-                .await;
-                self.core.debug_observer.on_phase_step(
-                    crate::debug::protocol::DebugPhase::Idle,
-                    None,
-                    Some(serde_json::json!({"content": content})),
-                );
-                self.core.debug_observer.on_phase_step_done().await;
-
-                return Ok(IterationResult::TextResponse(content));
-            }
-
-            // Persist think block (if present) to JSONL
-            if let Some(ref conversation) = self.session.conversation {
-                let think_meta = build_think_metadata(&response);
-                // DeepSeek reasoning_content (separate field) takes priority
-                if let Some(ref reasoning) = response.reasoning_content {
-                    if !reasoning.is_empty() {
-                        conversation.append_message("thought", reasoning, think_meta.clone());
-                    }
-                } else if let Some(think_content) = extract_think_block(&response.content) {
-                    conversation.append_message("thought", &think_content, think_meta);
-                }
-            }
-
-            // Has tool calls — process them (moved after think metadata to avoid partial move)
-            let tool_calls = response.tool_calls.unwrap_or_default();
-
-            // ④.5 Tool call deduplication (same iteration)
-            let mut seen = HashSet::new();
-            let deduped_calls: Vec<ToolCall> = tool_calls
-                .into_iter()
-                .filter(|tc| {
-                    let sig = format!("{}:{}", tc.function.name, tc.function.arguments);
-                    seen.insert(sig)
-                })
-                .collect();
-
-            // Add assistant message with tool_calls to history
+        // ── ⑧ Persist + emit + append + pre-trim tool results ──
+        self.persist_and_emit_tool_results(&deduped_calls, &tool_results);
+        self.pre_trim_for_tool_results(&tool_results, current_model);
+        for (tc, result_content) in deduped_calls.iter().zip(tool_results.iter()) {
             self.session.history.append(ChatMessage {
-                reasoning_content: response.reasoning_content.clone(),
-                tool_calls: Some(deduped_calls.clone()),
-                ..ChatMessage::assistant(response.content.clone())
+                name: Some(tc.function.name.clone()),
+                ..ChatMessage::tool(tc.id.clone(), result_content.clone())
             });
+        }
 
-            // Persist tool calls to JSONL
-            if let Some(ref conversation) = self.session.conversation {
-                for tc in &deduped_calls {
-                    let metadata = serde_json::json!({
-                        "tool_name": tc.function.name,
-                        "tool_call_id": tc.id,
-                    });
-                    conversation.append_message("tool_call", &tc.function.arguments, Some(metadata));
-                }
-            }
+        // ── ⑨ Post-execution loop detection ──
+        self.post_check_loop_detection(&deduped_calls, &tool_results, &blocked_info)?;
 
-            // Emit ToolCall events via chunk channel (ensures ordering with content chunks)
-            for tc in &deduped_calls {
-                if !self.core.try_send_chunk(ChunkEvent::ToolCall {
-                    name: tc.function.name.clone(),
-                    args: tc.function.arguments.clone(),
-                    id: tc.id.clone(),
-                }) {
-                    tracing::debug!("on_chunk channel full or closed, dropping ToolCall event");
-                }
-            }
+        // ── ⑩ Post-tool stop check ──
+        if was_stopped {
+            tracing::info!("Stopped during tool execution — saving partial results");
+            return Ok(self.handle_stopped(&response.content).await);
+        }
 
-            // ⑤ Tool dispatch — parallel execution (S1.7)
-            // ⑤.1 Pre-execution loop detection: block repeated calls before wasting an iteration
-            let mut calls_to_execute: Vec<ToolCall> = Vec::new();
-            let mut blocked_info: Vec<(usize, LoopPattern)> = Vec::new();
-            for (idx, tc) in deduped_calls.iter().enumerate() {
-                match self.session.loop_detector.peek_check(&tc.function.name, &tc.function.arguments) {
-                    LoopDetectionResult::NoLoop => {
-                        calls_to_execute.push(tc.clone());
-                    }
-                    LoopDetectionResult::LoopDetected { level, pattern, .. } => {
-                        match level {
-                            ResponseLevel::Warning => {
-                                // Warning is handled post-execution; allow the call
-                                calls_to_execute.push(tc.clone());
-                            }
-                            ResponseLevel::Block | ResponseLevel::Break => {
-                                tracing::warn!(
-                                    tool = %tc.function.name,
-                                    level = ?level,
-                                    "Loop detected (pre-execution), blocking tool call"
-                                );
-                                blocked_info.push((idx, pattern));
-                            }
-                        }
-                    }
-                }
-            }
+        // ── ⑪ Debug phase completion ──
+        tracing::debug!(iteration, "Loop iteration complete");
+        self.core.debug_observer.on_phase_enter(
+            crate::debug::protocol::DebugPhase::AppendHistory,
+        ).await;
+        self.core.debug_observer.on_phase_step(
+            crate::debug::protocol::DebugPhase::Idle, None, None,
+        );
+        self.core.debug_observer.on_phase_step_done().await;
 
-            // Check for stop before executing tools
-            if self.poll_stop() {
-                tracing::info!("Stopped before tool execution — saving partial response");
-                // ADR-014: Streaming → Idle (stopped before tool execution)
-                self.transition_status(SessionStatus::Idle);
-                let content = response.content.clone();
-
-                // Persist stopped assistant message to JSONL conversation.
-                if let Some(ref conversation) = self.session.conversation {
-                    let assistant_text = strip_think_block(&content);
-                    conversation.append_message("assistant", &assistant_text, None);
-                }
-
-                // Notify frontend via chunk channel
-                let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
-                    content: content.clone(),
-                });
-
-                // Debug: push step event and auto-pause if stepping
-                self.core.debug_observer.on_phase_step(
-                    crate::debug::protocol::DebugPhase::Idle,
-                    None,
-                    Some(serde_json::json!({"stopped": true, "content": content})),
-                );
-                self.core.debug_observer.on_phase_step_done().await;
-
-                return Ok(IterationResult::Stopped(content));
-            }
-
-            // Debug: enter ToolExecution phase
-            self.core.debug_observer.on_phase_enter(
-                crate::debug::protocol::DebugPhase::ToolExecution,
-            )
-            .await;
-
-            // ⑤.2 Intercept ask_user_question and todo_write calls.
-            // - ask_user_question requires user interaction via ChunkEvent::AskQuestion.
-            // - todo_write mutates SessionState.todos directly (in-memory state).
-            // Both are processed sequentially before parallel tool dispatch.
-            let mut ask_question_results: Vec<(usize, String)> = Vec::new();
-            let mut todo_write_results: Vec<(usize, String)> = Vec::new();
-            let mut parallel_calls: Vec<(usize, ToolCall)> = Vec::new();
-            for (idx, tc) in calls_to_execute.into_iter().enumerate() {
-                if tc.function.name == "ask_user_question" {
-                    let result = self.handle_ask_user_question(&tc).await;
-                    ask_question_results.push((idx, result));
-                } else if tc.function.name == "todo_write" {
-                    let result = self.handle_todo_write(&tc, context_builder);
-                    todo_write_results.push((idx, result));
-                } else {
-                    parallel_calls.push((idx, tc));
-                }
-            }
-
-            // Execute non-question tools in parallel
-            let calls_for_parallel: Vec<ToolCall> = parallel_calls.iter().map(|(_, tc)| tc.clone()).collect();
-            let (parallel_results, was_stopped) = self.execute_tools_parallel(&calls_for_parallel).await;
-
-            // Merge results: ask_question + todo_write results + parallel results, mapped back to original indices
-            // Build a map from original index → result for ask_question calls
-            let ask_result_map: std::collections::HashMap<usize, String> =
-                ask_question_results.into_iter().collect();
-            let todo_result_map: std::collections::HashMap<usize, String> =
-                todo_write_results.into_iter().collect();
-
-            // Reconstruct executed_results in the order matching calls_for_parallel
-            // Then map back to the original calls_to_execute indices
-            let mut final_results: Vec<(usize, String)> = Vec::new();
-            for (parallel_idx, result) in parallel_results.into_iter().enumerate() {
-                if let Some((orig_idx, _)) = parallel_calls.get(parallel_idx) {
-                    final_results.push((*orig_idx, result));
-                }
-            }
-            // Add ask_question results
-            for (orig_idx, result) in &ask_result_map {
-                final_results.push((*orig_idx, result.clone()));
-            }
-            // Add todo_write results
-            for (orig_idx, result) in &todo_result_map {
-                final_results.push((*orig_idx, result.clone()));
-            }
-            // Sort by original index to maintain order
-            final_results.sort_by_key(|(idx, _)| *idx);
-
-            let executed_results: Vec<String> = final_results.into_iter().map(|(_, r)| r).collect();
-
-            // Merge executed results with pre-blocked results, preserving original order
-            let mut tool_results: Vec<String> = Vec::with_capacity(deduped_calls.len());
-            let mut executed_iter = executed_results.into_iter();
-            for idx in 0..deduped_calls.len() {
-                if let Some(pos) = blocked_info.iter().position(|(i, _)| *i == idx) {
-                    let msg = match &blocked_info[pos].1 {
-                        LoopPattern::SameToolFlood => {
-                            "Loop detected: this tool has been called too many times in a short period. \
-                             Please STOP using this tool and try a different approach \
-                             (e.g., use file_read to verify results, or switch to another tool)."
-                        }
-                        _ => "Loop detected: this tool call has been blocked because it was repeated too many times with the same parameters. Try a different approach.",
-                    };
-                    tool_results.push(msg.to_string());
-                } else {
-                    tool_results.push(executed_iter.next().unwrap_or_default());
-                }
-            }
-
-            // Persist tool results to JSONL
-            if let Some(ref conversation) = self.session.conversation {
-                for (tc, result_content) in deduped_calls.iter().zip(tool_results.iter()) {
-                    let metadata = serde_json::json!({
-                        "tool_name": tc.function.name,
-                        "tool_call_id": tc.id,
-                    });
-                    conversation.append_message("tool_result", result_content, Some(metadata));
-                }
-            }
-
-            // Emit ToolResult events via chunk channel (ensures ordering with content chunks)
-            for (tc, result_content) in deduped_calls.iter().zip(tool_results.iter()) {
-                if !self.core.try_send_chunk(ChunkEvent::ToolResult {
-                    name: tc.function.name.clone(),
-                    result: result_content.clone(),
-                    tool_call_id: tc.id.clone(),
-                }) {
-                    tracing::debug!("on_chunk channel full or closed, dropping ToolResult event");
-                }
-            }
-
-            // ⑥ Pre-trim for tool results (ADR-014: extracted to loop_context.rs)
-            self.pre_trim_for_tool_results(&tool_results, current_model);
-
-            // ── ⑦ Append ALL tool results to history (must be contiguous after assistant tool_calls)
-            for (tc, result_content) in deduped_calls.iter().zip(tool_results.iter()) {
-                let tool_result_message = ChatMessage {
-                    name: Some(tc.function.name.clone()),
-                    ..ChatMessage::tool(tc.id.clone(), result_content.clone())
-                };
-                self.session.history.append(tool_result_message);
-            }
-
-            // ⑧ Loop detection — run AFTER all tool results are appended to avoid
-            // inserting warning messages between tool results (which breaks DeepSeek API
-            // requirement that all tool messages must immediately follow assistant tool_calls).
-            let mut deferred_warnings: Vec<String> = Vec::new();
-            let mut break_error: Option<String> = None;
-            for (idx, (tc, result_content)) in deduped_calls.iter().zip(tool_results.iter()).enumerate() {
-                // Skip loop detection for pre-blocked tool calls to avoid self-reinforcing
-                // false positives: blocked tools return uniform error messages whose identical
-                // hashes would incorrectly trigger NoProgress detection.
-                if blocked_info.iter().any(|(i, _)| *i == idx) {
-                    continue;
-                }
-
-                match self.session.loop_detector.check(
-                    &tc.function.name,
-                    &tc.function.arguments,
-                    result_content,
-                ) {
-                    LoopDetectionResult::NoLoop => {}
-                    LoopDetectionResult::LoopDetected {
-                        pattern,
-                        level,
-                        count: _,
-                        message,
-                    } => {
-                        tracing::warn!(message = %message, level = ?level, "Loop detected");
-                        match level {
-                            ResponseLevel::Warning => {
-                                let warning_content = match &pattern {
-                                    LoopPattern::SameToolFlood => {
-                                        format!(
-                                            "[System Warning] {message} \
-                                             This tool has been called excessively. \
-                                             Please STOP using this tool and try a different approach \
-                                             (e.g., use file_read to verify results, or switch to another tool) \
-                                             to complete the task."
-                                        )
-                                    }
-                                    _ => format!("[System Warning] {message}"),
-                                };
-                                deferred_warnings.push(warning_content);
-                            }
-                            ResponseLevel::Block => {
-                                // Block was already handled by returning error as tool result
-                            }
-                            ResponseLevel::Break => {
-                                break_error = Some(message);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Append deferred warning messages AFTER all tool results
-            for warning_content in deferred_warnings {
-                self.session.history.append(ChatMessage {
-                    role: MessageRole::User,
-                    content: warning_content,
-                    name: Some("system".to_string()),
-                    ..Default::default()
-                });
-            }
-
-            // Handle Break-level loop detection
-            if let Some(msg) = break_error {
-                // ADR-014: Streaming → Idle (loop detected)
-                self.transition_status(SessionStatus::Idle);
-                return Err(RuntimeError::LoopDetected(msg));
-            }
-
-            // ── Check for stop detected during tool execution ──
-            // poll_stop() consumed the stop signal inside execute_tools_parallel(),
-            // so we must propagate it here to prevent the loop from continuing.
-            if was_stopped {
-                tracing::info!("Stopped during tool execution — saving partial results");
-                // ADR-014: Streaming → Idle (interrupted during tool execution)
-                self.transition_status(SessionStatus::Idle);
-                let content = response.content.clone();
-
-                // Persist assistant message to JSONL (normal tool_call path only
-                // persists think + tool_calls; assistant text needs explicit save).
-                if let Some(ref conversation) = self.session.conversation {
-                    let assistant_text = strip_think_block(&content);
-                    conversation.append_message("assistant", &assistant_text, None);
-                }
-
-                // Notify frontend via chunk channel
-                let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
-                    content: content.clone(),
-                });
-
-                // Debug: push step event and auto-pause if stepping
-                self.core.debug_observer.on_phase_step(
-                    crate::debug::protocol::DebugPhase::Idle,
-                    None,
-                    Some(serde_json::json!({"stopped": true, "content": content})),
-                );
-                self.core.debug_observer.on_phase_step_done().await;
-
-                return Ok(IterationResult::Stopped(content));
-            }
-
-            // ⑦ Usage report (async, non-blocking)
-            tracing::debug!(iteration, "Loop iteration complete");
-
-            // Debug: enter AppendHistory phase and push step event
-            self.core.debug_observer.on_phase_enter(
-                crate::debug::protocol::DebugPhase::AppendHistory,
-            )
-            .await;
-            self.core.debug_observer.on_phase_step(
-                crate::debug::protocol::DebugPhase::Idle,
-                None,
-                None,
-            );
-            self.core.debug_observer.on_phase_step_done().await;
-
-            Ok(IterationResult::ToolCallsExecuted)
+        Ok(IterationResult::ToolCallsExecuted)
     }
 
     // ── Inbound message methods moved to loop_inbound.rs (ADR-014 Phase 3) ──
