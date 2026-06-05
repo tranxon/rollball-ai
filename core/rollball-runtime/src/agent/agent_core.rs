@@ -123,9 +123,6 @@ pub struct AgentCore {
     /// Each session gets its own independent Notify; fire_urgent_stop() only
     /// wakes the target session's tokio::select! branches.
     pub(crate) urgent_stop: Option<Arc<Notify>>,
-    /// User display name delivered by Gateway via identity delivery.
-    /// Used for user-facing messages like stop confirmation.
-    pub(crate) user_display_name: Option<String>,
     /// Approval gate for shell command risk confirmation.
     /// None in standalone/CLI mode (uses CliApprovalGate).
     /// Some(Arc<dyn ApprovalGate>) in CLI mode with non-default gate.
@@ -189,7 +186,6 @@ impl AgentCore {
             debug_resume_notify: None,
             debug_event_tx: None,
             urgent_stop: Some(Arc::new(Notify::new())),
-            user_display_name: None,
             approval_gate: None,
             approval_handle: None,
             shell_approval_threshold,
@@ -578,7 +574,6 @@ impl AgentCore {
             // Per-session Notify — each session gets its own independent
             // Notify so fire_urgent_stop() only wakes the target session.
             urgent_stop: Some(Arc::new(Notify::new())),
-            user_display_name: self.user_display_name.clone(),
             approval_gate: self.approval_gate.clone(),
             approval_handle: self.approval_handle.clone(),
             shell_approval_threshold: self.shell_approval_threshold.clone(),
@@ -702,16 +697,6 @@ impl AgentCore {
     /// Access the shell approval threshold.
     pub fn shell_approval_threshold(&self) -> &ShellApprovalThreshold {
         &self.shell_approval_threshold
-    }
-
-    /// Set the user display name from Gateway identity delivery.
-    pub fn set_user_display_name(&mut self, name: Option<String>) {
-        tracing::info!(
-            old = ?self.user_display_name,
-            new = ?name,
-            "AgentCore user_display_name updated"
-        );
-        self.user_display_name = name;
     }
 
     /// Get the usable context budget for history trimming.

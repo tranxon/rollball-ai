@@ -1091,8 +1091,7 @@ impl AgentLoop {
                             tracing::info!(reason = %reason, "User chose to stop during iteration limit pause");
                             // ADR-014: Paused → Idle
                             self.transition_status(SessionStatus::Idle);
-                            let name = self.core.user_display_name.as_deref().unwrap_or("user");
-                            return Ok(format!("Agent stopped by {} after reaching iteration limit.", name));
+                            return Ok(String::new());
                         }
                         Some(InboundMessage::UserOperation(user_op)) => {
                             match user_op {
@@ -1109,8 +1108,7 @@ impl AgentLoop {
                                 crate::agent::inbound::UserOp::StopLoop { reason } => {
                                     tracing::info!(reason = %reason, "UserOp: stop via fast channel during iteration limit pause");
                                     self.transition_status(SessionStatus::Idle);
-                                    let name = self.core.user_display_name.as_deref().unwrap_or("user");
-                                    return Ok(format!("Agent stopped by {} after reaching iteration limit.", name));
+                                    return Ok(String::new());
                                 }
                                 other_op => {
                                     // Other UserOps (UpdateRuntimeConfig etc.) — apply inline
@@ -1144,7 +1142,7 @@ impl AgentLoop {
                         None => {
                             // Channel closed — treat as stop
                             tracing::warn!("Inbound channel closed during iteration limit pause, stopping");
-                            return Ok("Agent stopped: inbound channel closed.".to_string());
+                            return Ok(String::new());
                         }
                     }
                 }
@@ -1154,9 +1152,8 @@ impl AgentLoop {
             if self.drain_inbound_queue() {
                 // ADR-014: Streaming → Idle
                 self.transition_status(SessionStatus::Idle);
-                let name = self.core.user_display_name.as_deref().unwrap_or("user");
                 tracing::info!("Agent loop interrupted by inbound interrupt signal");
-                return Ok(format!("Agent stopped by {}.", name));
+                return Ok(String::new());
             }
 
             // ①-⑧ Execute single iteration (shared with debug mode)
@@ -1283,9 +1280,7 @@ impl AgentLoop {
 
             // Await resume if paused (DevMode only)
             if !self.await_debug_resume().await {
-                return Ok(IterationResult::Stopped(
-                    "[Debug] Agent loop stopped by debugger".to_string(),
-                ));
+                return Ok(IterationResult::Stopped(String::new()));
             }
 
             // ── Apply pending patches to context_builder (DevMode only) ──
@@ -1692,7 +1687,7 @@ impl AgentLoop {
                 );
                 self.debug_auto_pause_if_stepping().await;
 
-                return Ok(IterationResult::Stopped(format!("...Stopped by User...\n{}", content)));
+                return Ok(IterationResult::Stopped(content));
             }
 
             // Debug: enter ToolExecution phase
@@ -1926,7 +1921,7 @@ impl AgentLoop {
                 );
                 self.debug_auto_pause_if_stepping().await;
 
-                return Ok(IterationResult::Stopped(format!("...Stopped by User...\n{}", content)));
+                return Ok(IterationResult::Stopped(content));
             }
 
             // ⑦ Usage report (async, non-blocking)
