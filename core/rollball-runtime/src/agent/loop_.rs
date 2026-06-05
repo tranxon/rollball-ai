@@ -20,7 +20,6 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 use crate::agent::agent_core::AgentCore;
-use crate::agent::budget_guard::BudgetCheckResult;
 use crate::agent::context::ContextBuilder;
 use crate::agent::history::HistoryManager;
 use crate::agent::inbound::InboundMessage;
@@ -29,53 +28,9 @@ use crate::agent::session_state::SessionState;
 use crate::config::RuntimeConfig;
 use crate::conversation::ConversationSession;
 use crate::error::{Result, RuntimeError};
+use crate::agent::loop_approval::{ApprovalDecision, ApprovalHandle};
 use crate::security::approval_gate::ApprovalRequest;
 use crate::tools::builtin::ask_user_question::{AskUserQuestionTool, QuestionOption};
-
-/// User's decision on a tool approval request.
-#[derive(Debug, Clone)]
-pub(crate) struct ApprovalDecision {
-    pub approved: bool,
-    #[allow(dead_code)]
-    pub allow_all_session: bool,
-    /// Human-readable reason for timeout or rejection (for LLM feedback)
-    pub reason: Option<String>,
-}
-
-/// Lightweight handle for spawned tool tasks to request user approval.
-///
-/// The spawned task calls `request_approval()` (no timeout), which sends the
-/// request to the AgentLoop main loop via an mpsc channel and blocks on a
-/// oneshot. The main loop receives the request, emits ChunkEvent::ToolApprovalNeeded
-/// to the Gateway (which forwards to the Desktop App), pauses via
-/// `await_approval_decision()`, and resolves the oneshot when the user's
-/// decision arrives as InboundMessage::ApprovalDecision.
-#[derive(Clone)]
-pub(crate) struct ApprovalHandle {
-    request_tx: mpsc::Sender<(ApprovalRequest, oneshot::Sender<ApprovalDecision>)>,
-}
-
-impl ApprovalHandle {
-    pub fn new(
-        request_tx: mpsc::Sender<(ApprovalRequest, oneshot::Sender<ApprovalDecision>)>,
-    ) -> Self {
-        Self { request_tx }
-    }
-
-    /// Request user approval for a tool execution.
-    /// Blocks without timeout until the user decides (Allow/Deny).
-    pub async fn request_approval(&self, req: ApprovalRequest) -> ApprovalDecision {
-        let (tx, rx) = oneshot::channel();
-        if self.request_tx.send((req, tx)).await.is_err() {
-            tracing::warn!("ApprovalHandle: request channel closed, auto-rejecting");
-            return ApprovalDecision { approved: false, allow_all_session: false, reason: None };
-        }
-        rx.await.unwrap_or_else(|_| {
-            tracing::warn!("ApprovalHandle: oneshot sender dropped, auto-rejecting");
-            ApprovalDecision { approved: false, allow_all_session: false, reason: None }
-        })
-    }
-}
 
 use crate::agent::session_state::SessionStatus;
 
@@ -329,7 +284,7 @@ impl AgentLoop {
     ///
     /// ADR-014 helper: ensures every status transition is paired with an event emission.
     /// Returns true if the status actually changed (and event was emitted).
-    fn transition_status(&mut self, new_status: SessionStatus) -> bool {
+    pub(crate) fn transition_status(&mut self, new_status: SessionStatus) -> bool {
         if self.session.set_status(new_status) {
             let status = self.session.status.clone();
             // Emit chunk event to Gateway → frontend
@@ -354,98 +309,9 @@ impl AgentLoop {
         }
     }
 
-    /// Update the LLM provider at runtime (e.g., after receiving a hot-pushed
-    /// LLMConfigDelivery from Gateway).
-    /// `provider_id` is the Vault provider ID (not protocol name) for
-    /// compact_model lookup.
-    pub fn update_provider(
-        &mut self,
-        new_provider: Arc<dyn Provider>,
-        model: String,
-        provider_id: Option<String>,
-    ) {
-        self.core.update_provider(new_provider, model);
-        if let Some(pid) = provider_id {
-            self.core.current_provider_id = Some(pid);
-        }
-    }
 
-    /// Update gateway model capabilities at runtime (e.g., after receiving a
-    /// hot-pushed LLMConfigDelivery from Gateway).
-    /// The capabilities are stored keyed by model ID for multi-model support.
-    pub fn update_gateway_model_capabilities(&mut self, model_id: &str, caps: ModelCapabilitiesInfo) {
-        self.core.update_gateway_model_capabilities(model_id, caps);
-    }
 
-    /// Update the max output tokens limit from Gateway config.
-    pub fn update_max_output_tokens_limit(&mut self, limit: u64) {
-        self.core.update_max_output_tokens_limit(limit);
-    }
 
-    /// Apply runtime config overrides from Gateway.
-    pub fn apply_runtime_config(
-        &mut self,
-        max_output_tokens: Option<u64>,
-        max_iterations: Option<u32>,
-        temperature: Option<f32>,
-        system_prompt_override: Option<String>,
-        shell_approval_threshold: Option<String>,
-    ) {
-        self.core.apply_runtime_config(max_output_tokens, max_iterations, temperature, system_prompt_override, shell_approval_threshold);
-    }
-
-    /// Apply a user operation delivered via the `send_inbound()` fast channel.
-    ///
-    /// This is the central dispatch point for all `UserOp` variants received
-    /// through `InboundMessage::UserOperation`. It handles operations that
-    /// must take effect immediately even while the agent loop is mid-execution.
-    ///
-    /// Returns `true` if the operation is an interrupt (caller should abort
-    /// the current loop).
-    pub(crate) fn apply_user_op(&mut self, op: &crate::agent::inbound::UserOp) -> bool {
-        match op {
-            crate::agent::inbound::UserOp::StopLoop { reason } => {
-                tracing::info!(reason = %reason, "UserOp: stop loop");
-                true
-            }
-            crate::agent::inbound::UserOp::ContinueLoop { reason } => {
-                tracing::info!(reason = %reason, "UserOp: continue loop (no-op here; handled at iteration limit pause)");
-                false
-            }
-            crate::agent::inbound::UserOp::ApprovalDecision { .. } => {
-                tracing::debug!("UserOp: approval decision (no-op here; handled via approval subsystem)");
-                false
-            }
-            crate::agent::inbound::UserOp::QuestionAnswer { .. } => {
-                tracing::debug!("UserOp: question answer (no-op here; handled via ask_user_question subsystem)");
-                false
-            }
-            crate::agent::inbound::UserOp::UpdateRuntimeConfig {
-                max_output_tokens,
-                max_iterations,
-                temperature,
-                system_prompt_override,
-                shell_approval_threshold,
-            } => {
-                tracing::info!(
-                    max_output_tokens,
-                    max_iterations,
-                    temperature,
-                    system_prompt_override = system_prompt_override.as_deref(),
-                    shell_approval_threshold = shell_approval_threshold.as_deref(),
-                    "UserOp: applying runtime config immediately in AgentLoop"
-                );
-                self.apply_runtime_config(
-                    *max_output_tokens,
-                    *max_iterations,
-                    *temperature,
-                    system_prompt_override.clone(),
-                    shell_approval_threshold.clone(),
-                );
-                false
-            }
-        }
-    }
 
     /// Get the current conversation session ID (S1.14)
     ///
@@ -636,223 +502,8 @@ impl AgentLoop {
             .unwrap_or_default()
     }
 
-    /// Get the context window budget for history trimming.
-    /// Uses Gateway model capabilities (context_window) if available,
-    /// otherwise falls back to config.history_max_tokens.
-    fn context_trim_budget(&self, model_name: &str) -> u64 {
-        self.core.context_trim_budget(model_name)
-    }
 
-    /// Trim history to fit within the context window budget.
-    ///
-    /// The budget comes from [`context_trim_budget`] →
-    /// [`ModelCapabilitiesInfo::effective_input_budget`], which already
-    /// reserves output space (capped at `max_output_tokens_limit`, default 32K).
-    /// No additional margin is applied here — [`compact_history_if_needed`]
-    /// provides early warning at 80% usage.
-    fn trim_history_to_budget(&mut self, model_name: &str) {
-        let budget = self.context_trim_budget(model_name);
 
-        // Sync HistoryManager::max_tokens to the actual model budget so
-        // trim_fifo uses the correct threshold. Without this, max_tokens
-        // remains at the static config default (128K) even after model
-        // switch, capabilities update, or max_output_tokens change.
-        self.session.history.set_max_tokens(budget);
-
-        // Stage 1: FIFO trim oldest non-system messages until within budget
-        self.session.history.trim_fifo();
-
-        // Stage 2: If still over budget after FIFO, use emergency trim as safety net
-        if self.session.history.token_count() > budget {
-            self.session.history.emergency_trim();
-        }
-
-        // Also truncate any single message that exceeds per-message limit
-        self.session.history.truncate_large_messages(budget / 4);
-    }
-
-    /// Check context usage after LLM response and trigger compaction if needed.
-    ///
-    /// Per [ADR-011], this implements the three-stage compaction strategy:
-    /// - 80% usage → LLM-based compaction (`compact_via_llm` + `replace_middle_with_summary`)
-    /// - 95% usage → emergency trim (safety net)
-    ///
-    /// When `force` is true (manual trigger from user), the 80% threshold is
-    /// bypassed and compaction proceeds regardless of current usage percentage.
-    ///
-    /// Called after each LLM response (force=false) and on manual user trigger
-    /// (force=true via `SessionMessage::CompactContext`).
-    pub(crate) async fn compact_history_if_needed(
-        &mut self,
-        model_name: &str,
-        force: bool,
-    ) {
-        /// Number of conversational rounds to keep at the tail after compaction.
-        /// Each round starts with a User message, so this keeps the last N user
-        /// messages and everything after them.
-        const KEEP_LAST_ROUNDS: usize = 3;
-        let budget = self.context_trim_budget(model_name);
-        let current_tokens = self.session.history.token_count();
-
-        if budget == 0 {
-            return;
-        }
-
-        let usage_percent = (current_tokens as f64 / budget as f64) * 100.0;
-
-        // Stage 2: 80% → LLM-based compaction (or force=true bypasses threshold)
-        if force || usage_percent >= 80.0 {
-            tracing::info!(
-                usage_percent = ?usage_percent,
-                current_tokens,
-                budget,
-                force,
-                "Triggering LLM compaction"
-            );
-
-            // Notify frontend that compaction has started (both manual and auto paths).
-            if let Some(ref tx) = self.core.on_chunk {
-                let _ = tx.send(SessionChunkEvent {
-                    session_id: self.core.session_id.clone().unwrap_or_default(),
-                    event: ChunkEvent::CompactingStarted,
-                }).await;
-            }
-
-            // Build combined text from history for model-aware token counting.
-            let combined_text: String = self.session.history.messages()
-                .iter()
-                .fold(String::new(), |mut acc, m| {
-                    acc.push_str(&m.content);
-                    acc.push('\n');
-                    acc
-                });
-            let compact_model = self.resolve_distill_model(&combined_text);
-            let system_prompt = self
-                .core
-                .system_prompt_override
-                .as_deref()
-                .unwrap_or(crate::prompt::COMPACTION_SYSTEM_PROMPT);
-            let provider = self.core.provider.clone();
-            let memory_store = self.core.memory_store().cloned();
-
-            match self
-                .session
-                .history
-                .compact_via_llm(provider.as_ref(), &compact_model, system_prompt)
-                .await
-            {
-                Ok(summary) => {
-                    let stripped = crate::episode_distill::strip_metadata_blocks(&summary);
-                    let removed = self.session.history.replace_middle_with_summary(&stripped, KEEP_LAST_ROUNDS);
-
-                    // Write compaction summary to Grafeo
-                    let session_id = self
-                        .session
-                        .conversation
-                        .as_ref()
-                        .map(|c| c.session_id().to_string())
-                        .unwrap_or_default();
-                    crate::episode_distill::EpisodeDistiller::write_summary_to_grafeo(
-                        &summary,
-                        &session_id,
-                        &memory_store,
-                        self.core.embedding_provider.as_deref(),
-                    ).await;
-
-                    // Mark session as compacted (zero new messages since compaction)
-                    self.session.is_compacted = true;
-
-                    // Recompute usage after compaction for stage 3 check
-                    let new_tokens = self.session.history.token_count();
-                    let new_usage = if budget > 0 {
-                        (new_tokens as f64 / budget as f64) * 100.0
-                    } else {
-                        0.0
-                    };
-
-                    tracing::info!(
-                        removed,
-                        summary_len = summary.len(),
-                        before_tokens = current_tokens,
-                        after_tokens = new_tokens,
-                        before_usage = ?usage_percent,
-                        after_usage = ?new_usage,
-                        "LLM compaction completed"
-                    );
-
-                    // Stage 3: 95% → emergency trim (safety net, even after compaction)
-                    if new_usage >= 95.0 {
-                        let em_removed = self.session.history.emergency_trim();
-                        tracing::warn!(
-                            em_removed,
-                            after_usage = ?new_usage,
-                            "Emergency trim performed after compaction (still >= 95%)"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "LLM compaction failed, falling back to FIFO + emergency trim"
-                    );
-                    self.session.history.trim_fifo();
-                    if self.session.history.token_count() > budget {
-                        self.session.history.emergency_trim();
-                    }
-                }
-            }
-
-            // Notify frontend that compaction has finished, so it can clear
-            // the "compacting..." indicator (both success and error paths).
-            // Also send updated context usage so the frontend shows the new
-            // token count and percentage after compaction.
-            if let Some(ref tx) = self.core.on_chunk {
-                let session_id = self.core.session_id.clone().unwrap_or_default();
-                let _ = tx.try_send(SessionChunkEvent {
-                    session_id: session_id.clone(),
-                    event: ChunkEvent::CompactingEnded,
-                });
-
-                // Compute and send updated context usage after compaction.
-                // The history token count has changed, but the frontend still
-                // shows the old number from the last LLM API response.
-                let caps = self.core.gateway_model_capabilities.get(model_name);
-                if let Some(caps) = caps {
-                    let usable = caps.effective_input_budget(self.core.max_output_tokens_limit);
-                    let total_tokens = self.session.history.token_count();
-                    let usage_percent = if usable > 0 {
-                        ((total_tokens as f64 / usable as f64) * 100.0).min(100.0) as u8
-                    } else {
-                        0
-                    };
-                    let ctx_info = rollball_core::protocol::ContextUsageInfo {
-                        context_window: caps.context_window,
-                        input_tokens: total_tokens,
-                        output_tokens: 0,
-                        total_tokens,
-                        max_input_tokens: caps.max_input_tokens,
-                        usable_context: usable,
-                        usage_percent,
-                    };
-                    let _ = tx.try_send(SessionChunkEvent {
-                        session_id,
-                        event: ChunkEvent::ContextUsage(ctx_info),
-                    });
-                }
-            }
-        } else if usage_percent >= 95.0 {
-            // Stage 3: emergency trim without attempting compaction
-            // (when usage jumps directly to >= 95%)
-            let removed = self.session.history.emergency_trim();
-            tracing::warn!(
-                removed,
-                usage_percent = ?usage_percent,
-                current_tokens,
-                budget,
-                "Emergency trim performed (usage >= 95%)"
-            );
-        }
-    }
 
     /// Close the conversation session and trigger session-level distillation.
     ///
@@ -865,63 +516,6 @@ impl AgentLoop {
         self.close_session_inner().await
     }
 
-    /// Resolve the model to use for session distillation or compaction.
-    ///
-    /// Uses [`crate::token::count_text`] — the single unified token counting API.
-    ///
-    /// Priority order:
-    /// 1. Provider's configured `compact_model` from provider_list (read from disk)
-    /// 2. Current model (fallback when compact model unavailable or context too small)
-    fn resolve_distill_model(&self, content_text: &str) -> String {
-        let current_model = self.resolve_current_model(None);
-        let estimated_tokens = crate::token::count_text(content_text, &current_model) as u64;
-
-        // Path 1: resolve compact_model from current provider (in-memory)
-        let compact_model = self
-            .core
-            .current_provider_id
-            .as_ref()
-            .and_then(|pid| self.core.provider_compact_models.get(pid))
-            .and_then(|cm| cm.clone());
-        if let Some(ref compact_model) = compact_model {
-            if let Some(cap) = self
-                .core
-                .gateway_model_capabilities
-                .get(compact_model)
-            {
-                if cap.context_window >= estimated_tokens {
-                    tracing::info!(
-                        compact_model = %compact_model,
-                        context_window = cap.context_window,
-                        estimated_tokens,
-                        "Using provider's compact model for distillation"
-                    );
-                    return compact_model.clone();
-                }
-                tracing::warn!(
-                    compact_model = %compact_model,
-                    context_window = cap.context_window,
-                    estimated_tokens,
-                    "Provider compact model context_window too small, falling back"
-                );
-            } else {
-                tracing::warn!(
-                    compact_model = %compact_model,
-                    "Provider compact model not found in capabilities, falling back"
-                );
-            }
-        }
-
-        // Path 2: compact model unavailable or context too small —
-        // fall back to the session's current model.
-        let current_model = self.resolve_current_model(None);
-        tracing::info!(
-            current_model = %current_model,
-            estimated_tokens,
-            "Compact model not available or insufficient, using current model for distillation"
-        );
-        current_model
-    }
 
     /// Inner implementation for closing the current session.
     ///
@@ -1150,27 +744,12 @@ impl AgentLoop {
                             }
                         }
                         Some(other) => {
-                            // Other messages (UserMessage, etc.) — inject into history
+                            // D1 dedup: inject message into history via shared helper
                             let (msg, _) = other.enforce_size_limit();
-                            match msg {
-                                InboundMessage::UserMessage(text) => {
-                                    self.session.history.append(ChatMessage::user(text));
-                                }
-                                InboundMessage::SystemNotification { notification_type, data } => {
-                                    self.session.history.append(ChatMessage {
-                                        role: MessageRole::User,
-                                        content: format!("[system:{}] {}", notification_type, data),
-                                        name: Some("system".to_string()),
-                                        ..Default::default()
-                                    });
-                                }
-                                InboundMessage::IntentMessage { from, action, params } => {
-                                    self.session.history.append(ChatMessage::user(
-                                        format!("[intent:{}:{}] {}", from, action, params),
-                                    ));
-                                }
-                                _ => {} // ContinueExecution, Interrupt, UserOperation handled above
-                            }
+                            crate::agent::loop_inbound::inject_inbound_into_history(
+                                msg,
+                                &mut self.session.history,
+                            );
                         }
                         None => {
                             // Channel closed — treat as stop
@@ -1362,87 +941,20 @@ impl AgentLoop {
             )
             .await;
 
-            // ① Budget pre-check
-            let estimated_tokens = self.session.history.estimate_total_tokens() + 500; // +500 for new response
-            match self.session.budget_guard.check(estimated_tokens) {
-                BudgetCheckResult::Allowed => {}
-                BudgetCheckResult::Exceeded { reason, action } => {
-                    tracing::warn!(reason = %reason, action = %action, "Budget exceeded");
-                    match action.as_str() {
-                        "deny" => {
-                            // ADR-014: Streaming → Idle (budget exceeded)
-                            self.transition_status(SessionStatus::Idle);
-                            return Err(RuntimeError::BudgetExceeded(reason));
-                        }
-                        "warn" => {
-                            // Changed from System to User — MiniMax API rejects non-first system messages
-                            self.session.history.append(ChatMessage {
-                                role: MessageRole::User,
-                                content: format!("[System Warning] {reason}"),
-                                name: Some("system".to_string()),
-                                ..Default::default()
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            // ① Budget pre-check (ADR-014: extracted to loop_context.rs)
+            self.check_budget_and_warn()?;
 
             // ② Preemptive trim — MUST happen BEFORE build() so the request
             // is constructed with already-trimmed history.
             self.trim_history_to_budget(&current_model);
 
-            // ②.5 Build context (now with trimmed history)
-            // Inject current todo list into system prompt before building
-            context_builder.set_todo_context(self.session.format_todos());
-            let mut chat_request = context_builder.build(&self.core.manifest, &self.session.history, self.get_model_capabilities(&current_model), self.core.max_output_tokens_limit);
+            // ②.5 Build context (ADR-014: extracted to loop_context.rs)
+            let mut chat_request = self.build_chat_request(context_builder, &current_model);
 
-            tracing::info!(
-                request_messages_count = chat_request.messages.len(),
-                request_model = %chat_request.model,
-                request_max_tokens = ?chat_request.max_tokens,
-                request_tools_count = chat_request.tools.as_ref().map(|t| t.len()).unwrap_or(0),
-                history_tokens = self.session.history.token_count(),
-                "Built chat request for LLM (after preemptive trim)"
-            );
-
-            // ②.6 Context usage check / circuit-breaking
-            // Dynamic token-based thresholds derived from model capabilities.
-            // Unlike the previous hardcoded 200KB/280KB byte thresholds, these
-            // scale correctly across models from 32K to 2M context windows.
-            let usable = self.context_trim_budget(&current_model);
-            let warn_threshold = (usable as f64 * 0.70) as u64;
-            let hard_threshold = (usable as f64 * 0.90) as u64;
-            let current_tokens = self.session.history.token_count();
-            if current_tokens > hard_threshold {
-                tracing::error!(
-                    current_tokens,
-                    hard_threshold,
-                    usable_context = usable,
-                    "Context usage exceeds hard limit, emergency trimming"
-                );
-                let removed = self.session.history.emergency_trim();
-                tracing::info!(removed, "Emergency trimmed messages for oversized context");
-                if removed > 0 {
-                    // Rebuild request with trimmed history.
-                    chat_request = context_builder.build(
-                        &self.core.manifest,
-                        &self.session.history,
-                        self.get_model_capabilities(&current_model),
-                        self.core.max_output_tokens_limit,
-                    );
-                    tracing::info!(
-                        current_tokens = self.session.history.token_count(),
-                        "Context usage after emergency trim"
-                    );
-                }
-            } else if current_tokens > warn_threshold {
-                tracing::warn!(
-                    current_tokens,
-                    warn_threshold,
-                    usable_context = usable,
-                    "Context usage approaching limit"
-                );
+            // ②.6 Context usage check / circuit-breaking (ADR-014: extracted to loop_context.rs)
+            if self.check_context_overflow_and_trim(&current_model) {
+                // Rebuild request with trimmed history
+                chat_request = self.build_chat_request(context_builder, &current_model);
             }
 
             // Debug: enter BuildContext phase
@@ -1461,18 +973,7 @@ impl AgentLoop {
                 },
             ).await;
 
-            // Merge MCP tool definitions into the LLM request right before
-            // injection. MCP tools are kept separate from active_tools and
-            // only mixed here (LLM injection) + in debug snapshot capture.
-            if let Some(ref mut tools) = chat_request.tools {
-                for tool in &self.core.all_tools {
-                    let spec = tool.spec();
-                    if spec.name.starts_with("mcp:") {
-                        let val = serde_json::to_value(&spec).unwrap_or_default();
-                        tools.push(val);
-                    }
-                }
-            }
+
 
             // ③ Call LLM with streaming (S1.5)
             let response = self.call_llm_streaming(&chat_request, context_builder).await?;
@@ -1490,102 +991,9 @@ impl AgentLoop {
             )
             .await;
 
-            // Update budget
-            if let Some(usage) = &response.usage {
-                self.session.budget_guard.update_usage(usage.total_tokens, 0.0);
-
-                // Diagnostic: log local token estimate vs API ground truth
-                // before calibration overwrites the local estimate.
-                let local_estimate = self.session.history.token_count();
-                tracing::info!(
-                    model = %current_model,
-                    local_estimate,
-                    api_prompt_tokens = usage.prompt_tokens,
-                    api_completion_tokens = usage.completion_tokens,
-                    api_total_tokens = usage.total_tokens,
-                    "Context usage: local estimate vs API ground truth"
-                );
-
-                // Detect providers that return prompt_tokens=0 despite having
-                // non-trivial context (observed with MiniMax Anthropic-protocol
-                // API when message_start SSE event lacks usage fields).
-                // When this happens, skip calibration to avoid corrupting
-                // the internal token counter and use the local estimate
-                // for the context usage report instead.
-                let prompt_tokens_reliable = usage.prompt_tokens > 0;
-                if prompt_tokens_reliable {
-                    self.session.history.calibrate_from_usage(usage.prompt_tokens);
-                } else {
-                    tracing::warn!(
-                        local_estimate,
-                        "API returned prompt_tokens=0 despite non-trivial context; \
-                         skipping calibration and using local estimate"
-                    );
-                }
-
-                // Compute and emit context usage report — use exact model lookup
-                // to avoid capability confusion in multi-model scenarios.
-                let model_caps = self.get_model_capabilities(&current_model);
-                tracing::debug!(
-                    has_chunk_tx = self.core.on_chunk.is_some(),
-                    has_model_caps = model_caps.is_some(),
-                    caps_count = self.core.gateway_model_capabilities.len(),
-                    has_usage = true,
-                    "ContextUsage: checking preconditions"
-                );
-                if let Some(caps) = model_caps {
-                    let ctx_usage = if prompt_tokens_reliable {
-                        crate::agent::context::compute_context_usage(caps, usage, self.core.max_output_tokens_limit)
-                    } else {
-                        // Fall back to local estimate when API usage is unreliable
-                        let usable = caps.effective_input_budget(self.core.max_output_tokens_limit);
-                        let percent = if usable > 0 {
-                            ((local_estimate as f64 / usable as f64) * 100.0).min(100.0) as u8
-                        } else {
-                            0
-                        };
-                        rollball_core::protocol::ContextUsageInfo {
-                            context_window: caps.context_window,
-                            input_tokens: local_estimate,
-                            output_tokens: usage.completion_tokens,
-                            total_tokens: local_estimate + usage.completion_tokens,
-                            max_input_tokens: caps.max_input_tokens,
-                            usable_context: usable,
-                            usage_percent: percent,
-                        }
-                    };
-                    tracing::debug!(
-                        context_window = ctx_usage.context_window,
-                        total_tokens = ctx_usage.total_tokens,
-                        usage_percent = ctx_usage.usage_percent,
-                        "ContextUsage: sending report"
-                    );
-                    if !self.core.try_send_chunk(ChunkEvent::ContextUsage(ctx_usage)) {
-                        tracing::debug!("ContextUsage: on_chunk channel full/closed or session_id missing");
-                    }
-                } else {
-                    // Model capabilities not found — notify frontend so the user is aware.
-                    // Context usage and compaction are still attempted with
-                    // history_max_tokens as fallback budget.
-                    let available: Vec<&str> = self.core.gateway_model_capabilities.keys().map(|s| s.as_str()).collect();
-                    let msg = format!(
-                        "Model capabilities not found for '{}'. Available: {:?}. \
-                         Check that the model name matches exactly (case-sensitive). \
-                         Context usage display and compaction accuracy may be affected.",
-                        current_model, available
-                    );
-                    tracing::warn!("ContextUsage: NOT sent — missing model capabilities for '{}'", current_model);
-                    let _ = self.core.try_send_chunk(ChunkEvent::Error {
-                        message: msg,
-                        message_id: format!("caps-missing-{}", current_model),
-                    });
-                }
-
-                // ADR-011: check if context usage triggers compaction.
-                // Runs regardless of model_caps availability —
-                // context_trim_budget falls back to history_max_tokens when caps are missing.
-                self.compact_history_if_needed(&current_model, false).await;
-            }
+            // ④ Process usage + budget calibration + context usage report + compaction
+            // (ADR-014: extracted to loop_context.rs)
+            self.process_llm_response_usage(&response, &current_model).await;
 
             if !has_tool_calls {
                 // Pure text response — normal exit
@@ -1842,29 +1250,8 @@ impl AgentLoop {
                 }
             }
 
-            // ⑥ Pre-trim: make room for tool results before appending.
-            // Large tool outputs (e.g. content_search returning 320+ results)
-            // can blow up the context window.  Trimming BEFORE the append
-            // ensures the LLM request remains within budget on the next
-            // iteration.  Threshold: 70 % of the usable context window.
-            // Use the unified token API for model-aware estimation.
-            let result_tokens_estimate: u64 = tool_results
-                .iter()
-                .map(|r| crate::token::count_text(r, current_model) as u64)
-                .sum();
-            let usable_budget = self.context_trim_budget(current_model);
-            let trim_threshold = (usable_budget as f64 * 0.70) as u64;
-            let current_tokens = self.session.history.token_count();
-            if current_tokens.saturating_add(result_tokens_estimate) > trim_threshold {
-                tracing::info!(
-                    current_tokens,
-                    result_tokens_estimate,
-                    trim_threshold,
-                    usable_budget,
-                    "Pre-trimming history before appending tool results"
-                );
-                self.trim_history_to_budget(current_model);
-            }
+            // ⑥ Pre-trim for tool results (ADR-014: extracted to loop_context.rs)
+            self.pre_trim_for_tool_results(&tool_results, current_model);
 
             // ── ⑦ Append ALL tool results to history (must be contiguous after assistant tool_calls)
             for (tc, result_content) in deduped_calls.iter().zip(tool_results.iter()) {
@@ -1996,337 +1383,25 @@ impl AgentLoop {
             Ok(IterationResult::ToolCallsExecuted)
     }
 
-    /// Non-blocking stop poll — returns true if the user requested stop.
-    ///
-    /// Non-Stop messages drained during this poll are buffered in
-    /// `session.deferred_inbound` and re-injected by `drain_inbound_queue()`
-    /// at the start of the next loop iteration. No message is silently lost.
-    ///
-    /// ALL `Stop` messages are consumed (not just the first one) to
-    /// prevent residual stops from poisoning subsequent `run_inner()`
-    /// calls when the user clicks Stop rapidly.
-    pub(crate) fn poll_stop(&mut self) -> bool {
-        let mut should_stop = false;
-        while let Ok(msg) = self.inbound_rx.try_recv() {
-            match msg {
-                InboundMessage::Stop { .. } => {
-                    should_stop = true;
-                    // Consume and continue — drain all pending stops
-                }
-                InboundMessage::UserOperation(op) => {
-                    match &op {
-                        crate::agent::inbound::UserOp::StopLoop { .. } => {
-                            should_stop = true;
-                            // Consume and continue — drain all pending stops
-                        }
-                        _ => {
-                            // Buffer non-Stop UserOp for re-injection
-                            // by drain_inbound_queue().
-                            tracing::info!(
-                                op = ?std::mem::discriminant(&op),
-                                "poll_stop(): buffering UserOp for re-injection by drain_inbound_queue()"
-                            );
-                            self.session.deferred_inbound.push(InboundMessage::UserOperation(op));
-                        }
-                    }
-                }
-                other => {
-                    // Buffer non-Stop messages for re-injection at the
-                    // next drain_inbound_queue() call. This guarantees that
-                    // queued user messages (sent via the "Stop to queue" UX)
-                    // survive if they happen to arrive in this channel.
-                    tracing::info!(
-                        msg_type = ?std::mem::discriminant(&other),
-                        "poll_stop(): buffering non-Stop message for re-injection by drain_inbound_queue()"
-                    );
-                    self.session.deferred_inbound.push(other);
-                }
-            }
-        }
-        should_stop
-    }
-
-    /// Drain inbound message queue (non-blocking).
-    ///
-    /// First processes any messages buffered by `poll_stop()` from
-    /// the `deferred_inbound` stash, then drains the live channel.
-    /// Injects external messages (user, system, intent) into history
-    /// before each loop iteration. Applies size limits to prevent
-    /// token explosion from oversized payloads.
-    ///
-    /// Returns `true` if at least one stop signal was found
-    /// (the caller should stop the current agent loop).  ALL stop
-    /// messages are consumed (not just the first one) to prevent
-    /// residual stops from poisoning subsequent `run_inner()` calls.
-    fn drain_inbound_queue(&mut self) -> bool {
-        let mut should_stop = false;
-
-        // ── Step 1: process messages deferred from poll_stop() ──
-        // Collect to release the drain iterator's borrow on self.session
-        // before calling apply_user_op() (which needs &mut self).
-        let deferred: Vec<_> = self.session.deferred_inbound.drain(..).collect();
-        for msg in deferred {
-            let (msg, _truncated) = msg.enforce_size_limit();
-            match msg {
-                InboundMessage::UserMessage(text) => {
-                    tracing::info!(
-                        text_preview = %text.chars().take(80).collect::<String>(),
-                        "drain_inbound_queue: injecting deferred UserMessage into history"
-                    );
-                    self.session.history.append(ChatMessage::user(text));
-                }
-                InboundMessage::SystemNotification { notification_type, data } => {
-                    tracing::info!("drain_inbound_queue: injecting deferred system notification: {} = {:?}", notification_type, data);
-                    self.session.history.append(ChatMessage {
-                        role: MessageRole::User,
-                        content: format!("[system:{}] {}", notification_type, data),
-                        name: Some("system".to_string()),
-                        ..Default::default()
-                    });
-                }
-                InboundMessage::IntentMessage { from, action, params } => {
-                    tracing::info!("drain_inbound_queue: injecting deferred intent from {}: {} params={:?}", from, action, params);
-                    self.session.history.append(ChatMessage::user(
-                        format!("[intent:{}:{}] {}", from, action, params),
-                    ));
-                }
-                InboundMessage::Stop { reason } => {
-                    tracing::info!(reason = %reason, "Received deferred stop signal (consumed)");
-                    should_stop = true;
-                    // Consume and continue — more stops (or other messages)
-                    // may be queued in the live channel.
-                }
-                InboundMessage::ContinueExecution { .. } => {
-                    tracing::debug!("Ignoring deferred ContinueExecution");
-                }
-                InboundMessage::ApprovalDecision { .. } => {
-                    // Approval decisions arrive via inbound channel during
-                    // approval pause; during normal drain, ignore.
-                    tracing::debug!("Ignoring deferred ApprovalDecision");
-                }
-                InboundMessage::QuestionAnswer { .. } => {
-                    // Question answers arrive via inbound channel during
-                    // question wait; during normal drain, ignore.
-                    tracing::debug!("Ignoring deferred QuestionAnswer");
-                }
-                InboundMessage::UserOperation(user_op) => {
-                    tracing::info!(
-                        op = ?std::mem::discriminant(&user_op),
-                        "drain_inbound_queue: processing deferred UserOperation"
-                    );
-                    if self.apply_user_op(&user_op) {
-                        should_stop = true;
-                    }
-                }
-            }
-        }
-
-        // ── Step 2: drain the live channel ──
-        while let Ok(msg) = self.inbound_rx.try_recv() {
-            // Enforce size limits before injecting
-            let (msg, _truncated) = msg.enforce_size_limit();
-            match msg {
-                InboundMessage::UserMessage(text) => {
-                    tracing::info!(
-                        text_preview = %text.chars().take(80).collect::<String>(),
-                        "drain_inbound_queue: injecting UserMessage into history"
-                    );
-                    self.session.history.append(ChatMessage::user(text));
-                }
-                InboundMessage::SystemNotification { notification_type, data } => {
-                    tracing::info!("System notification: {} = {:?}", notification_type, data);
-                    // Changed from System to User — MiniMax API rejects non-first system messages
-                    self.session.history.append(ChatMessage {
-                        role: MessageRole::User,
-                        content: format!("[system:{}] {}", notification_type, data),
-                        name: Some("system".to_string()),
-                        ..Default::default()
-                    });
-                }
-                InboundMessage::IntentMessage { from, action, params } => {
-                    tracing::info!("Intent from {}: {} params={:?}", from, action, params);
-                    self.session.history.append(ChatMessage::user(
-                        format!("[intent:{}:{}] {}", from, action, params),
-                    ));
-                }
-                InboundMessage::Stop { reason } => {
-                    tracing::info!(reason = %reason, "Received stop signal (consumed)");
-                    should_stop = true;
-                    // Consume and continue — multiple stops may be queued
-                    // from rapid Stop button clicks.  We must drain ALL of them
-                    // so subsequent run_inner() calls aren't poisoned.
-                }
-                InboundMessage::ContinueExecution { .. } => {
-                    // Continue is only meaningful during iteration limit pause;
-                    // during normal drain, ignore it.
-                    tracing::debug!("Ignoring ContinueExecution during normal drain");
-                }
-                InboundMessage::ApprovalDecision { .. } => {
-                    // Approval decisions are only meaningful during approval pause.
-                    tracing::debug!("Ignoring ApprovalDecision during normal drain");
-                }
-                InboundMessage::QuestionAnswer { .. } => {
-                    // Question answers are only meaningful during question wait.
-                    tracing::debug!("Ignoring QuestionAnswer during normal drain");
-                }
-                InboundMessage::UserOperation(user_op) => {
-                    tracing::info!(
-                        op = ?std::mem::discriminant(&user_op),
-                        "drain_inbound_queue: processing live UserOperation"
-                    );
-                    if self.apply_user_op(&user_op) {
-                        should_stop = true;
-                    }
-                }
-            }
-        }
-        should_stop
-    }
+    // ── Inbound message methods moved to loop_inbound.rs (ADR-014 Phase 3) ──
+    //   - apply_user_op
+    //   - poll_stop
+    //   - drain_inbound_queue
+    // D1 dedup helper: inject_inbound_into_history (shared function)
 
     // ── LLM streaming methods extracted to loop_llm.rs ──
 
     // ── Tool execution extracted to loop_tools.rs ──
 
     // ── Debug methods migrated to DebugObserverImpl (ADR-013) ──
-    // The following methods were moved to debug/observer_impl.rs:
-    //   - await_debug_resume → DebugObserverImpl::await_resume
-    //   - update_debug_phase → DebugObserverImpl::on_phase_enter
-    //   - push_debug_step → DebugObserverImpl::on_phase_step
-    //   - debug_auto_pause_if_stepping → DebugObserverImpl::on_phase_step_done
-    //   - capture_context_snapshot → DebugObserverImpl::on_context_built
-
-    /// Await user approval decision for a tool execution request.
-    ///
-    /// Blocks the main loop on `inbound_rx` without timeout until the
-    /// matching `InboundMessage::ApprovalDecision` arrives. Non-matching
-    /// messages are buffered in `deferred_inbound` for later processing
-    /// (mirrors `await_debug_resume`'s `poll_stop` pattern).
-    ///
-    /// Also polls `approval_rx` so that concurrent approval requests from
-    /// parallel tool execution are processed (queued) rather than blocking
-    /// the channel. Each new approval request gets its own `ChunkEvent`
-    /// sent to the Gateway before we continue waiting for the current one.
-    ///
-    /// Returns `ApprovalDecision` with the user's choice, auto-rejects
-    /// on timeout / Interrupt / channel close.
-    async fn await_approval_decision(&mut self, request_id: &str) -> ApprovalDecision {
-        // Approval timeout: auto-reject after 5 minutes to prevent deadlock.
-        const APPROVAL_TIMEOUT_SECS: u64 = 300;
-
-        loop {
-            tokio::select! {
-                // Primary: wait for the matching approval decision from inbound channel
-                msg = self.inbound_rx.recv() => {
-                    match msg {
-                        Some(InboundMessage::ApprovalDecision {
-                            request_id: rid,
-                            approved,
-                            allow_all_session,
-                            ..
-                        }) if rid == request_id => {
-                            tracing::info!(
-                                request_id = %request_id,
-                                approved,
-                                allow_all_session,
-                                "Approval decision received"
-                            );
-                            return ApprovalDecision { approved, allow_all_session, reason: None };
-                        }
-                        Some(InboundMessage::ApprovalDecision {
-                            request_id: rid,
-                            approved,
-                            allow_all_session,
-                            ..
-                        }) => {
-                            // Approval decision for a DIFFERENT request — buffer it.
-                            // This can happen when multiple concurrent approval requests
-                            // are in flight and responses arrive out of order.
-                            tracing::debug!(
-                                expected = %request_id,
-                                got = %rid,
-                                "Buffering approval decision for different request"
-                            );
-                            self.session.deferred_inbound.push(InboundMessage::ApprovalDecision {
-                                request_id: rid,
-                                approved,
-                                allow_all_session,
-                                reason: None,
-                            });
-                        }
-                        Some(InboundMessage::Stop { reason }) => {
-                            tracing::info!(
-                                reason = %reason,
-                                request_id = %request_id,
-                                "Approval stopped, auto-rejecting"
-                            );
-                            return ApprovalDecision { approved: false, allow_all_session: false, reason: None };
-                        }
-                        Some(other) => {
-                            tracing::debug!(
-                                ?other,
-                                "Buffering non-approval message during approval wait"
-                            );
-                            self.session.deferred_inbound.push(other);
-                        }
-                        None => {
-                            tracing::warn!(
-                                request_id = %request_id,
-                                "Inbound channel closed during approval wait, auto-rejecting"
-                            );
-                            return ApprovalDecision { approved: false, allow_all_session: false, reason: None };
-                        }
-                    }
-                }
-                // Secondary: process concurrent approval requests from other spawned tasks.
-                // Without this branch, a second tool needing approval would block on the
-                // mpsc channel, its ToolApprovalNeeded event would never reach the Gateway,
-                // and the user would never see the second approval dialog.
-                approval_req = self.approval_rx.recv() => {
-                    match approval_req {
-                        Some((req, decision_tx)) => {
-                            tracing::info!(
-                                current_request_id = %request_id,
-                                new_tool = %req.tool_name,
-                                "Queuing concurrent approval request while waiting for decision"
-                            );
-                            self.handle_approval_request(req, decision_tx).await;
-                            // After handling the concurrent request, continue waiting
-                            // for the ORIGINAL request's decision.
-                        }
-                        None => {
-                            tracing::warn!("Approval channel closed during approval wait");
-                        }
-                    }
-                }
-                // Timeout: auto-reject to prevent permanent deadlock when
-                // a concurrent approval request is orphaned.
-                _ = tokio::time::sleep(std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS)) => {
-                    let reason_msg = format!("tool approval timed out after {}s", APPROVAL_TIMEOUT_SECS);
-                    tracing::warn!(
-                        request_id = %request_id,
-                        timeout_secs = APPROVAL_TIMEOUT_SECS,
-                        "Approval timed out, auto-rejecting"
-                    );
-                    return ApprovalDecision { approved: false, allow_all_session: false, reason: Some(reason_msg) };
-                }
-            }
-        }
-    }
-
-    /// Send ToolApprovalNeeded chunk event to Gateway (via on_chunk channel).
-    fn send_tool_approval_needed(&self, request_id: &str, req: &ApprovalRequest) {
-        // Approval timeout: 300s (5 min) — same as await_approval_decision.
-        const APPROVAL_TIMEOUT_SECS: u64 = 300;
-        let _ = self.core.try_send_chunk(ChunkEvent::ToolApprovalNeeded {
-            request_id: request_id.to_string(),
-            tool_name: req.tool_name.clone(),
-            action: req.action.clone(),
-            risk_level: req.risk_level.label().to_string(),
-            reason: req.reason.clone(),
-            tool_call_id: req.tool_call_id.clone(),
-            approval_timeout_secs: APPROVAL_TIMEOUT_SECS,
-        });
-    }
+    // The following methods were moved to loop_approval.rs (ADR-014 Phase 2):
+    //   - await_approval_decision
+    //   - send_tool_approval_needed
+    //   - await_question_answer
+    //   - handle_approval_request
+    // The following types were moved to loop_approval.rs:
+    //   - ApprovalDecision
+    //   - ApprovalHandle
 
     /// Handle an ask_user_question tool call.
     ///
@@ -2481,143 +1556,6 @@ impl AgentLoop {
 
     /// Await user's answer to an ask_user_question prompt.
     ///
-    /// Blocks the main loop on `inbound_rx` until the matching
-    /// `InboundMessage::QuestionAnswer` arrives or the optional timeout expires.
-    /// Non-matching messages are buffered in `deferred_inbound` for later processing.
-    async fn await_question_answer(&mut self, request_id: &str, timeout_seconds: Option<u32>) -> String {
-        /// Default timeout when none specified
-        const DEFAULT_TIMEOUT_SECS: u32 = 300;
-        let timeout_duration = std::time::Duration::from_secs(
-            timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECS) as u64
-        );
-
-        let timeout_future = tokio::time::timeout(timeout_duration, async {
-            loop {
-                tokio::select! {
-                    msg = self.inbound_rx.recv() => {
-                        match msg {
-                        Some(InboundMessage::QuestionAnswer {
-                            request_id: rid,
-                            answer,
-                        }) if rid == request_id => {
-                            return answer;
-                        }
-                        Some(InboundMessage::QuestionAnswer {
-                            request_id: rid,
-                            answer,
-                        }) => {
-                            // Answer for a different question — buffer it
-                            tracing::debug!(
-                                expected = %request_id,
-                                got = %rid,
-                                "Buffering question answer for different request"
-                            );
-                            self.session.deferred_inbound.push(InboundMessage::QuestionAnswer {
-                                request_id: rid,
-                                answer,
-                            });
-                        }
-                        Some(InboundMessage::Stop { reason }) => {
-                            tracing::info!(
-                                reason = %reason,
-                                request_id = %request_id,
-                                "Question wait stopped, returning cancelled"
-                            );
-                            return "[Cancelled: user stopped]".to_string();
-                        }
-                        Some(other) => {
-                            tracing::debug!(
-                                ?other,
-                                "Buffering non-question message during question wait"
-                            );
-                            self.session.deferred_inbound.push(other);
-                        }
-                        None => {
-                            tracing::warn!(
-                                request_id = %request_id,
-                                "Inbound channel closed during question wait, returning cancelled"
-                            );
-                            return "[Cancelled: channel closed]".to_string();
-                        }
-                    }
-                }
-                // Also process concurrent approval requests
-                approval_req = self.approval_rx.recv() => {
-                    match approval_req {
-                        Some((req, decision_tx)) => {
-                            tracing::info!(
-                                "Queuing concurrent approval request while waiting for question answer"
-                            );
-                            self.handle_approval_request(req, decision_tx).await;
-                        }
-                        None => {
-                            tracing::warn!("Approval channel closed during question wait");
-                        }
-                    }
-                }
-            }
-        }
-    });
-        let result = timeout_future.await;
-
-        match result {
-            Ok(answer) => answer,
-            Err(_elapsed) => {
-                tracing::warn!(
-                    request_id = %request_id,
-                    timeout_secs = %timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECS),
-                    "Question answer timed out"
-                );
-                "[Timeout: user did not respond]".to_string()
-            }
-        }
-    }
-
-    /// Handle an approval request received on the approval_rx channel.
-    ///
-    /// Called from `execute_tools_parallel`'s `select!` when a spawned tool
-    /// task sends an approval request. Generates a unique request ID, sends
-    /// `ChunkEvent::ToolApprovalNeeded` to the Gateway, blocks the main loop
-    /// via `await_approval_decision()`, and resolves the spawned task's
-    /// oneshot with the user's decision.
-    pub(crate) fn handle_approval_request(
-        &mut self,
-        req: ApprovalRequest,
-        decision_tx: oneshot::Sender<ApprovalDecision>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        Box::pin(async move {
-            let request_id = self
-                .approval_next_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                .to_string();
-
-            tracing::info!(
-                request_id = %request_id,
-                tool_name = %req.tool_name,
-                action = %req.action,
-                risk = %req.risk_level.label(),
-                "Handling approval request from spawned tool task"
-            );
-
-            // 1. Send ChunkEvent to Gateway → Desktop App
-            self.send_tool_approval_needed(&request_id, &req);
-
-            // ADR-014: Streaming → WaitingApproval
-            self.transition_status(SessionStatus::WaitingApproval {
-                request_id: request_id.clone(),
-            });
-
-            // 2. Pause and wait for user decision (no timeout)
-            let decision = self.await_approval_decision(&request_id).await;
-
-            // ADR-014: WaitingApproval → Streaming (resume after approval/rejection)
-            self.transition_status(SessionStatus::Streaming { message_id: None });
-
-            // 3. Resolve the spawned task's oneshot
-            let _ = decision_tx.send(decision);
-        })
-    }
-
     /// Get reference to history manager
     pub fn history(&self) -> &HistoryManager {
         &self.session.history

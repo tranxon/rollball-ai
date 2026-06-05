@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 
 use crate::agent::loop_::{ChunkEvent, SessionChunkEvent};
-use crate::agent::loop_::ApprovalHandle;
+use crate::agent::loop_approval::ApprovalHandle;
 use crate::config::RuntimeConfig;
 use crate::debug::DebugObserverSlot;
 use crate::embedding::EmbeddingProvider;

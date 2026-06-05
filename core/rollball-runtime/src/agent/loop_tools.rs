@@ -19,7 +19,8 @@ use crate::security::approval_gate::{ApprovalGate, ApprovalRequest};
 use crate::security::shell_risk::{self, ShellRisk};
 use rollball_core::ShellApprovalThreshold;
 
-use super::loop_::{AgentLoop, ApprovalHandle};
+use super::loop_::AgentLoop;
+use super::loop_approval::ApprovalHandle;
 
 impl AgentLoop {
     /// Execute tool calls in parallel with per-tool timeout and iteration-level deadline.

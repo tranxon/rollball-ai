@@ -3,6 +3,9 @@
 pub mod agent_core;
 pub mod session_state;
 pub mod loop_;
+pub mod loop_approval;
+pub mod loop_context;
+pub mod loop_inbound;
 pub mod loop_llm;
 pub mod loop_tools;
 pub mod context;
