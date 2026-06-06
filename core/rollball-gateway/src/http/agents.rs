@@ -25,6 +25,23 @@ use rollball_core::protocol::GatewayResponse;
 use rollball_core::protocol::{AgentSearchConfig, AvailableTool, AvailableToolsResponse, McpServerConfigDef};
 use rollball_core::AgentManifest;
 
+/// Build embed_config_json from GatewayState's embed_process info.
+/// Returns None if the embedding service is not running or has no active model.
+async fn build_embed_config_json(state: &AppState) -> Option<String> {
+    let gw = state.gateway_state.read().await;
+    match &gw.embed_process {
+        Some(eps) if eps.active_model_id.is_some() => {
+            let endpoint = format!("http://127.0.0.1:{}/v1", eps.port);
+            Some(serde_json::json!({
+                "embed_endpoint": endpoint,
+                "embed_model_id": eps.active_model_id.clone().unwrap_or_default(),
+                "embed_dimension": eps.active_dimension.unwrap_or(0),
+            }).to_string())
+        }
+        _ => None,
+    }
+}
+
 /// Build the agent management router
 pub fn agent_routes() -> Router<AppState> {
     Router::new()
@@ -1015,6 +1032,7 @@ pub async fn update_agent_config(
                     model: None,
                     provider: None,
                     search_config_json: None,
+                    embed_config_json: build_embed_config_json(&state).await,
                 })
                 .await;
             if !push_result {
@@ -1411,6 +1429,7 @@ pub async fn update_agent_mcp_servers(
                     model: None,
                     provider: None,
                     search_config_json: None,
+                    embed_config_json: build_embed_config_json(&state).await,
                 })
                 .await;
             if !push_result {
@@ -1596,6 +1615,7 @@ pub async fn update_agent_search_config(
                     model: None,
                     provider: None,
                     search_config_json: Some(providers_json),
+                    embed_config_json: build_embed_config_json(&state).await,
                 })
                 .await;
             if !push_result {

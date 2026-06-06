@@ -1,0 +1,310 @@
+import { useState, useEffect, useCallback } from "react";
+import { useGatewayStore } from "../../stores/gatewayStore";
+import { useTranslation } from "../../i18n/useTranslation";
+import type { EmbeddingModelWithStatus } from "../../lib/types";
+import { cn } from "../../lib/utils";
+import { ConfirmDialog } from "../common/ConfirmDialog";
+import { fetchEmbeddingModels, downloadEmbeddingModel, selectEmbeddingModel } from "../../lib/gateway-api";
+import { Download, Check, Loader2, Cpu, Languages } from "lucide-react";
+
+export function EmbeddingModelTab() {
+    const { t } = useTranslation();
+    const status = useGatewayStore((s) => s.status);
+    const [models, setModels] = useState<EmbeddingModelWithStatus[]>([]);
+    const [activeModelId, setActiveModelId] = useState<string | null>(null);
+    const [serviceRunning, setServiceRunning] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [downloadingId, setDownloadingId] = useState<string | null>(null);
+    const [selectingId, setSelectingId] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [dimensionConfirm, setDimensionConfirm] = useState<{ modelId: string; message: string } | null>(null);
+
+    const loadModels = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const resp = await fetchEmbeddingModels();
+            setModels(resp.models);
+            setActiveModelId(resp.active_model_id);
+            setServiceRunning(resp.service_running);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to load models");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (status === "connected") {
+            loadModels();
+        }
+    }, [status, loadModels]);
+
+    const handleDownload = useCallback(async (modelId: string, variant?: string) => {
+        setDownloadingId(modelId);
+        setError(null);
+        try {
+            await downloadEmbeddingModel(modelId, variant);
+            await loadModels();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Download failed");
+        } finally {
+            setDownloadingId(null);
+        }
+    }, [loadModels]);
+
+    const handleSelect = useCallback(async (modelId: string, force = false) => {
+        setSelectingId(modelId);
+        setError(null);
+        try {
+            const result = await selectEmbeddingModel(modelId, force);
+            if (result.status === "dimension_mismatch") {
+                setDimensionConfirm({ modelId, message: result.message });
+                return;
+            }
+            await loadModels();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Select failed");
+        } finally {
+            setSelectingId(null);
+        }
+    }, [loadModels]);
+
+    const handleDimensionConfirm = useCallback(async () => {
+        if (!dimensionConfirm) return;
+        setDimensionConfirm(null);
+        await handleSelect(dimensionConfirm.modelId, true);
+    }, [dimensionConfirm, handleSelect]);
+
+    if (status !== "connected") {
+        return (
+            <div className="max-w-lg">
+                <p className="text-xs text-zinc-400">{t("embedding.connectToManage")}</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="max-w-2xl space-y-4">
+            {/* Service status */}
+            <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
+                <h2 className="mb-3 text-xs font-medium">{t("embedding.serviceStatus")}</h2>
+                <div className="flex items-center gap-2 text-xs">
+                    <span className="text-zinc-500">{t("embedding.status")}</span>
+                    <span
+                        className={cn(
+                            "h-2 w-2 rounded-full",
+                            serviceRunning ? "bg-[var(--color-accent)]" : "bg-zinc-400",
+                        )}
+                    />
+                    <span className={cn(
+                        serviceRunning ? "text-[var(--color-accent)]" : "text-zinc-500"
+                    )}>
+                        {serviceRunning ? t("embedding.running") : t("embedding.stopped")}
+                    </span>
+                </div>
+                {activeModelId && serviceRunning && (
+                    <div className="mt-2 flex items-center gap-2 text-xs">
+                        <span className="text-zinc-500">{t("embedding.activeModel")}</span>
+                        <span className="font-medium">{activeModelId}</span>
+                    </div>
+                )}
+            </div>
+
+            {/* Error message */}
+            {error && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+                    {error}
+                </div>
+            )}
+
+            {/* Model list */}
+            <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
+                <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-xs font-medium">{t("embedding.availableModels")}</h2>
+                    <button
+                        onClick={loadModels}
+                        disabled={loading}
+                        className="text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300"
+                    >
+                        {loading ? t("embedding.loading") : t("embedding.refresh")}
+                    </button>
+                </div>
+
+                {loading && models.length === 0 ? (
+                    <p className="text-xs text-zinc-400">{t("embedding.loading")}</p>
+                ) : models.length === 0 ? (
+                    <p className="text-xs text-zinc-400">{t("embedding.noModels")}</p>
+                ) : (
+                    <div className="space-y-2">
+                        {models.map((model) => (
+                            <ModelCard
+                                key={model.id}
+                                model={model}
+                                isActive={model.id === activeModelId}
+                                isDownloading={downloadingId === model.id}
+                                isSelecting={selectingId === model.id}
+                                onDownload={handleDownload}
+                                onSelect={() => handleSelect(model.id)}
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Dimension mismatch confirmation dialog */}
+            {dimensionConfirm && (
+                <ConfirmDialog
+                    open={true}
+                    title={t("embedding.dimensionChange")}
+                    message={dimensionConfirm.message}
+                    confirmLabel={t("embedding.confirmSwitch")}
+                    destructive
+                    onConfirm={handleDimensionConfirm}
+                    onCancel={() => {
+                        setDimensionConfirm(null);
+                        setSelectingId(null);
+                    }}
+                />
+            )}
+        </div>
+    );
+}
+
+/** Variant display label */
+const VARIANT_LABELS: Record<string, string> = {
+    fp32: "FP32",
+    fp16: "FP16",
+    int8: "INT8",
+};
+
+function ModelCard({
+    model,
+    isActive,
+    isDownloading,
+    isSelecting,
+    onDownload,
+    onSelect,
+}: {
+    model: EmbeddingModelWithStatus;
+    isActive: boolean;
+    isDownloading: boolean;
+    isSelecting: boolean;
+    onDownload: (modelId: string, variant?: string) => void;
+    onSelect: () => void;
+}) {
+    const { t } = useTranslation();
+    const variants = model.onnx_variants ? Object.keys(model.onnx_variants) : [];
+    const hasVariants = variants.length > 1;
+    const [selectedVariant, setSelectedVariant] = useState<string>(
+        variants.includes("fp16") ? "fp16" : (variants[0] ?? "fp32"),
+    );
+
+    const isBusy = isDownloading || isSelecting;
+
+    return (
+        <div
+            className={cn(
+                "rounded-lg border p-3 transition-colors",
+                isActive
+                    ? "border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 dark:border-[var(--color-accent)]/20 dark:bg-[var(--color-accent)]/5"
+                    : "border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-800",
+            )}
+        >
+            {/* Header: name + badges */}
+            <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold">{model.name}</span>
+                        {model.recommended && (
+                            <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                {t("embedding.recommended")}
+                            </span>
+                        )}
+                        {isActive && (
+                            <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                {t("embedding.active")}
+                            </span>
+                        )}
+                    </div>
+                    <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">{model.id}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                    {/* Variant selector — show when downloading and model has multiple variants */}
+                    {hasVariants && (model.status === "not_downloaded" || model.status === "service_not_running") && (
+                        <select
+                            value={selectedVariant}
+                            onChange={(e) => setSelectedVariant(e.target.value)}
+                            disabled={isBusy}
+                            className="h-7 appearance-none rounded-md border border-zinc-200 bg-white px-1.5 text-[11px] text-zinc-700 focus:border-zinc-400 focus:outline-none dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                            style={{
+                                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                                backgroundPosition: 'right 0.25rem center',
+                                backgroundRepeat: 'no-repeat',
+                                backgroundSize: '1.2em 1.2em',
+                                paddingRight: '1.25rem',
+                            }}
+                        >
+                            {variants.map((v) => (
+                                <option key={v} value={v}>
+                                    {VARIANT_LABELS[v] ?? v.toUpperCase()}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+                    {/* Download button — show when not downloaded/loaded */}
+                    {(model.status === "not_downloaded" || model.status === "service_not_running") && (
+                        <button
+                            onClick={() => onDownload(model.id, hasVariants ? selectedVariant : undefined)}
+                            disabled={isBusy || !model.id}
+                            className="inline-flex items-center gap-1 rounded-md border border-zinc-300 px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                        >
+                            {isDownloading ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                                <Download className="h-3 w-3" />
+                            )}
+                            {isDownloading ? t("embedding.downloading") : t("embedding.download")}
+                        </button>
+                    )}
+                    {/* Select button — show when downloaded but not active */}
+                    {!isActive && model.status !== "not_downloaded" && model.status !== "service_not_running" && (
+                        <button
+                            onClick={onSelect}
+                            disabled={isBusy}
+                            className="inline-flex items-center gap-1 rounded-md btn-solid px-2 py-1 text-[11px] font-medium disabled:opacity-50"
+                        >
+                            {isSelecting ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                                <Check className="h-3 w-3" />
+                            )}
+                            {isSelecting ? t("embedding.switching") : t("embedding.switchTo")}
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Meta info */}
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+                <span className="inline-flex items-center gap-1">
+                    <Cpu className="h-3 w-3" />
+                    {model.dimension}d
+                </span>
+                <span>{model.size_mb} MB</span>
+                <span>{model.max_tokens} tokens</span>
+                {model.languages.length > 0 && (
+                    <span className="inline-flex items-center gap-1">
+                        <Languages className="h-3 w-3" />
+                        {model.languages.join(", ")}
+                    </span>
+                )}
+                {hasVariants && (
+                    <span className="text-zinc-400">
+                        {t("embedding.variants")}: {variants.map((v) => VARIANT_LABELS[v] ?? v.toUpperCase()).join("/")}
+                    </span>
+                )}
+            </div>
+        </div>
+    );
+}

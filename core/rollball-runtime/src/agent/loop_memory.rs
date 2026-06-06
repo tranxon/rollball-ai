@@ -223,10 +223,12 @@ impl super::loop_::AgentLoop {
                             .collect();
 
                         // Spawn a background evaluation — don't block the
-                        // retrieval pipeline. Result is logged, not returned.
+                        // retrieval pipeline. Result is logged and fed back
+                        // into the MetricsAggregator for trend tracking.
                         let provider = self.core.provider.clone();
                         let model = judge_config.model.clone();
                         let query_text = query.query_text.clone();
+                        let metrics_agg = self.core.metrics_aggregator.clone();
                         tokio::spawn(async move {
                             let result = crate::memory::evaluate_retrieval_llm(
                                 provider.as_ref(),
@@ -240,6 +242,10 @@ impl super::loop_::AgentLoop {
                                 reason = %result.reason,
                                 "P3-3: LLM Judge evaluated retrieval quality"
                             );
+                            // Feed the Judge score back into the MetricsAggregator.
+                            if let Ok(mut agg) = metrics_agg.lock() {
+                                agg.record_judge_score(result.relevance_score);
+                            }
                         });
                     }
                 }
@@ -392,8 +398,10 @@ impl super::loop_::AgentLoop {
         fn zero_embedding(_text: &str) -> Vec<f32> {
             vec![0.0f32; rollball_grafeo::types::DEFAULT_EMBEDDING_DIM]
         }
+        let zero_embedding_arc: std::sync::Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> =
+            std::sync::Arc::new(zero_embedding);
 
-        match store.run_generalization(None, &zero_embedding, &config).await {
+        match store.run_generalization(None, &zero_embedding_arc, &config).await {
             Ok(result) => {
                 if result.nodes_created > 0 || result.nodes_boosted > 0 {
                     tracing::info!(

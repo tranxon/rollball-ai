@@ -6,6 +6,9 @@ apps/**/target/
 *.pdb
 Cargo.lock
 
+# Desktop app build staging (populated by build.rs)
+apps/rollball-desktop/src-tauri/bin/
+
 # IDE
 .workbuddy/
 .vscode/

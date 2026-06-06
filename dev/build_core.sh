@@ -100,6 +100,20 @@ else
 fi
 echo ""
 
+# Step 3.5: Build Embedding Runtime
+echo -e "${YELLOW}[3.5/5] Building Embedding Runtime (release mode)...${NC}"
+if cargo build --release -p rollball-embed 2>&1 | tee /tmp/embed_build.log; then
+    if grep -q "error" /tmp/embed_build.log 2>/dev/null; then
+        echo -e "${RED}  Embedding Runtime build failed with errors.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  Embedding Runtime build completed.${NC}"
+else
+    echo -e "${RED}  Embedding Runtime build failed.${NC}"
+    exit 1
+fi
+echo ""
+
 # Step 4: Copy offline_providers.json from assets to target dirs
 echo -e "${YELLOW}[4/5] Copying offline_providers.json to target directories...${NC}"
 OFFLINE_SRC="$WORKSPACE_ROOT/assets/offline_providers.json"

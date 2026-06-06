@@ -1,0 +1,95 @@
+{
+    "version": 1,
+    "models": [
+        {
+            "id": "bge-small-zh-v1.5",
+            "name": "BGE Small Chinese",
+            "description": "Lightweight Chinese embedding model, suitable for daily desktop use",
+            "dimension": 512,
+            "max_tokens": 512,
+            "size_mb": 90,
+            "languages": [
+                "zh",
+                "en"
+            ],
+            "hf_repo": "onnx-community/bge-small-zh-v1.5-ONNX",
+            "pooling_strategy": "cls",
+            "onnx_file": "onnx/model.onnx",
+            "tokenizer_file": "tokenizer.json",
+            "onnx_variants": {
+                "fp32": "onnx/model.onnx",
+                "fp16": "onnx/model_fp16.onnx",
+                "int8": "onnx/model_quantized.onnx"
+            },
+            "bundled": false,
+            "recommended": true
+        },
+        {
+            "id": "bge-base-zh-v1.5",
+            "name": "BGE Base Chinese",
+            "description": "Higher quality Chinese embedding model with 768d vectors",
+            "dimension": 768,
+            "max_tokens": 512,
+            "size_mb": 400,
+            "languages": [
+                "zh",
+                "en"
+            ],
+            "hf_repo": "Xenova/bge-base-zh-v1.5",
+            "pooling_strategy": "cls",
+            "onnx_file": "onnx/model.onnx",
+            "tokenizer_file": "tokenizer.json",
+            "onnx_variants": {
+                "fp32": "onnx/model.onnx",
+                "fp16": "onnx/model_fp16.onnx"
+            },
+            "bundled": false,
+            "recommended": false
+        },
+        {
+            "id": "bge-m3",
+            "name": "BGE M3 (Multilingual)",
+            "description": "Multilingual flagship model with 1024d vectors, excellent CJK support",
+            "dimension": 1024,
+            "max_tokens": 8192,
+            "size_mb": 2200,
+            "languages": [
+                "zh",
+                "en",
+                "ja",
+                "ko",
+                "multi"
+            ],
+            "hf_repo": "aapot/bge-m3-onnx",
+            "pooling_strategy": "cls",
+            "onnx_file": "model.onnx",
+            "tokenizer_file": "tokenizer.json",
+            "onnx_variants": {
+                "fp32": "model.onnx"
+            },
+            "bundled": false,
+            "recommended": false
+        },
+        {
+            "id": "all-MiniLM-L6-v2",
+            "name": "MiniLM L6 v2",
+            "description": "Lightweight English embedding model, 384d vectors",
+            "dimension": 384,
+            "max_tokens": 256,
+            "size_mb": 80,
+            "languages": [
+                "en"
+            ],
+            "hf_repo": "Xenova/all-MiniLM-L6-v2",
+            "pooling_strategy": "mean",
+            "onnx_file": "onnx/model.onnx",
+            "tokenizer_file": "tokenizer.json",
+            "onnx_variants": {
+                "fp32": "onnx/model.onnx",
+                "fp16": "onnx/model_fp16.onnx"
+            },
+            "bundled": false,
+            "recommended": false
+        }
+    ]
+}

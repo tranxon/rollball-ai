@@ -52,6 +52,15 @@ pub struct AgentHelloConfig {
     pub user_identity: Option<rollball_core::protocol::UserProfile>,
     pub user_profile_version: u64,
 
+    // ── Embedding service (delivered via AgentHello) ──
+    /// Embedding service endpoint (e.g. "http://127.0.0.1:18080/v1").
+    /// None when the embedding service is not running.
+    pub embed_endpoint: Option<String>,
+    /// Active embedding model ID (e.g. "bge-small-zh-v1.5").
+    pub embed_model_id: Option<String>,
+    /// Embedding dimension of the active model (e.g. 512).
+    pub embed_dimension: Option<usize>,
+
     // ── Runtime Config Overrides (removed Phase 5) ──
     // Per-agent config is now loaded from workspace/config/agent_config.json.
     // AgentHelloResult no longer carries runtime_* fields.
@@ -500,6 +509,22 @@ impl GatewayGrpcClient {
                         },
                         user_identity,
                         user_profile_version: result.user_profile_version,
+                        // Embedding service fields from proto (field 33-35).
+                        embed_endpoint: if result.embed_endpoint.is_empty() {
+                            None
+                        } else {
+                            Some(result.embed_endpoint)
+                        },
+                        embed_model_id: if result.embed_model_id.is_empty() {
+                            None
+                        } else {
+                            Some(result.embed_model_id)
+                        },
+                        embed_dimension: if result.embed_dimension == 0 {
+                            None
+                        } else {
+                            Some(result.embed_dimension as usize)
+                        },
                     };
                     Ok(config)
                 } else {
@@ -1059,6 +1084,7 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 model: rcu.model,
                 provider: rcu.provider,
                 search_config_json: rcu.search_config_json,
+                embed_config_json: rcu.embed_config_json,
             }
         }
         // Response messages (request_id > 0) — included for robustness
@@ -1109,6 +1135,9 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 search_key_vault,
                 user_identity: None,
                 user_profile_version: r.user_profile_version,
+                embed_endpoint: None,  // TODO: add to proto definition
+                embed_model_id: None,
+                embed_dimension: None,
             }
         },
         Some(ServerPayload::KeyReleaseResult(r)) => GatewayResponse::KeyReleaseResult {

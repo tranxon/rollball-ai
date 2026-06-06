@@ -10,9 +10,10 @@ import { Star } from "lucide-react";
 import { useMcpStore } from "../../stores/mcpStore";
 import { MCP_PRESETS, presetToServerConfig } from "../../lib/mcp-presets";
 import { SearchTab } from "./SearchTab";
+import { EmbeddingModelTab } from "./EmbeddingModelTab";
 import { useTranslation } from "../../i18n/useTranslation";
 
-type HarnessTab = "providers" | "search" | "mcp";
+type HarnessTab = "providers" | "search" | "mcp" | "embedding";
 
 export function HarnessPage() {
   const { t } = useTranslation();
@@ -22,6 +23,7 @@ export function HarnessPage() {
     { id: "providers", label: t("harness.tabProviders") },
     { id: "search", label: t("harness.tabSearch") },
     { id: "mcp", label: t("harness.tabMcp") },
+    { id: "embedding", label: t("harness.tabEmbedding") },
   ];
 
   return (
@@ -49,6 +51,7 @@ export function HarnessPage() {
         {activeTab === "providers" && <ProvidersTab />}
         {activeTab === "search" && <SearchTab />}
         {activeTab === "mcp" && <McpTab />}
+        {activeTab === "embedding" && <EmbeddingModelTab />}
       </div>
     </div>
   );

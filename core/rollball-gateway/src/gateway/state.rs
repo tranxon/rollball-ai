@@ -8,6 +8,7 @@ use crate::capability::registry::CapabilityRegistry;
 use crate::cron::CronScheduler;
 use crate::cron::store::CronStore;
 use crate::resource_cache::ResourceCache;
+use crate::lifecycle::embed::EmbedProcessState;
 
 /// Information about an installed agent
 #[derive(Debug, Clone)]
@@ -70,6 +71,8 @@ pub struct GatewayState {
     /// Resource cache — versioned provider and MCP lists for AgentHello diff sync.
     /// Loaded at startup and rebuilt by HTTP handlers when resources change.
     pub resource_cache: ResourceCache,
+    /// Embedding service process state (None if not started).
+    pub embed_process: Option<EmbedProcessState>,
 }
 
 impl GatewayState {
@@ -88,6 +91,7 @@ impl GatewayState {
             ipc_sessions: None,
             models_cache: None,
             resource_cache: ResourceCache::default(),
+            embed_process: None,
         }
     }
 

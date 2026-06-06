@@ -153,6 +153,18 @@ struct CachedLLMConfig {
     compact_model: Option<String>,
 }
 
+/// Pending embedding config from Gateway EmbeddingConfigUpdate.
+///
+/// Stored so that the config can be persisted to `agent_config.json`
+/// and used on next Agent restart to rebuild the FallbackEmbeddingProvider.
+/// True hot-swap (in-place rebuild without restart) is planned future work.
+#[derive(Debug, Clone)]
+pub struct PendingEmbedConfig {
+    pub embed_endpoint: String,
+    pub embed_model_id: String,
+    pub embed_dimension: usize,
+}
+
 /// Debug mode handles injected at runtime when Gateway pushes
 /// EnableDebugMode. Stored on SessionManager so that sessions
 /// created *after* debug mode is enabled inherit the debug
@@ -214,6 +226,9 @@ pub struct SessionManager {
     /// Keyed by session_id; fire_urgent_stop() looks up the target session's
     /// Notify and wakes only that session's tokio::select! branches.
     urgent_stops: HashMap<String, Arc<Notify>>,
+    /// Pending embedding config from Gateway EmbeddingConfigUpdate.
+    /// Stored for persistence and used on next Agent restart.
+    pub pending_embed_config: Option<PendingEmbedConfig>,
 }
 
 impl SessionManager {
@@ -234,6 +249,7 @@ impl SessionManager {
             runtime_debug_handles: None,
             debug_controllers: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             urgent_stops: HashMap::new(),
+            pending_embed_config: None,
         }
     }
 
@@ -915,6 +931,49 @@ impl SessionManager {
             let _ = handle.send(SessionMessage::UpdateIdentityContext {
                 identity_context: identity_context.clone(),
             });
+        }
+    }
+
+    /// Handle EmbeddingConfigUpdate from Gateway.
+    ///
+    /// When the user switches the active embedding model, the Gateway pushes
+    /// this update to all running Runtimes. The Runtime rebuilds its
+    /// FallbackEmbeddingProvider chain with the new ONNX provider as the
+    /// first entry, following the same cache + broadcast pattern as
+    /// `update_llm_config` (ADR-012).
+    pub fn handle_embedding_config_update(
+        &mut self,
+        embed_endpoint: String,
+        embed_model_id: String,
+        embed_dimension: usize,
+    ) {
+        tracing::info!(
+            endpoint = %embed_endpoint,
+            model_id = %embed_model_id,
+            dimension = embed_dimension,
+            "SessionManager: received EmbeddingConfigUpdate"
+        );
+
+        // Cache the config for persistence and new session construction.
+        self.pending_embed_config = Some(PendingEmbedConfig {
+            embed_endpoint: embed_endpoint.clone(),
+            embed_model_id: embed_model_id.clone(),
+            embed_dimension,
+        });
+
+        // Broadcast to all existing sessions so they rebuild their
+        // embedding provider in-place (same pattern as UpdateProvider).
+        for (sid, handle) in &self.sessions {
+            if handle.send(SessionMessage::UpdateEmbedConfig {
+                embed_endpoint: embed_endpoint.clone(),
+                embed_model_id: embed_model_id.clone(),
+                embed_dimension,
+            }).is_err() {
+                tracing::warn!(
+                    session_id = %sid,
+                    "Failed to send UpdateEmbedConfig to session (channel closed)"
+                );
+            }
         }
     }
 

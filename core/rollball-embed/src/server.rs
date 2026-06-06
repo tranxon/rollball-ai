@@ -1,0 +1,733 @@
+//! OpenAI-compatible HTTP API server for embedding inference.
+//!
+//! Endpoints:
+//! - `POST /v1/embeddings`  — OpenAI-compatible embedding API
+//! - `GET  /v1/models`      — List loaded models
+//! - `GET  /health`         — Health check with model status
+//! - `POST /models/{id}/load`   — Hot-load a model
+//! - `POST /models/{id}/download` — Trigger model download
+//! - `GET  /models/{id}/status`  — Get model status
+
+use std::sync::Arc;
+
+use axum::{
+    Json,
+    Router,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+};
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+
+use crate::download::Downloader;
+use crate::model::EmbeddingModel;
+use crate::registry::{ModelInfo, ModelRegistry, ModelStatus};
+use crate::shutdown::Shutdown;
+
+// ── App state ───────────────────────────────────────────────────────────
+
+/// Shared application state for the HTTP server.
+pub struct AppState {
+    /// Currently loaded model (None if no model loaded yet).
+    pub model: RwLock<Option<Arc<EmbeddingModel>>>,
+    /// Model registry.
+    pub registry: ModelRegistry,
+    /// Model downloader.
+    pub downloader: Downloader,
+    /// Download status per model.
+    pub download_status: RwLock<std::collections::HashMap<String, ModelStatus>>,
+    /// Shutdown signal.
+    pub shutdown: Arc<Shutdown>,
+    /// Models directory.
+    pub models_dir: std::path::PathBuf,
+    /// Selected ONNX variant (fp32, fp16, int8).
+    pub onnx_variant: String,
+    /// Default model ID to load at startup.
+    pub default_model: Option<String>,
+    /// Shared cancel flag for ongoing downloads. Set by the cancel-download
+    /// endpoint; cleared before each new download starts.
+    pub download_cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+}
+
+// ── OpenAI API types ────────────────────────────────────────────────────
+
+/// OpenAI-compatible embedding request.
+#[derive(Debug, Deserialize)]
+pub struct EmbeddingRequest {
+    /// Input text(s) to embed.
+    pub input: EmbeddingInput,
+    /// Model name (optional, uses loaded model if not specified).
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub model: Option<String>,
+}
+
+/// Input can be a single string or a list of strings.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum EmbeddingInput {
+    Single(String),
+    Batch(Vec<String>),
+}
+
+/// OpenAI-compatible embedding response.
+#[derive(Debug, Serialize)]
+pub struct EmbeddingResponse {
+    pub object: String,
+    pub data: Vec<EmbeddingData>,
+    pub model: String,
+    pub usage: EmbeddingUsage,
+}
+
+/// Single embedding result.
+#[derive(Debug, Serialize)]
+pub struct EmbeddingData {
+    pub object: String,
+    pub index: usize,
+    pub embedding: Vec<f32>,
+}
+
+/// Token usage info.
+#[derive(Debug, Serialize)]
+pub struct EmbeddingUsage {
+    pub prompt_tokens: usize,
+    pub total_tokens: usize,
+}
+
+/// OpenAI-compatible error response.
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub error: ErrorDetail,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ErrorDetail {
+    pub message: String,
+    #[serde(rename = "type")]
+    pub error_type: String,
+    pub code: Option<String>,
+}
+
+/// Health check response.
+#[derive(Debug, Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub model: Option<ModelStatusInfo>,
+}
+
+/// Model status in health check.
+#[derive(Debug, Serialize)]
+pub struct ModelStatusInfo {
+    pub id: String,
+    pub dimension: usize,
+    pub pooling: String,
+}
+
+/// Model list response (OpenAI-compatible format).
+#[derive(Debug, Serialize)]
+pub struct ModelListResponse {
+    pub object: String,
+    pub data: Vec<ModelEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelEntry {
+    pub id: String,
+    pub object: String,
+    pub owned_by: String,
+}
+
+/// Download request.
+#[derive(Debug, Deserialize)]
+pub struct DownloadRequest {
+    /// ONNX variant to download (fp32, fp16, int8). Defaults to server config.
+    #[serde(default)]
+    pub variant: Option<String>,
+}
+
+/// Download response.
+#[derive(Debug, Serialize)]
+pub struct DownloadResponse {
+    pub model_id: String,
+    pub status: String,
+    pub message: String,
+}
+
+/// Load response.
+#[derive(Debug, Serialize)]
+pub struct LoadResponse {
+    pub model_id: String,
+    pub status: String,
+    pub dimension: usize,
+}
+
+/// Model status response.
+#[derive(Debug, Serialize)]
+pub struct ModelStatusResponse {
+    pub model_id: String,
+    pub status: ModelStatus,
+    pub info: Option<ModelStatusInfo>,
+}
+
+/// Model list with details (extended, non-OpenAI).
+#[derive(Debug, Serialize)]
+pub struct ModelsDetailResponse {
+    pub models: Vec<ModelInfo>,
+}
+
+// ── Route handlers ──────────────────────────────────────────────────────
+
+/// POST /v1/embeddings — OpenAI-compatible embedding endpoint.
+pub async fn create_embedding(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<EmbeddingRequest>,
+) -> impl IntoResponse {
+    // Check shutdown
+    if state.shutdown.is_shutting_down() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: ErrorDetail {
+                    message: "Server is shutting down".to_string(),
+                    error_type: "server_error".to_string(),
+                    code: Some("shutting_down".to_string()),
+                },
+            }),
+        )
+            .into_response();
+    }
+
+    // Collect and validate input texts before checking model
+    let texts: Vec<String> = match req.input {
+        EmbeddingInput::Single(t) => vec![t],
+        EmbeddingInput::Batch(ts) => ts,
+    };
+
+    if texts.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: ErrorDetail {
+                    message: "Input cannot be empty".to_string(),
+                    error_type: "invalid_request_error".to_string(),
+                    code: None,
+                },
+            }),
+        )
+            .into_response();
+    }
+
+    // Get loaded model
+    let model_guard = state.model.read().await;
+    let model = match model_guard.as_ref() {
+        Some(m) => m.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: "No embedding model loaded".to_string(),
+                        error_type: "server_error".to_string(),
+                        code: Some("model_not_loaded".to_string()),
+                    },
+                }),
+            )
+                .into_response();
+        }
+    };
+    drop(model_guard);
+
+    // Run inference with timeout (30s per request)
+    let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+    let infer_result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        model.embed_batch(&text_refs),
+    )
+    .await;
+
+    match infer_result {
+        Ok(Ok(embeddings)) => {
+            let data: Vec<EmbeddingData> = embeddings
+                .into_iter()
+                .enumerate()
+                .map(|(i, emb)| EmbeddingData {
+                    object: "embedding".to_string(),
+                    index: i,
+                    embedding: emb,
+                })
+                .collect();
+
+            // Estimate total tokens from tokenizer truncation
+            let total_tokens: usize = texts
+                .iter()
+                .map(|t| t.split_whitespace().count().min(model.max_tokens()))
+                .sum();
+
+            tracing::debug!(
+                model = %model.model_id(),
+                batch_size = texts.len(),
+                total_tokens,
+                "Embedding inference completed"
+            );
+
+            (
+                StatusCode::OK,
+                Json(EmbeddingResponse {
+                    object: "list".to_string(),
+                    data,
+                    model: model.model_id().to_string(),
+                    usage: EmbeddingUsage {
+                        prompt_tokens: total_tokens,
+                        total_tokens,
+                    },
+                }),
+            )
+                .into_response()
+        }
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "Embedding inference failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: format!("Embedding inference failed: {e}"),
+                        error_type: "server_error".to_string(),
+                        code: None,
+                    },
+                }),
+            )
+                .into_response()
+        }
+        Err(_) => {
+            tracing::error!("Embedding inference timed out (30s)");
+            (
+                StatusCode::REQUEST_TIMEOUT,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: "Embedding inference timed out".to_string(),
+                        error_type: "timeout".to_string(),
+                        code: Some("inference_timeout".to_string()),
+                    },
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// GET /v1/models — OpenAI-compatible model list.
+pub async fn list_models(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let model_guard = state.model.read().await;
+    let current_id = model_guard.as_ref().map(|m| m.model_id().to_string());
+    drop(model_guard);
+
+    let models = state.registry.models();
+    let data: Vec<ModelEntry> = models
+        .iter()
+        .map(|m| ModelEntry {
+            id: m.id.clone(),
+            object: "model".to_string(),
+            owned_by: "rollball-embed".to_string(),
+        })
+        .collect();
+
+    // Also include the currently loaded model
+    let mut data = data;
+    if let Some(id) = current_id {
+        if !data.iter().any(|m| m.id == id) {
+            data.push(ModelEntry {
+                id,
+                object: "model".to_string(),
+                owned_by: "rollball-embed".to_string(),
+            });
+        }
+    }
+
+    Json(ModelListResponse {
+        object: "list".to_string(),
+        data,
+    })
+    .into_response()
+}
+
+/// GET /health — Health check.
+pub async fn health_check(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let model_guard = state.model.read().await;
+    let model_info = model_guard.as_ref().map(|m| ModelStatusInfo {
+        id: m.model_id().to_string(),
+        dimension: m.dimension(),
+        pooling: format!("{:?}", state.registry.get(m.model_id()).map(|e| &e.pooling_strategy).unwrap_or(&crate::registry::PoolingStrategy::Cls)),
+    });
+
+    let status = if model_guard.is_some() {
+        "ready"
+    } else {
+        "no_model_loaded"
+    };
+    drop(model_guard);
+
+    Json(HealthResponse {
+        status: status.to_string(),
+        model: model_info,
+    })
+    .into_response()
+}
+
+/// POST /models/{id}/load — Hot-load a model.
+pub async fn load_model(
+    State(state): State<Arc<AppState>>,
+    Path(model_id): Path<String>,
+) -> impl IntoResponse {
+    let entry = match state.registry.get(&model_id) {
+        Some(e) => e.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: format!("Model '{model_id}' not found in registry"),
+                        error_type: "not_found".to_string(),
+                        code: None,
+                    },
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Check if model is downloaded
+    let model_dir = state.models_dir.join(&model_id);
+    let onnx_path = model_dir.join("model.onnx");
+    let tokenizer_path = model_dir.join("tokenizer.json");
+
+    if !onnx_path.exists() || !tokenizer_path.exists() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: ErrorDetail {
+                    message: format!(
+                        "Model '{model_id}' not downloaded. Use POST /models/{model_id}/download first."
+                    ),
+                    error_type: "not_found".to_string(),
+                    code: Some("not_downloaded".to_string()),
+                },
+            }),
+        )
+            .into_response();
+    }
+
+    // Load model with timeout (60s) — ONNX Runtime can hang if external
+    // data files are missing, so we protect against that here.
+    let model_id_clone = model_id.clone();
+    let pooling = entry.pooling_strategy.clone();
+    let dimension = entry.dimension;
+    let max_tokens = entry.max_tokens;
+    let load_result = tokio::task::spawn_blocking(move || {
+        EmbeddingModel::load(
+            &model_id_clone,
+            &onnx_path,
+            &tokenizer_path,
+            pooling,
+            dimension,
+            max_tokens,
+        )
+    })
+    .await;
+
+    let model = match load_result {
+        Ok(Ok(m)) => m,
+        Ok(Err(e)) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: format!("Failed to load model '{model_id}': {e}"),
+                        error_type: "server_error".to_string(),
+                        code: None,
+                    },
+                }),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: format!("Model loading task panicked for '{model_id}': {e}"),
+                        error_type: "server_error".to_string(),
+                        code: None,
+                    },
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let dim = model.dimension();
+    let mut model_guard = state.model.write().await;
+    *model_guard = Some(Arc::new(model));
+
+    Json(LoadResponse {
+        model_id: model_id.clone(),
+        status: "loaded".to_string(),
+        dimension: dim,
+    })
+    .into_response()
+}
+
+/// POST /models/{id}/download — Trigger model download.
+pub async fn download_model(
+    State(state): State<Arc<AppState>>,
+    Path(model_id): Path<String>,
+    Json(req): Json<DownloadRequest>,
+) -> impl IntoResponse {
+    let entry = match state.registry.get(&model_id) {
+        Some(e) => e.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: format!("Model '{model_id}' not found in registry"),
+                        error_type: "not_found".to_string(),
+                        code: None,
+                    },
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Check if already downloaded
+    if state.downloader.is_downloaded(&model_id) {
+        return Json(DownloadResponse {
+            model_id: model_id.clone(),
+            status: "already_downloaded".to_string(),
+            message: "Model files already exist on disk".to_string(),
+        })
+        .into_response();
+    }
+
+    // Select ONNX variant
+    let variant = req
+        .variant
+        .unwrap_or_else(|| state.onnx_variant.clone());
+
+    let onnx_file = state
+        .registry
+        .onnx_path(&model_id, &variant)
+        .unwrap_or(entry.onnx_file.clone());
+
+    // Set download status
+    {
+        let mut status = state.download_status.write().await;
+        status.insert(model_id.clone(), ModelStatus::Downloading(0));
+    }
+
+    // Perform download — clear cancel flag first so a fresh download is not cancelled
+    state.download_cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+
+    let result = state
+        .downloader
+        .download_model(
+            &model_id,
+            &entry.hf_repo,
+            &onnx_file,
+            &entry.tokenizer_file,
+            None,
+            &state.download_cancel_flag,
+        )
+        .await;
+
+    match result {
+        Ok(_res) => {
+            let mut status = state.download_status.write().await;
+            status.insert(model_id.clone(), ModelStatus::Downloaded);
+            tracing::info!(model_id = %model_id, "Model downloaded successfully");
+
+            Json(DownloadResponse {
+                model_id,
+                status: "downloaded".to_string(),
+                message: "Model downloaded successfully".to_string(),
+            })
+            .into_response()
+        }
+        Err(e) => {
+            let mut status = state.download_status.write().await;
+            status.insert(
+                model_id.clone(),
+                ModelStatus::Failed(format!("{e}")),
+            );
+            tracing::error!(model_id = %model_id, error = %e, "Model download failed");
+
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: format!("Download failed for '{model_id}': {e}"),
+                        error_type: "download_error".to_string(),
+                        code: None,
+                    },
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// POST /models/{id}/cancel-download — Cancel an ongoing download.
+/// Sets the shared cancel flag so the next `cancel.load()` check in the
+/// downloader will abort the download loop.
+pub async fn cancel_download(
+    State(state): State<Arc<AppState>>,
+    Path(model_id): Path<String>,
+) -> impl IntoResponse {
+    // Verify model exists in registry
+    if state.registry.get(&model_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: ErrorDetail {
+                    message: format!("Model '{}' not found in registry", model_id),
+                    error_type: "not_found".to_string(),
+                    code: None,
+                },
+            }),
+        )
+            .into_response();
+    }
+
+    // Set cancel flag
+    state.download_cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    tracing::info!(model_id = %model_id, "Download cancel requested");
+
+    // Update download status
+    {
+        let mut status = state.download_status.write().await;
+        if let Some(ModelStatus::Downloading(_)) = status.get(&model_id) {
+            status.insert(model_id.clone(), ModelStatus::Failed("Cancelled by user".to_string()));
+        }
+    }
+
+    Json(serde_json::json!({
+        "model_id": model_id,
+        "status": "cancellation_requested",
+        "message": "Download cancellation signal sent"
+    }))
+    .into_response()
+}
+
+/// GET /models/{id}/status — Get model download/load status.
+pub async fn model_status(
+    State(state): State<Arc<AppState>>,
+    Path(model_id): Path<String>,
+) -> impl IntoResponse {
+    let entry = match state.registry.get(&model_id) {
+        Some(e) => e,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: ErrorDetail {
+                        message: format!("Model '{model_id}' not found in registry"),
+                        error_type: "not_found".to_string(),
+                        code: None,
+                    },
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Check if model is loaded
+    let model_guard = state.model.read().await;
+    let is_loaded = model_guard
+        .as_ref()
+        .map(|m| m.model_id() == model_id)
+        .unwrap_or(false);
+
+    let info = if is_loaded {
+        model_guard.as_ref().map(|m| ModelStatusInfo {
+            id: m.model_id().to_string(),
+            dimension: m.dimension(),
+            pooling: format!("{:?}", entry.pooling_strategy),
+        })
+    } else {
+        None
+    };
+    drop(model_guard);
+
+    // Determine status
+    let status = if is_loaded {
+        ModelStatus::Loaded
+    } else if state.downloader.is_downloaded(&model_id) {
+        ModelStatus::Downloaded
+    } else {
+        let dl_status = state.download_status.read().await;
+        dl_status
+            .get(&model_id)
+            .cloned()
+            .unwrap_or(ModelStatus::NotDownloaded)
+    };
+
+    Json(ModelStatusResponse {
+        model_id: model_id.clone(),
+        status,
+        info,
+    })
+    .into_response()
+}
+
+/// GET /models — Extended model list with status (non-OpenAI).
+pub async fn list_models_detail(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let model_guard = state.model.read().await;
+    let loaded_id = model_guard.as_ref().map(|m| m.model_id().to_string());
+    drop(model_guard);
+
+    let models = state.registry.models();
+    let infos: Vec<ModelInfo> = models
+        .iter()
+        .map(|entry| {
+            let status = if loaded_id.as_deref() == Some(entry.id.as_str()) {
+                ModelStatus::Loaded
+            } else if state.downloader.is_downloaded(&entry.id) {
+                ModelStatus::Downloaded
+            } else {
+                ModelStatus::NotDownloaded
+            };
+
+            ModelInfo {
+                entry: entry.clone(),
+                status,
+            }
+        })
+        .collect();
+
+    Json(ModelsDetailResponse { models: infos }).into_response()
+}
+
+/// Build the Axum router with all routes.
+pub fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        // OpenAI-compatible endpoints
+        .route("/v1/embeddings", post(create_embedding))
+        .route("/v1/models", get(list_models))
+        // Health check
+        .route("/health", get(health_check))
+        // Management endpoints
+        .route("/models", get(list_models_detail))
+        .route("/models/{id}/load", post(load_model))
+        .route("/models/{id}/download", post(download_model))
+        .route("/models/{id}/cancel-download", post(cancel_download))
+        .route("/models/{id}/status", get(model_status))
+        .with_state(state)
+}

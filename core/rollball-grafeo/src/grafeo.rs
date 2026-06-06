@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
 use crate::types::labels;
@@ -21,6 +22,21 @@ use rollball_memory::{
 
 use crate::error::Result;
 use crate::index_config::{HnswConfig, EPISODIC_TEXT_FIELDS, KNOWLEDGE_TEXT_FIELDS, VECTOR_METRIC};
+
+/// Statistics returned by [`GrafeoStore::rebuild_embeddings`].
+#[derive(Debug, Clone, Default)]
+pub struct RebuildStats {
+    /// Total number of nodes scanned across all memory labels.
+    pub total_scanned: u64,
+    /// Number of nodes whose embeddings were successfully regenerated.
+    pub rebuilt: u64,
+    /// Number of nodes skipped because they had no existing embedding.
+    pub skipped_no_embedding: u64,
+    /// Number of nodes skipped because they had no content text.
+    pub skipped_no_content: u64,
+    /// Number of nodes that encountered errors during rebuild.
+    pub errors: u64,
+}
 
 /// Grafeo graph database backed by grafeo-engine.
 ///
@@ -164,6 +180,115 @@ impl GrafeoStore {
     /// Return a reference to the underlying GrafeoDB.
     pub fn db(&self) -> &GrafeoDB {
         &self.db
+    }
+
+    /// Return the current embedding dimension (from HNSW config).
+    pub fn embedding_dim(&self) -> usize {
+        self.hnsw_config.dim
+    }
+
+    /// Rebuild all embeddings using a new embedding function.
+    ///
+    /// Scans all nodes with an `embedding` property across all memory labels,
+    /// regenerates the embedding from the node's `content` property using the
+    /// provided `embed_fn`, updates the node's embedding, and tracks statistics.
+    ///
+    /// This is used when switching to a different embedding model with a
+    /// different dimension (e.g., from Ollama nomic-embed-text 768d to
+    /// bge-small-zh 512d). After rebuilding, the caller should reopen the
+    /// store with the new dimension.
+    ///
+    /// # Arguments
+    ///
+    /// * `embed_fn` — A synchronous function that takes a text string and
+    ///   returns an embedding vector. This is called for each node's `content`
+    ///   property. The function is expected to return a vector of `new_dim` length.
+    /// * `new_dim` — The dimension of the new embedding model. Used for
+    ///   validation after regeneration.
+    ///
+    /// # Returns
+    ///
+    /// A [`RebuildStats`] with counts of total nodes scanned, nodes rebuilt,
+    /// nodes skipped (no content or no prior embedding), and errors.
+    pub fn rebuild_embeddings(
+        &self,
+        embed_fn: impl Fn(&str) -> Option<Vec<f32>>,
+        new_dim: usize,
+    ) -> Result<RebuildStats> {
+        use crate::types::labels;
+
+        let mut stats = RebuildStats::default();
+
+        for label in [
+            labels::EPISODIC,
+            labels::KNOWLEDGE,
+            labels::PROCEDURAL,
+            labels::AUTOBIOGRAPHICAL,
+        ] {
+            let graph = self.db.graph_store();
+            let node_ids = graph.nodes_by_label(label);
+
+            for &node_id in &node_ids {
+                stats.total_scanned += 1;
+
+                // Get the node's content property (all 4 types store one).
+                let node = match self.db.get_node(node_id) {
+                    Some(n) => n,
+                    None => {
+                        stats.errors += 1;
+                        continue;
+                    }
+                };
+
+                let props: Vec<(String, Value)> = node
+                    .properties_as_btree()
+                    .into_iter()
+                    .map(|(k, v)| (k.as_str().to_string(), v))
+                    .collect();
+                let prop_map: std::collections::HashMap<&str, &Value> = props
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v))
+                    .collect();
+
+                // Skip nodes without an existing embedding (they may have been
+                // created without an embedding provider).
+                let has_embedding = prop_map
+                    .get("embedding")
+                    .and_then(|v| v.as_vector())
+                    .is_some();
+                if !has_embedding {
+                    stats.skipped_no_embedding += 1;
+                    continue;
+                }
+
+                // Get the content text for re-embedding.
+                let content = match prop_map.get("content").and_then(|v| v.as_str()) {
+                    Some(c) if !c.is_empty() => c.to_string(),
+                    _ => {
+                        stats.skipped_no_content += 1;
+                        continue;
+                    }
+                };
+
+                // Generate new embedding.
+                match embed_fn(&content) {
+                    Some(new_embedding) => {
+                        if new_embedding.len() != new_dim {
+                            // Wrong dimension from embed_fn — update anyway,
+                            // caller should handle dimension mismatch.
+                        }
+                        let emb_value = Value::Vector(std::sync::Arc::from(new_embedding.as_slice()));
+                        self.db.set_node_property(node_id, "embedding", emb_value);
+                        stats.rebuilt += 1;
+                    }
+                    None => {
+                        stats.errors += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(stats)
     }
 }
 

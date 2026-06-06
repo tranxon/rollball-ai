@@ -2,15 +2,19 @@
 //!
 //! Provides embedding generation with:
 //! - Remote: OpenAI-compatible API (text-embedding-3-small, etc.)
+//! - Ollama: local embedding via Ollama's `/api/embed`
+//! - ONNX: local embedding via rollball-embed (OpenAI-compatible API)
 //! - Extensible via [`EmbeddingProvider`] trait for custom/local backends
 //!
-//! Fallback chain: primary (e.g., Ollama local) → remote API → text_search only.
-//! Remote fallback triggers after 200ms timeout or 2 consecutive failures.
+//! Fallback chain: ONNX local (500ms) → Ollama (200ms) → Remote API (no timeout).
+//! Each provider has its own timeout and consecutive failure tracking.
+//! After exceeding the failure threshold, a provider is temporarily skipped.
 
 pub mod ollama;
 pub mod remote;
 
 use async_trait::async_trait;
+use std::sync::Arc;
 
 /// Embedding generation trait
 #[async_trait]
@@ -74,163 +78,326 @@ impl Default for EmbeddingConfig {
     }
 }
 
-/// Embedding provider with automatic fallback
+// ── Provider entry (for the providers chain) ────────────────────────────
+
+/// Entry in the provider fallback chain.
+///
+/// Each provider has its own timeout and consecutive failure counter.
+/// After exceeding `failure_threshold` consecutive failures, the provider
+/// is temporarily skipped until a subsequent success resets the counter.
+struct ProviderEntry {
+    provider: Box<dyn EmbeddingProvider>,
+    /// Per-provider timeout in milliseconds.
+    timeout_ms: u64,
+    /// Consecutive failure counter (atomic for thread safety).
+    consecutive_failures: std::sync::atomic::AtomicU32,
+}
+
+impl ProviderEntry {
+    fn new(provider: Box<dyn EmbeddingProvider>, timeout_ms: u64) -> Self {
+        Self {
+            provider,
+            timeout_ms,
+            consecutive_failures: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    fn is_degraded(&self, threshold: u32) -> bool {
+        self.consecutive_failures.load(std::sync::atomic::Ordering::Relaxed) >= threshold
+    }
+
+    fn record_failure(&self, threshold: u32) {
+        let failures = self.consecutive_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if failures == threshold {
+            tracing::warn!(
+                provider = self.provider.name(),
+                failures,
+                threshold,
+                "Embedding provider exceeded failure threshold, temporarily skipping"
+            );
+        }
+    }
+
+    fn record_success(&self) {
+        self.consecutive_failures.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+// ── FallbackEmbeddingProvider ───────────────────────────────────────────
+
+/// Embedding provider with automatic fallback through a chain of providers.
+///
+/// # Provider Chain
+///
+/// The providers are tried in order. For each provider:
+/// 1. If it has exceeded `failure_threshold` consecutive failures, skip it.
+/// 2. Otherwise, attempt embedding with its per-provider timeout.
+/// 3. On success, reset its failure counter and return the result.
+/// 4. On failure/timeout, increment its failure counter and try the next provider.
+///
+/// If all providers fail, return the last error.
+///
+/// # Backward Compatibility
+///
+/// The `new(primary, fallback, config)` constructor still works, creating a
+/// two-entry providers chain. The new `with_providers()` constructor allows
+/// building longer chains (e.g., ONNX → Ollama → Remote).
 pub struct FallbackEmbeddingProvider {
-    /// Primary provider (usually local)
-    primary: Option<Box<dyn EmbeddingProvider>>,
-    /// Fallback provider (usually remote)
-    fallback: Box<dyn EmbeddingProvider>,
+    /// Ordered provider chain. Try each in sequence until one succeeds.
+    providers: Vec<ProviderEntry>,
     /// Configuration
     config: EmbeddingConfig,
-    /// Consecutive failure count for primary provider
-    primary_failures: std::sync::atomic::AtomicU32,
 }
 
 impl FallbackEmbeddingProvider {
-    /// Create a new fallback embedding provider
+    /// Create a new fallback embedding provider with the classic two-layer pattern.
+    ///
+    /// This is backward-compatible with the previous API.
+    /// Internally converts to a providers chain with two entries.
     pub fn new(
         primary: Option<Box<dyn EmbeddingProvider>>,
         fallback: Box<dyn EmbeddingProvider>,
         config: EmbeddingConfig,
     ) -> Self {
-        Self {
-            primary,
-            fallback,
-            config,
-            primary_failures: std::sync::atomic::AtomicU32::new(0),
+        let mut providers = Vec::new();
+
+        if let Some(primary) = primary {
+            providers.push(ProviderEntry::new(primary, config.timeout_ms));
         }
+        providers.push(ProviderEntry::new(fallback, 5000)); // Remote: 5s timeout
+
+        Self { providers, config }
     }
 
-    /// Create with only a remote fallback (no local provider)
+    /// Create with a full providers chain.
+    ///
+    /// Each `(provider, timeout_ms)` tuple defines one entry in the chain.
+    /// Providers are tried in the order given.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let fallback = FallbackEmbeddingProvider::with_providers(
+    ///     vec![
+    ///         (Box::new(onnx_provider), 500),     // ONNX local: 500ms timeout
+    ///         (Box::new(ollama_provider), 200),    // Ollama: 200ms timeout
+    ///         (Box::new(remote_provider), 5000),   // Remote API: 5s timeout
+    ///     ],
+    ///     EmbeddingConfig::default(),
+    /// );
+    /// ```
+    pub fn with_providers(
+        providers: Vec<(Box<dyn EmbeddingProvider>, u64)>,
+        config: EmbeddingConfig,
+    ) -> Self {
+        let providers = providers
+            .into_iter()
+            .map(|(provider, timeout_ms)| ProviderEntry::new(provider, timeout_ms))
+            .collect();
+        Self { providers, config }
+    }
+
+    /// Create with only a remote fallback (no local provider).
     pub fn remote_only(fallback: Box<dyn EmbeddingProvider>) -> Self {
         Self::new(None, fallback, EmbeddingConfig::default())
-    }
-
-    /// Record a primary provider failure
-    fn record_primary_failure(&self) {
-        let failures = self.primary_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if failures >= self.config.failure_threshold {
-            tracing::warn!(
-                failures,
-                threshold = self.config.failure_threshold,
-                "Primary embedding provider exceeded failure threshold, switching to fallback"
-            );
-        }
-    }
-
-    /// Record a primary provider success (reset failure counter)
-    fn record_primary_success(&self) {
-        self.primary_failures.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Check if primary provider should be skipped due to failures
-    fn should_skip_primary(&self) -> bool {
-        self.primary_failures.load(std::sync::atomic::Ordering::Relaxed) >= self.config.failure_threshold
     }
 }
 
 #[async_trait]
 impl EmbeddingProvider for FallbackEmbeddingProvider {
     fn name(&self) -> &str {
-        if self.primary.is_some() && !self.should_skip_primary() {
-            "fallback(primary=local)"
-        } else {
-            "fallback(primary=remote)"
+        // Return the name of the first non-degraded provider
+        for entry in &self.providers {
+            if !entry.is_degraded(self.config.failure_threshold) {
+                return entry.provider.name();
+            }
         }
+        // All degraded — return the last provider's name
+        self.providers
+            .last()
+            .map(|e| e.provider.name())
+            .unwrap_or("fallback(empty)")
     }
 
     async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
-        // Try primary provider first
-        if let Some(ref primary) = self.primary
-            && !self.should_skip_primary()
-        {
+        let mut last_error = EmbeddingError::Unavailable("All embedding providers failed".to_string());
+
+        for entry in &self.providers {
+            // Skip degraded providers
+            if entry.is_degraded(self.config.failure_threshold) {
+                continue;
+            }
+
             match tokio::time::timeout(
-                std::time::Duration::from_millis(self.config.timeout_ms),
-                primary.embed(text),
+                std::time::Duration::from_millis(entry.timeout_ms),
+                entry.provider.embed(text),
             )
             .await
             {
                 Ok(Ok(embedding)) => {
-                    self.record_primary_success();
+                    entry.record_success();
                     return Ok(embedding);
                 }
                 Ok(Err(e)) => {
-                    tracing::warn!(error = %e, "Primary embedding provider failed");
-                    self.record_primary_failure();
+                    tracing::warn!(
+                        provider = entry.provider.name(),
+                        error = %e,
+                        "Embedding provider failed"
+                    );
+                    entry.record_failure(self.config.failure_threshold);
+                    last_error = e;
                 }
                 Err(_) => {
-                    tracing::warn!(timeout_ms = self.config.timeout_ms, "Primary embedding provider timed out");
-                    self.record_primary_failure();
+                    tracing::warn!(
+                        provider = entry.provider.name(),
+                        timeout_ms = entry.timeout_ms,
+                        "Embedding provider timed out"
+                    );
+                    entry.record_failure(self.config.failure_threshold);
+                    last_error = EmbeddingError::Timeout(entry.timeout_ms);
                 }
             }
         }
 
-        // Fallback to remote provider
-        self.fallback.embed(text).await.map_err(|e| {
-            tracing::error!(error = %e, "Fallback embedding provider also failed");
-            e
-        })
+        tracing::error!(error = %last_error, "All embedding providers failed");
+        Err(last_error)
     }
 
     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
-        // Process in batches
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let mut all_embeddings = Vec::with_capacity(texts.len());
 
         for chunk in texts.chunks(self.config.max_batch_size) {
-            // Try primary provider first
-            if let Some(ref primary) = self.primary
-                && !self.should_skip_primary()
-            {
+            let mut chunk_ok = false;
+            let mut last_err = EmbeddingError::Unavailable("All embedding providers failed".to_string());
+
+            for entry in &self.providers {
+                // Skip degraded providers
+                if entry.is_degraded(self.config.failure_threshold) {
+                    continue;
+                }
+
+                // Scale timeout by chunk size
+                let timeout = entry.timeout_ms * chunk.len().max(1) as u64;
+
                 match tokio::time::timeout(
-                    std::time::Duration::from_millis(self.config.timeout_ms * chunk.len() as u64),
-                    primary.embed_batch(chunk),
+                    std::time::Duration::from_millis(timeout),
+                    entry.provider.embed_batch(chunk),
                 )
                 .await
                 {
                     Ok(Ok(embeddings)) => {
-                        self.record_primary_success();
+                        entry.record_success();
                         all_embeddings.extend(embeddings);
-                        continue;
+                        chunk_ok = true;
+                        break; // This chunk succeeded, move to next chunk
                     }
                     Ok(Err(e)) => {
-                        tracing::warn!(error = %e, "Primary batch embedding failed");
-                        self.record_primary_failure();
+                        tracing::warn!(
+                            provider = entry.provider.name(),
+                            error = %e,
+                            "Batch embedding provider failed"
+                        );
+                        entry.record_failure(self.config.failure_threshold);
+                        last_err = e;
                     }
                     Err(_) => {
-                        tracing::warn!("Primary batch embedding timed out");
-                        self.record_primary_failure();
+                        tracing::warn!(
+                            provider = entry.provider.name(),
+                            "Batch embedding provider timed out"
+                        );
+                        entry.record_failure(self.config.failure_threshold);
+                        last_err = EmbeddingError::Timeout(timeout);
                     }
                 }
             }
 
-            // Fallback to remote provider
-            let embeddings = self.fallback.embed_batch(chunk).await?;
-            all_embeddings.extend(embeddings);
+            if !chunk_ok {
+                tracing::error!(error = %last_err, "All embedding providers failed for batch chunk");
+                return Err(last_err);
+            }
+        }
+
+        // Validate we got the right number of embeddings
+        if all_embeddings.len() != texts.len() {
+            return Err(EmbeddingError::Unavailable(format!(
+                "Expected {} embeddings, got {}",
+                texts.len(),
+                all_embeddings.len()
+            )));
         }
 
         Ok(all_embeddings)
     }
 
     fn dimension(&self) -> usize {
-        // When primary is active and not degraded, use its dimension
-        // (Grafeo index was initialised with this value).
-        // When primary has been skipped due to consecutive failures,
-        // return the fallback dimension — though vector search may degrade
-        // to text-only if the stored index dimension differs.
-        if let Some(ref primary) = self.primary
-            && !self.should_skip_primary()
-        {
-            primary.dimension()
-        } else {
-            self.fallback.dimension()
+        // Return the dimension of the first non-degraded provider.
+        // (Grafeo index was initialised with this value.)
+        // When all providers are degraded, return the last provider's dimension.
+        for entry in &self.providers {
+            if !entry.is_degraded(self.config.failure_threshold) {
+                return entry.provider.dimension();
+            }
         }
+        self.providers
+            .last()
+            .map(|e| e.provider.dimension())
+            .unwrap_or(0)
     }
 
     async fn is_available(&self) -> bool {
-        if let Some(ref primary) = self.primary {
-            primary.is_available().await
-        } else {
-            self.fallback.is_available().await
+        for entry in &self.providers {
+            if !entry.is_degraded(self.config.failure_threshold)
+                && entry.provider.is_available().await
+            {
+                return true;
+            }
         }
+        false
+    }
+}
+
+// ── Arc delegate wrapper ────────────────────────────────────────────────
+
+/// Wraps an `Arc<dyn EmbeddingProvider>` into a `Box<dyn EmbeddingProvider>`.
+///
+/// This is needed when we want to use an existing shared provider as a
+/// fallback entry in a new `FallbackEmbeddingProvider` chain. The `new()`
+/// constructor requires `Box<dyn EmbeddingProvider>`, but `AgentCore`
+/// stores providers as `Arc<dyn EmbeddingProvider>`.
+pub struct ArcDelegateEmbeddingProvider {
+    inner: Arc<dyn EmbeddingProvider>,
+}
+
+impl ArcDelegateEmbeddingProvider {
+    /// Create a new delegate from an Arc.
+    pub fn from_arc(arc: Arc<dyn EmbeddingProvider>) -> Self {
+        Self { inner: arc }
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for ArcDelegateEmbeddingProvider {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+        self.inner.embed(text).await
+    }
+
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+        self.inner.embed_batch(texts).await
+    }
+
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+
+    async fn is_available(&self) -> bool {
+        self.inner.is_available().await
     }
 }

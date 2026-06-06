@@ -17,7 +17,8 @@ use rollball_core::protocol::ModelCapabilitiesInfo;
 use rollball_core::providers::traits::Provider;
 use rollball_core::tools::traits::Tool;
 use rollball_grafeo::grafeo::GrafeoStore;
-use rollball_grafeo::retrieval_metrics::{AlertThresholds, MetricsAggregator, OnlineRetrievalMetrics};
+use rollball_grafeo::consolidation::ConsolidationScheduler;
+use rollball_grafeo::retrieval_metrics::MetricsAggregator;
 use rollball_grafeo::types::GrafeoConfig;
 use rollball_grafeo::types::{AutobioCategory, AutobiographicalNode, NodeStatus};
 use tokio::sync::mpsc;
@@ -28,6 +29,7 @@ use crate::agent::loop_approval::ApprovalHandle;
 use crate::config::RuntimeConfig;
 use crate::debug::DebugObserverSlot;
 use crate::embedding::EmbeddingProvider;
+use crate::memory::ConsolidationBgTask;
 use crate::memory::{MemoryManager, MemoryManagerConfig};
 use crate::security::approval_gate::ApprovalGate;
 use rollball_core::ShellApprovalThreshold;
@@ -122,9 +124,18 @@ pub struct AgentCore {
     /// Used by [`init_memory_store`] to determine Grafeo vector dimension.
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// P3-1: Retrieval quality metrics aggregator (shared across sessions).
-    /// Tracks NRR, abstention rate, degradation, and conflict accuracy.
-    /// Wrapped in Mutex for interior mutability from async contexts.
-    pub(crate) metrics_aggregator: std::sync::Mutex<MetricsAggregator>,
+    /// Tracks NRR, abstention rate, degradation, conflict accuracy, and
+    /// LLM Judge scores. Wrapped in Arc<Mutex> so it can be shared with
+    /// background tokio::spawn tasks (e.g., LLM Judge evaluation).
+    pub(crate) metrics_aggregator: Arc<std::sync::Mutex<MetricsAggregator>>,
+    /// P3: Consolidation scheduler — decides when to run offline consolidation.
+    /// Created after memory store initialization, shared across all sessions.
+    /// None if memory store is not initialized.
+    pub(crate) consolidation_scheduler: Option<Arc<ConsolidationScheduler>>,
+    /// P3: Background consolidation task handle.
+    /// Dropping this cancels the background task.
+    /// None if memory store is not initialized or embedding provider is unavailable.
+    pub(crate) consolidation_bg_task: Option<ConsolidationBgTask>,
 }
 
 impl AgentCore {
@@ -170,7 +181,9 @@ impl AgentCore {
             shell_approval_threshold,
             status_tx: None,
             embedding_provider: None,
-            metrics_aggregator: std::sync::Mutex::new(MetricsAggregator::with_defaults(1.0)),
+            metrics_aggregator: Arc::new(std::sync::Mutex::new(MetricsAggregator::with_defaults(1.0))),
+            consolidation_scheduler: None,
+            consolidation_bg_task: None,
         }
     }
 
@@ -273,6 +286,27 @@ impl AgentCore {
             new_provider = %self.provider.name(),
             model = %model,
             "LLM provider updated at runtime via LLMConfigDelivery"
+        );
+    }
+
+    /// Update the embedding provider at runtime (hot-push from Gateway
+    /// EmbeddingConfigUpdate). Replaces the current provider with a
+    /// new ONNX provider as the first entry in the FallbackEmbeddingProvider chain.
+    pub fn update_embedding_provider(
+        &mut self,
+        new_provider: Arc<dyn crate::embedding::EmbeddingProvider>,
+    ) {
+        let old_name = self.embedding_provider
+            .as_ref()
+            .map(|p| p.name())
+            .unwrap_or("none")
+            .to_string(); // Detach from borrow before assigning
+        let new_name = new_provider.name().to_string(); // Read before move
+        self.embedding_provider = Some(new_provider);
+        tracing::info!(
+            old_provider = %old_name,
+            new_provider = %new_name,
+            "Embedding provider updated at runtime via EmbeddingConfigUpdate"
         );
     }
 
@@ -405,6 +439,9 @@ impl AgentCore {
                     session.set_store(store_arc.clone());
                 }
                 self.memory_store = Some(store_arc);
+
+                // Start consolidation background pipeline if embedding provider is available.
+                self.start_consolidation_pipeline();
             }
             Err(e) => {
                 tracing::warn!(
@@ -537,6 +574,66 @@ impl AgentCore {
         MemoryManager::new(MemoryManagerConfig::default())
     }
 
+    /// Start the consolidation background pipeline.
+    ///
+    /// Called automatically after `init_memory_store()` succeeds and
+    /// an embedding provider is available. Creates the
+    /// ConsolidationScheduler and spawns a background tokio task
+    /// that polls for consolidation triggers.
+    ///
+    /// If the embedding provider is not set, consolidation is deferred
+    /// until it becomes available (call this method again after setting it).
+    pub fn start_consolidation_pipeline(&mut self) {
+        let Some(ref store) = self.memory_store else {
+            tracing::debug!("Cannot start consolidation: memory store not initialized");
+            return;
+        };
+        let Some(ref embedding) = self.embedding_provider else {
+            tracing::debug!("Cannot start consolidation: embedding provider not available");
+            return;
+        };
+
+        // Don't restart if already running.
+        if self.consolidation_scheduler.is_some() {
+            tracing::debug!("Consolidation pipeline already running");
+            return;
+        }
+
+        use crate::memory::consolidation_bg::{ConsolidationParams, start_consolidation_pipeline};
+        use rollball_grafeo::consolidation::SchedulerConfig;
+        use std::time::Duration;
+
+        // Resolve the model name for the LLM adapter.
+        // Try gateway capabilities first, then fall back to "default".
+        let model = self.gateway_model_capabilities.keys().next().cloned()
+            .unwrap_or_else(|| "default".to_string());
+        let params = ConsolidationParams {
+            store: store.clone(),
+            provider: self.provider.clone(),
+            model,
+            embedding_provider: embedding.clone(),
+            scheduler_config: SchedulerConfig::default(),
+            poll_interval: Duration::from_secs(60),
+            work_dir: Some(std::path::PathBuf::from(&self.config.work_dir)),
+        };
+
+        let (scheduler, bg_task) = start_consolidation_pipeline(params);
+        self.consolidation_scheduler = Some(scheduler);
+        self.consolidation_bg_task = Some(bg_task);
+
+        tracing::info!("Consolidation background pipeline started");
+    }
+
+    /// Notify the consolidation scheduler that the agent is active.
+    ///
+    /// Should be called after each user message is processed, to reset
+    /// the idle timer so consolidation doesn't run during active use.
+    pub async fn notify_consolidation_active(&self) {
+        if let Some(ref scheduler) = self.consolidation_scheduler {
+            scheduler.notify_active().await;
+        }
+    }
+
     /// Create a cheap clone of this AgentCore for a new session.
     ///
     /// Heavy fields (provider, tools, memory_store) are Arc-cloned (refcount increment),
@@ -572,12 +669,15 @@ impl AgentCore {
             shell_approval_threshold: self.shell_approval_threshold.clone(),
             status_tx: None, // set separately by SessionTask
             embedding_provider: self.embedding_provider.clone(),
-            // P3-1: Metrics aggregator is cloned (each session gets its own
-            // snapshot). Cross-session aggregation happens at a higher level
-            // (Desktop App reads logs) or via a shared Arc in future.
-            metrics_aggregator: std::sync::Mutex::new(
-                self.metrics_aggregator.lock().unwrap().clone()
-            ),
+            // P3-1: Metrics aggregator is shared across sessions via Arc clone.
+            // This ensures LLM Judge evaluations from background tasks are
+            // reflected across all session views.
+            metrics_aggregator: self.metrics_aggregator.clone(),
+            // Consolidation scheduler is shared across sessions (Arc clone).
+            consolidation_scheduler: self.consolidation_scheduler.clone(),
+            // Background task is NOT cloned — it's owned by the primary AgentCore.
+            // Session clones don't need their own bg task.
+            consolidation_bg_task: None,
         }
     }
 

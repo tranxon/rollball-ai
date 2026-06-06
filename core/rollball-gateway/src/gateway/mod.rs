@@ -375,6 +375,42 @@ impl Gateway {
             tracing::warn!("Failed to auto-start System Agent: {}", e);
         }
 
+        // Try to spawn the local embedding service (rollball-embed).
+        // This is optional — if the binary is not found, embedding will
+        // fall back to remote providers (Ollama / OpenAI-compatible API).
+        // The embed process state is stored in GatewayState for the
+        // HTTP embedding API to reference.
+        {
+            let data_dir = std::path::PathBuf::from(&self.config.data_dir);
+            let models_dir = data_dir.join("models");
+            let embed_port = 18080; // Default port for embedding service
+            let hf_mirror = std::env::var("HF_MIRROR").ok();
+            let onnx_variant = "onnx"; // Default ONNX variant
+
+            match crate::lifecycle::embed::spawn_embed_process(
+                &data_dir,
+                &models_dir,
+                embed_port,
+                hf_mirror.as_deref(),
+                onnx_variant,
+            ).await {
+                Ok(embed_state) => {
+                    tracing::info!(
+                        pid = embed_state.pid,
+                        port = embed_state.port,
+                        "Embedding service process spawned"
+                    );
+                    self.state.embed_process = Some(embed_state);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to spawn embedding service (local ONNX embedding unavailable, will use remote fallback)"
+                    );
+                }
+            }
+        }
+
         // Load resource cache (provider_list.json + mcp_list.json) into memory.
         // These files are rebuilt by HTTP handlers when resources change.
         let cache_dir = std::path::PathBuf::from(&self.config.data_dir);
@@ -586,6 +622,19 @@ impl Gateway {
             }
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Received shutdown signal, cleaning up...");
+
+                // Kill the embedding service process before exiting.
+                // This prevents rollball-embed from becoming an orphan process.
+                {
+                    let gw = shared_state.read().await;
+                    if let Some(ref embed_state) = gw.embed_process {
+                        tracing::info!(pid = embed_state.pid, "Shutting down embedding service");
+                        if let Err(e) = crate::lifecycle::embed::kill_embed_process(embed_state.pid).await {
+                            tracing::warn!(error = %e, "Failed to kill embedding service process");
+                        }
+                    }
+                }
+
                 Ok(())
             }
         };

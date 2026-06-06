@@ -12,6 +12,7 @@ use crate::conflict::{self, FACT_THRESHOLD, PREFERENCE_THRESHOLD, RELATION_THRES
 use crate::error::Result;
 use crate::grafeo::GrafeoStore;
 use crate::types::{labels, KnowledgeNode, KnowledgeSubType, NodeStatus, ProceduralNode};
+use grafeo_common::types::Value;
 
 // ---------------------------------------------------------------------------
 // Cosine similarity (local copy — semantic/knowledge.rs keeps its own private)
@@ -151,8 +152,18 @@ impl GrafeoStore {
         // --- Fact / Preference / Relation path ---
 
         // Step 1: Dedup check (only if embedding is available).
+        // P3 T4.5: Enhanced dedup — pass (subject, predicate, object) for structured
+        // matching. If (subject, predicate) matches but object differs, it's
+        // a knowledge update (handled by conflict detection in Step 2), not dedup.
         if let Some(ref embedding) = input.embedding
-            && self.is_duplicate_knowledge(embedding, DEDUP_THRESHOLD)?
+            && self.is_duplicate_knowledge(
+                embedding,
+                DEDUP_THRESHOLD,
+                input.subject.as_deref(),
+                input.predicate.as_deref(),
+                input.object.as_deref(),
+            )?
+            .is_some()
         {
             return Ok(None);
         }
@@ -340,26 +351,94 @@ impl GrafeoStore {
 
     /// Check if a similar knowledge node already exists (dedup).
     ///
-    /// Returns `true` if embedding cosine similarity > `threshold` with any
-    /// existing Knowledge node.
-    pub fn is_duplicate_knowledge(&self, embedding: &[f32], threshold: f32) -> Result<bool> {
+    /// Two dedup dimensions:
+    /// 1. **Semantic**: embedding cosine similarity > `threshold`
+    /// 2. **Structured**: `(subject, predicate)` exact match
+    ///
+    /// A node is considered a duplicate ONLY if both dimensions match
+    /// AND the object also matches (or no object comparison is possible).
+    /// If (subject, predicate) matches but object differs, this is a
+    /// knowledge update (not a duplicate) — the caller should route it
+    /// to conflict detection instead.
+    ///
+    /// Returns the ID of the most similar duplicate if found, or `None`.
+    pub fn is_duplicate_knowledge(
+        &self,
+        embedding: &[f32],
+        threshold: f32,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+        object: Option<&str>,
+    ) -> Result<Option<NodeId>> {
         let graph = self.db.graph_store();
         let node_ids = graph.nodes_by_label(labels::KNOWLEDGE);
 
         for id in node_ids {
-            if let Some(n) = self.db.get_node(id)
-                && let Some(existing_emb) = n
+            if let Some(n) = self.db.get_node(id) {
+                // Check semantic similarity.
+                let Some(existing_emb) = n
                     .get_property("embedding")
                     .and_then(|v| v.as_vector().map(|s| s.to_vec()))
-            {
+                else {
+                    continue;
+                };
                 let sim = cosine_similarity(embedding, &existing_emb) as f32;
-                if sim > threshold {
-                    return Ok(true);
+                if sim <= threshold {
+                    continue; // Not semantically similar enough.
+                }
+
+                // Semantic match found. Now check structured match.
+                match (subject, predicate) {
+                    (Some(subj), Some(pred)) => {
+                        let existing_subject = n
+                            .get_property("subject")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let existing_predicate = n
+                            .get_property("predicate")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+
+                        if !existing_subject.eq_ignore_ascii_case(subj)
+                            || !existing_predicate.eq_ignore_ascii_case(pred)
+                        {
+                            // Different (subject, predicate) → not structured match.
+                            // Keep looking for a better match.
+                            continue;
+                        }
+
+                        // Same (subject, predicate). Check if object also matches.
+                        let existing_object = n
+                            .get_property("object")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+
+                        // If we have an object in the input AND the existing
+                        // node has an object, compare them.
+                        if let Some(obj) = object {
+                            if !existing_object.eq_ignore_ascii_case(obj) {
+                                // Same (subject, predicate), different object →
+                                // this is a knowledge UPDATE, not a duplicate.
+                                // Return None so the caller proceeds to conflict
+                                // detection, which will handle the update.
+                                return Ok(None);
+                            }
+                        }
+
+                        // Same (subject, predicate) and same (or absent) object →
+                        // true duplicate.
+                        return Ok(Some(id));
+                    }
+                    _ => {
+                        // No structured fields provided — fall back to pure
+                        // semantic dedup (original behavior).
+                        return Ok(Some(id));
+                    }
                 }
             }
         }
 
-        Ok(false)
+        Ok(None)
     }
 
     /// Check for conflicting knowledge nodes.
@@ -653,6 +732,9 @@ mod tests {
     fn test_process_memory_store_near_duplicate_skip() {
         let store = test_store();
 
+        // === T4.5: Test that same (subject, predicate) + different object ===
+        // is treated as knowledge update, NOT duplicate.
+
         let input1 = MemoryStoreInput {
             content: "User lives in Beijing".to_string(),
             sub_type: KnowledgeSubType::Fact,
@@ -665,9 +747,11 @@ mod tests {
         };
         store.process_memory_store(&input1).unwrap();
 
-        // Embedding with cos_sim ≈ 0.953 (flip 9) → just above dedup threshold.
+        // Same (subject, predicate) but different object → NOT a duplicate.
+        // This is a knowledge update, so conflict detection should handle it.
+        // Embedding with cos_sim ≈ 0.953 (flip 9) → above dedup threshold.
         let input2 = MemoryStoreInput {
-            content: "User lives in Beijing".to_string(),
+            content: "User lives in Shanghai".to_string(),
             sub_type: KnowledgeSubType::Fact,
             subject: Some("user".to_string()),
             predicate: Some("lives_in".to_string()),
@@ -677,7 +761,42 @@ mod tests {
             embedding: Some(flipped_emb(9)), // cos ≈ 0.953 > 0.95
         };
         let id2 = store.process_memory_store(&input2).unwrap();
-        assert!(id2.is_none(), "near-duplicate should return None");
+        // T4.5: Should NOT be None — it's a knowledge update, not a duplicate.
+        assert!(id2.is_some(), "same (subject, predicate) + different object should go through conflict detection");
+    }
+
+    #[test]
+    fn test_process_memory_store_true_duplicate_skip() {
+        let store = test_store();
+
+        // T4.5: Test that identical (subject, predicate, object) + same embedding
+        // IS treated as a true duplicate and skipped.
+
+        let input1 = MemoryStoreInput {
+            content: "User lives in Beijing".to_string(),
+            sub_type: KnowledgeSubType::Fact,
+            subject: Some("user".to_string()),
+            predicate: Some("lives_in".to_string()),
+            object: Some("Beijing".to_string()),
+            confidence: Some(0.9),
+            source_episode_id: None,
+            embedding: Some(const_emb(1.0)),
+        };
+        store.process_memory_store(&input1).unwrap();
+
+        // Exact same triple + identical embedding → true duplicate.
+        let input2 = MemoryStoreInput {
+            content: "User lives in Beijing".to_string(),
+            sub_type: KnowledgeSubType::Fact,
+            subject: Some("user".to_string()),
+            predicate: Some("lives_in".to_string()),
+            object: Some("Beijing".to_string()),
+            confidence: Some(0.9),
+            source_episode_id: None,
+            embedding: Some(const_emb(1.0)),
+        };
+        let id2 = store.process_memory_store(&input2).unwrap();
+        assert!(id2.is_none(), "identical (subject, predicate, object) + same embedding should be deduplicated");
     }
 
     // =====================================================================
@@ -846,8 +965,13 @@ mod tests {
         store.store_knowledge(&node).unwrap();
 
         // Same direction → cosine sim = 1.0 > 0.95.
-        let is_dup = store.is_duplicate_knowledge(&const_emb(1.0), 0.95).unwrap();
-        assert!(is_dup, "identical embedding should be detected as duplicate");
+        // Same subject+predicate+object → true duplicate.
+        let is_dup = store.is_duplicate_knowledge(&const_emb(1.0), 0.95, Some("user"), Some("name"), Some("Alice")).unwrap();
+        assert!(is_dup.is_some(), "identical embedding + same (subject, predicate, object) should be duplicate");
+
+        // Same direction but different object → knowledge update, NOT duplicate.
+        let is_dup = store.is_duplicate_knowledge(&const_emb(1.0), 0.95, Some("user"), Some("name"), Some("Bob")).unwrap();
+        assert!(is_dup.is_none(), "same (subject, predicate) but different object should NOT be duplicate");
     }
 
     // =====================================================================
@@ -875,8 +999,8 @@ mod tests {
         store.store_knowledge(&node).unwrap();
 
         // Different direction (flip 40 → cos ≈ 0.792 < 0.95) → not duplicate.
-        let is_dup = store.is_duplicate_knowledge(&flipped_emb(40), 0.95).unwrap();
-        assert!(!is_dup, "different embedding should not be duplicate");
+        let is_dup = store.is_duplicate_knowledge(&flipped_emb(40), 0.95, Some("user"), Some("name"), Some("Alice")).unwrap();
+        assert!(is_dup.is_none(), "different embedding should not be duplicate");
     }
 
     // =====================================================================

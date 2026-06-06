@@ -40,6 +40,7 @@ pub use retrieval_metrics::{BenchmarkMetrics, EvalQuery, OnlineRetrievalMetrics,
 pub use stats::{MemoryStats, SlaConfig, SlaStatus, check_sla, collect_stats};
 pub use error::{GrafeoError, Result};
 pub use grafeo::GrafeoStore;
+pub use grafeo::RebuildStats;
 pub use index_config::{HnswConfig, validate_embedding_dim, HNSW_DEFAULT_EF_CONSTRUCTION, HNSW_DEFAULT_EF_SEARCH, HNSW_DEFAULT_M, EPISODIC_TEXT_FIELDS, KNOWLEDGE_TEXT_FIELDS, VECTOR_METRIC};
 pub use spreading::{
     GraphExpandConfig, ExpandedNode,

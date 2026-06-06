@@ -518,6 +518,9 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                 search_key_vault,
                 user_identity,
                 user_profile_version,
+                embed_endpoint,
+                embed_model_id,
+                embed_dimension,
             } => {
                 let _ = (provider_list, provider_list_version, mcp_list, mcp_list_version);
                 // AgentHelloResult now carries structured resource lists with version-driven diff sync.
@@ -544,6 +547,9 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                         search_key_vault_json: skv_json,
                         user_identity_json: identity_json,
                         user_profile_version: *user_profile_version,
+                        embed_endpoint: embed_endpoint.clone().unwrap_or_default(),
+                        embed_model_id: embed_model_id.clone().unwrap_or_default(),
+                        embed_dimension: embed_dimension.unwrap_or(0) as u64,
                     },
                 ))
             }
@@ -756,6 +762,7 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                 model,
                 provider,
                 search_config_json,
+                embed_config_json,
             } => {
                 let mcp_servers_set = mcp_servers.is_some();
                 let active_tools_set = active_tools.is_some();
@@ -784,6 +791,7 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                         mcp_servers_set,
                         active_tools_set,
                         system_prompt_set,
+                        embed_config_json: embed_config_json.clone(),
                     },
                 ))
             }
@@ -846,6 +854,17 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                     proto::EnableDebugMode {
                         debug_port: *debug_port,
                     },
+                ))
+            }
+            // EmbeddingConfigUpdate — no proto message defined.
+            // This variant is only used in direct IPC (non-gRPC) scenarios.
+            // For gRPC delivery, the Gateway uses RuntimeConfigUpdate.embed_config_json
+            // instead, which has proper proto representation.
+            // Mapping to UsageReportAck here is safe because the gRPC path
+            // never generates this variant.
+            protocol::GatewayResponse::EmbeddingConfigUpdate { .. } => {
+                Some(proto::server_message::Payload::UsageReportAck(
+                    proto::UsageReportAck {},
                 ))
             }
         };

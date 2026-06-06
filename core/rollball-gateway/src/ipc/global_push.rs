@@ -292,6 +292,19 @@ impl GlobalResourcePusher {
                         model: None,
                         provider: None,
                         search_config_json: None,
+                        embed_config_json: {
+                            let gw = self.gateway_state.read().await;
+                            match &gw.embed_process {
+                                Some(eps) if eps.active_model_id.is_some() => {
+                                    Some(serde_json::json!({
+                                        "embed_endpoint": format!("http://127.0.0.1:{}/v1", eps.port),
+                                        "embed_model_id": eps.active_model_id.clone().unwrap_or_default(),
+                                        "embed_dimension": eps.active_dimension.unwrap_or(0),
+                                    }).to_string())
+                                }
+                                _ => None,
+                            }
+                        },
                     })
                     .await;
                 if ok {
@@ -356,6 +369,100 @@ impl GlobalResourcePusher {
                     tracing::warn!(agent = %agent_id, "User profile push failed (channel closed)");
                 }
             }
+        }
+    }
+
+    // ── Embedding config ────────────────────────────────────────────────
+
+    /// Push embedding configuration update to all running agents after a
+    /// model switch. The Runtime rebuilds its FallbackEmbeddingProvider
+    /// chain with the new ONNX provider as the first entry.
+    ///
+    /// Uses `RuntimeConfigUpdate.embed_config_json` instead of the deprecated
+    /// `EmbeddingConfigUpdate` variant, because the latter has no proto
+    /// representation and would be lost over the gRPC bridge.
+    #[tracing::instrument(skip(self), name = "push_embedding_config")]
+    pub async fn push_embedding_config(&self) {
+        let grpc_session_mgr = match &self.grpc_session_mgr {
+            Some(mgr) => mgr.clone(),
+            None => {
+                tracing::warn!("No gRPC session manager, skipping embedding config push");
+                return;
+            }
+        };
+
+        let agent_ids: Vec<String> = {
+            let gw = self.gateway_state.read().await;
+            gw.running_agents.keys().cloned().collect()
+        };
+
+        if agent_ids.is_empty() {
+            return;
+        }
+
+        // Read current embedding config from GatewayState
+        let (embed_endpoint, embed_model_id, embed_dimension) = {
+            let gw = self.gateway_state.read().await;
+            match &gw.embed_process {
+                Some(eps) => {
+                    let endpoint = format!("http://127.0.0.1:{}/v1", eps.port);
+                    let model_id = eps.active_model_id.clone().unwrap_or_default();
+                    let dimension = eps.active_dimension.unwrap_or(0);
+                    (endpoint, model_id, dimension)
+                }
+                None => {
+                    tracing::warn!("Embedding service not running, skipping push");
+                    return;
+                }
+            }
+        };
+
+        // Serialize as JSON for the embed_config_json field
+        let embed_config_json = serde_json::json!({
+            "embed_endpoint": embed_endpoint,
+            "embed_model_id": embed_model_id,
+            "embed_dimension": embed_dimension,
+        }).to_string();
+
+        let mut pushed = 0u32;
+        let mut failed = 0u32;
+
+        for agent_id in agent_ids {
+            let mgr = grpc_session_mgr.lock().await;
+            if let Some((_conn_id, session)) = mgr.find_by_agent_id(&agent_id) {
+                let ok = session
+                    .push_message(GatewayResponse::RuntimeConfigUpdate {
+                        max_output_tokens: None,
+                        max_iterations: None,
+                        temperature: None,
+                        system_prompt_override: None,
+                        active_tools: None,
+                        shell_approval_threshold: None,
+                        mcp_servers: None,
+                        model: None,
+                        provider: None,
+                        search_config_json: None,
+                        embed_config_json: Some(embed_config_json.clone()),
+                    })
+                    .await;
+
+                if ok {
+                    tracing::info!(
+                        agent = %agent_id,
+                        model_id = %embed_model_id,
+                        dimension = embed_dimension,
+                        "Pushed embedding config to agent via RuntimeConfigUpdate"
+                    );
+                    pushed += 1;
+                } else {
+                    tracing::warn!(agent = %agent_id, "Embedding config push failed (channel closed)");
+                    failed += 1;
+                }
+            }
+        }
+
+        if pushed > 0 || failed > 0 {
+            tracing::info!(pushed, failed, "Embedding config push complete");
         }
     }
 }

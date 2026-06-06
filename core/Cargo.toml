@@ -9,6 +9,7 @@ members = [
     "rollball-vault",
     "rollball-sign",
     "rollball-tool-sdk",
+    "rollball-embed",
 ]
 resolver = "2"
 
@@ -135,10 +136,28 @@ wasmtime = "29"
 wasmtime-wasi = "29"
 
 # gRPC
- tonic = "0.12"
- prost = "0.13"
- tonic-build = "0.12"
- protoc-bin-vendored = "3"
+tonic = "0.12"
+prost = "0.13"
+tonic-build = "0.12"
+protoc-bin-vendored = "3"
+
+# ONNX Runtime — use download-binaries to statically link ORT.
+# Platform notes:
+#   Windows: Requires MSVC v144+ (14.40+) for the prebuilt ORT 1.24.2 libraries.
+#   Linux:   Requires glibc 2.27+ (Ubuntu 18.04+), gcc/g++ toolchain.
+#   macOS:   Requires macOS 12+ (Monterey), Xcode command-line tools.
+# For GPU acceleration, enable per-platform features in rollball-embed:
+#   --features directml (Windows) | cuda (Linux) | coreml (macOS)
+ort = { version = "2.0.0-rc.10", features = ["download-binaries"] }
+
+# Tokenizer (HuggingFace)
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+
+# Signal handling (graceful shutdown)
+signal-hook = "0.3"
+
+# Numerical arrays (for ONNX tensor construction)
+ndarray = "0.17"
 
 # Internal crate references
 rollball-core = { path = "rollball-core" }
@@ -149,3 +168,4 @@ rollball-runtime = { path = "rollball-runtime" }
 rollball-gateway = { path = "rollball-gateway" }
 rollball-vault = { path = "rollball-vault" }
 rollball-sign = { path = "rollball-sign" }
+rollball-embed = { path = "rollball-embed" }

@@ -8,6 +8,7 @@
 //! Design: `docs/05-memory.md` §4.3
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -148,7 +149,7 @@ impl GrafeoStore {
         &self,
         episode_contents: &[(String, String)], // (episode_id, content)
         llm: &dyn TripleExtractorLlm,
-        embedding_fn: &dyn Fn(&str) -> Vec<f32>,
+        embedding_fn: &Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>,
     ) -> Result<ExtractionResult> {
         if episode_contents.is_empty() {
             return Ok(ExtractionResult {
@@ -557,6 +558,10 @@ mod tests {
         vec![0.1f32; DEFAULT_EMBEDDING_DIM]
     }
 
+    fn test_embedding_arc() -> Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> {
+        Arc::new(test_embedding_fn)
+    }
+
     #[tokio::test]
     async fn test_extract_triples_with_mock_llm() {
         let store = GrafeoStore::new_in_memory().unwrap();
@@ -568,7 +573,7 @@ mod tests {
             .extract_triples(
                 &[("ep-1".to_string(), "I love coffee and I live in Shanghai".to_string())],
                 &llm,
-                &test_embedding_fn,
+                &test_embedding_arc(),
             )
             .await
             .unwrap();
@@ -611,7 +616,7 @@ mod tests {
             .extract_triples(
                 &[("ep-2".to_string(), "I like coffee now and work at Acme".to_string())],
                 &llm,
-                &test_embedding_fn,
+                &test_embedding_arc(),
             )
             .await
             .unwrap();
@@ -635,7 +640,7 @@ mod tests {
         };
 
         let result = store
-            .extract_triples(&[], &llm, &test_embedding_fn)
+            .extract_triples(&[], &llm, &test_embedding_arc())
             .await
             .unwrap();
 
@@ -658,7 +663,7 @@ mod tests {
             .extract_triples(
                 &[("ep-3".to_string(), "My name is Alice".to_string())],
                 &llm,
-                &test_embedding_fn,
+                &test_embedding_arc(),
             )
             .await
             .unwrap();
@@ -685,7 +690,7 @@ mod tests {
             .extract_triples(
                 &[("ep-4".to_string(), "Maybe something".to_string())],
                 &llm,
-                &test_embedding_fn,
+                &test_embedding_arc(),
             )
             .await
             .unwrap();

@@ -22,3 +22,4 @@ pub mod skills_api;
 pub mod workspaces;
 pub mod publish_api;
 pub mod mcp_catalog_api;
+pub mod embedding_api;

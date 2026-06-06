@@ -15,6 +15,7 @@
 //! Design: `docs/05-memory.md` §4.2 (step ④), §4.3
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use grafeo_common::types::Value;
@@ -484,7 +485,7 @@ impl GrafeoStore {
         &self,
         episodes: &[(String, String, String)],
         llm: Option<&dyn TripleExtractorLlm>,
-        embedding_fn: &(dyn Fn(&str) -> Vec<f32> + Send + Sync),
+        embedding_fn: &Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>,
         min_observations: usize,
     ) -> Result<GeneralizationResult> {
         let config = GeneralizationConfig {
@@ -500,7 +501,7 @@ impl GrafeoStore {
         &self,
         episodes: &[(String, String, String)],
         llm: Option<&dyn TripleExtractorLlm>,
-        embedding_fn: &(dyn Fn(&str) -> Vec<f32> + Send + Sync),
+        embedding_fn: &Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>,
         config: &GeneralizationConfig,
     ) -> Result<GeneralizationResult> {
         let patterns = if let Some(llm) = llm {
@@ -608,7 +609,7 @@ impl GrafeoStore {
     pub async fn run_generalization(
         &self,
         llm: Option<&dyn TripleExtractorLlm>,
-        embedding_fn: &(dyn Fn(&str) -> Vec<f32> + Send + Sync),
+        embedding_fn: &Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>,
         config: &GeneralizationConfig,
     ) -> Result<GeneralizationResult> {
         let episodes = self.scan_episodes_for_pattern_extraction(config.max_episodes_scan)?;
@@ -929,6 +930,10 @@ mod tests {
         vec![0.1f32; DEFAULT_EMBEDDING_DIM]
     }
 
+    fn test_embedding_arc() -> Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> {
+        Arc::new(test_embedding_fn)
+    }
+
     #[tokio::test]
     async fn test_discover_patterns_llm() {
         let llm = MockPatternLlm {
@@ -999,7 +1004,7 @@ mod tests {
         ];
 
         let result = store
-            .generalize_patterns(&episodes, None, &test_embedding_fn, 3)
+            .generalize_patterns(&episodes, None, &test_embedding_arc(), 3)
             .await
             .unwrap();
 
@@ -1018,7 +1023,7 @@ mod tests {
         let store = GrafeoStore::new_in_memory().unwrap();
 
         let result = store
-            .generalize_patterns(&[], None, &test_embedding_fn, 3)
+            .generalize_patterns(&[], None, &test_embedding_arc(), 3)
             .await
             .unwrap();
 
@@ -1062,7 +1067,7 @@ mod tests {
         ];
 
         let result = store
-            .generalize_patterns(&episodes, None, &test_embedding_fn, 3)
+            .generalize_patterns(&episodes, None, &test_embedding_arc(), 3)
             .await
             .unwrap();
 
@@ -1113,7 +1118,7 @@ mod tests {
         ];
 
         let result = store
-            .generalize_patterns(&episodes, None, &test_embedding_fn, 3)
+            .generalize_patterns(&episodes, None, &test_embedding_arc(), 3)
             .await
             .unwrap();
 
@@ -1139,7 +1144,7 @@ mod tests {
         ];
 
         let result = store
-            .generalize_patterns(&episodes, None, &test_embedding_fn, 3)
+            .generalize_patterns(&episodes, None, &test_embedding_arc(), 3)
             .await
             .unwrap();
 
@@ -1265,7 +1270,7 @@ mod tests {
         let config = GeneralizationConfig::default();
 
         let result = store
-            .run_generalization(None, &test_embedding_fn, &config)
+            .run_generalization(None, &test_embedding_arc(), &config)
             .await
             .unwrap();
 
@@ -1292,7 +1297,7 @@ mod tests {
         ];
 
         let result = store
-            .generalize_patterns_with_config(&episodes, None, &test_embedding_fn, &config)
+            .generalize_patterns_with_config(&episodes, None, &test_embedding_arc(), &config)
             .await
             .unwrap();
 

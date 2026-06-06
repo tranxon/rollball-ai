@@ -580,6 +580,33 @@ impl MemoryManager {
         }
     }
 
+    /// Format retrieved memories and append ambiguous conflict confirmation hints.
+    ///
+    /// Same as `inject()` but also checks the GrafeoStore for pending
+    /// ambiguous conflicts. If `should_trigger_confirmation()` returns true,
+    /// appends a confirmation hint that the LLM can use to naturally ask
+    /// the user about the conflicting values.
+    pub fn inject_with_ambiguous_hints(
+        &self,
+        retrieval: &RetrievalResult,
+        store: &GrafeoStore,
+    ) -> InjectedMemory {
+        let mut injected = self.inject(retrieval);
+
+        // Check for pending ambiguous conflicts.
+        if let Ok(true) = store.should_trigger_confirmation() {
+            if let Ok(Some(hint)) = store.generate_confirmation_hint() {
+                let hint_line = format!("[Ambiguous] {}", hint);
+                let hint_tokens = estimate_tokens(&hint_line);
+                injected.formatted_text = format!("{}\n{}", injected.formatted_text, hint_line);
+                injected.token_count += hint_tokens;
+                injected.memory_count += 1;
+            }
+        }
+
+        injected
+    }
+
     /// Record a conversation turn as an episode.
     ///
     /// In production this runs asynchronously; for now synchronous.

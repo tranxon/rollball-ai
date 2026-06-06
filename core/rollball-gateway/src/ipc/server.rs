@@ -626,6 +626,13 @@ pub async fn handle_agent_hello(
         // Build search key vault (always full delivery)
         let search_key_vault = crate::resource_cache::build_search_key_vault(&gw);
 
+        // ── Embedding service info (from embed_process state) ──
+        let embed_endpoint = gw.embed_process.as_ref().map(|eps| {
+            format!("http://127.0.0.1:{}/v1", eps.port)
+        });
+        let embed_model_id = gw.embed_process.as_ref().and_then(|eps| eps.active_model_id.clone());
+        let embed_dimension = gw.embed_process.as_ref().and_then(|eps| eps.active_dimension);
+
         drop(gw);
 
         // ── User identity (version-driven diff sync) ──
@@ -652,6 +659,9 @@ pub async fn handle_agent_hello(
             search_key_vault,
             user_identity,
             user_profile_version: gw_user_version,
+            embed_endpoint,
+            embed_model_id,
+            embed_dimension,
         }
     } else {
         tracing::warn!("AgentHello from unknown connection {}", conn_id);
@@ -669,6 +679,9 @@ pub async fn handle_agent_hello(
             search_key_vault: vec![],
             user_identity: None,
             user_profile_version: 0,
+            embed_endpoint: None,
+            embed_model_id: None,
+            embed_dimension: None,
         }
     }
 }

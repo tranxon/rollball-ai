@@ -157,6 +157,13 @@ message AgentHelloResult {
   // JSON-serialized UserProfile.
   string user_identity_json = 31;
   uint64 user_profile_version = 32;
+
+  // ── Embedding service ──
+  // Local ONNX embedding endpoint, model ID, and dimension.
+  // Set when Gateway has spawned rollball-embed; empty/0 otherwise.
+  string embed_endpoint = 33;
+  string embed_model_id = 34;
+  uint64 embed_dimension = 35;
   
   // Fields 3-10: removed (was provider, model, api_key, base_url, models,
   //   model_capabilities, max_output_tokens_limit, protocol_type).
@@ -230,6 +237,8 @@ message RuntimeConfigUpdate      {
     bool mcp_servers_set = 11;
     bool active_tools_set = 12;
     bool system_prompt_set = 13;
+    // Embedding config override (JSON: {"embed_endpoint":"...","embed_model_id":"...","embed_dimension":N})
+    optional string embed_config_json = 14;
 }
 
 message StreamChunk             { string target = 1; string action = 2; string params_json = 3; }

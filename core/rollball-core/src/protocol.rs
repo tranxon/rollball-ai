@@ -293,6 +293,79 @@ pub struct AgentSearchConfig {
     pub providers: Vec<AgentSearchProvider>,
 }
 
+/// ── Embedding Model types ──
+
+/// Pooling strategy for embedding models.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolingStrategy {
+    /// Use [CLS] token output (BGE models).
+    Cls,
+    /// Mean pooling over token embeddings weighted by attention_mask (MiniLM).
+    Mean,
+    /// Use last token output (causal LMs).
+    LastToken,
+}
+
+impl Default for PoolingStrategy {
+    fn default() -> Self {
+        Self::Cls
+    }
+}
+
+/// Embedding model entry in embedding_models.json.
+///
+/// Describes a downloadable embedding model with ONNX runtime metadata.
+/// Shared between Gateway, rollball-embed, and Desktop App.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingModelEntry {
+    /// Model identifier (e.g. "bge-small-zh-v1.5")
+    pub id: String,
+    /// Display name (e.g. "BGE Small Chinese")
+    pub name: String,
+    /// Human-readable description
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Embedding vector dimension
+    pub dimension: usize,
+    /// Maximum input token length
+    pub max_tokens: usize,
+    /// Download size in MB
+    pub size_mb: u64,
+    /// Supported language codes (e.g. ["zh", "en"])
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+    /// HuggingFace repository (e.g. "onnx-community/bge-small-zh-v1.5-ONNX")
+    pub hf_repo: String,
+    /// Pooling strategy for this model
+    #[serde(default)]
+    pub pooling_strategy: PoolingStrategy,
+    /// Path within the HF repo to the ONNX model file (e.g. "onnx/model.onnx")
+    pub onnx_file: String,
+    /// Path within the HF repo to the tokenizer (e.g. "tokenizer.json")
+    pub tokenizer_file: String,
+    /// ONNX model variants (e.g. {"fp32": "onnx/model.onnx", "fp16": "onnx/model_fp16.onnx"})
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onnx_variants: Option<std::collections::HashMap<String, String>>,
+    /// Whether the model is bundled with the installation
+    #[serde(default)]
+    pub bundled: bool,
+    /// Whether this is the recommended default model
+    #[serde(default)]
+    pub recommended: bool,
+}
+
+/// Versioned embedding model list persisted to disk.
+///
+/// Follows the same pattern as ProviderListFile, McpListFile, SearchListFile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingModelsFile {
+    /// Monotonic version counter — bumped on every change
+    pub version: u64,
+    /// All known embedding model entries
+    pub models: Vec<EmbeddingModelEntry>,
+}
+
 /// ── User Identity types ──
 
 /// A single user's identity profile.
@@ -638,6 +711,22 @@ pub enum GatewayResponse {
         /// Gateway's current user profile list version
         #[serde(default)]
         user_profile_version: u64,
+
+        // ── Embedding Service ──
+        /// Embedding service endpoint URL for ONNX local inference.
+        /// Runtime uses this as the primary embedding provider.
+        /// Example: "http://127.0.0.1:18080/v1"
+        /// None when the embedding service is not running.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        embed_endpoint: Option<String>,
+        /// Active embedding model ID (e.g. "bge-small-zh-v1.5").
+        /// None when the embedding service is not running.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        embed_model_id: Option<String>,
+        /// Embedding dimension of the active model (e.g. 512).
+        /// None when the embedding service is not running.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        embed_dimension: Option<usize>,
     },
     /// API key release result
     KeyReleaseResult {
@@ -917,6 +1006,11 @@ pub enum GatewayResponse {
         /// Some("") means no search providers active.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         search_config_json: Option<String>,
+        /// Embedding config override (JSON-serialized EmbeddingConfigUpdate fields).
+        /// When Some, the Runtime rebuilds its FallbackEmbeddingProvider chain.
+        /// Format: {"embed_endpoint":"http://127.0.0.1:18080/v1","embed_model_id":"bge-small-zh-v1.5","embed_dimension":512}
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        embed_config_json: Option<String>,
     },
     /// Query config request (Gateway → Runtime)
     ///
@@ -946,6 +1040,19 @@ pub enum GatewayResponse {
     EnableDebugMode {
         /// Debug WebSocket port (allocated by Gateway)
         debug_port: u32,
+    },
+    /// Embedding configuration update (Gateway → Runtime, push).
+    ///
+    /// Pushed when the user switches the active embedding model via
+    /// Gateway HTTP API. The Runtime rebuilds its FallbackEmbeddingProvider
+    /// chain with the new ONNX provider as the first entry.
+    EmbeddingConfigUpdate {
+        /// Embedding service endpoint URL (e.g. "http://127.0.0.1:18080/v1")
+        embed_endpoint: String,
+        /// Active embedding model ID (e.g. "bge-small-zh-v1.5")
+        embed_model_id: String,
+        /// Embedding dimension of the active model (e.g. 512)
+        embed_dimension: usize,
     },
 }
 

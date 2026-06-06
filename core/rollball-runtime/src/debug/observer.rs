@@ -49,6 +49,7 @@ use crate::agent::session_state::SessionStatus;
 /// `await_resume` is NOT part of this trait because it requires `&mut HistoryManager`,
 /// which is owned by `AgentLoop`. Instead, it is a direct method on
 /// [`DebugObserverImpl`] and delegated through [`DebugObserverSlot::await_resume`].
+#[allow(async_fn_in_trait)]
 pub trait DebugObserver: Send + Sync {
     // ── Iteration lifecycle ──
 

@@ -98,6 +98,13 @@ pub enum SessionMessage {
     Close,
     /// Manually trigger context compaction (from user-initiated compact_context WebSocket action).
     CompactContext,
+    /// Update the embedding provider at runtime (hot-push from Gateway EmbeddingConfigUpdate).
+    /// The session rebuilds its ONNX embedding provider with the new endpoint/model/dimension.
+    UpdateEmbedConfig {
+        embed_endpoint: String,
+        embed_model_id: String,
+        embed_dimension: usize,
+    },
 }
 
 impl std::fmt::Debug for SessionMessage {
@@ -169,6 +176,12 @@ impl std::fmt::Debug for SessionMessage {
             SessionMessage::EnableDebugMode(_) => f.debug_tuple("EnableDebugMode").finish(),
             SessionMessage::Close => f.debug_tuple("Close").finish(),
             SessionMessage::CompactContext => f.debug_tuple("CompactContext").finish(),
+            SessionMessage::UpdateEmbedConfig { embed_endpoint, embed_model_id, embed_dimension } => f
+                .debug_struct("UpdateEmbedConfig")
+                .field("embed_endpoint", embed_endpoint)
+                .field("embed_model_id", embed_model_id)
+                .field("embed_dimension", embed_dimension)
+                .finish(),
         }
     }
 }
@@ -802,6 +815,47 @@ impl SessionTask {
                     );
                     let model_name = agent_loop.session.model().unwrap_or("default").to_string();
                     agent_loop.compact_history_if_needed(&model_name, true).await;
+                }
+                Some(SessionMessage::UpdateEmbedConfig { embed_endpoint, embed_model_id, embed_dimension }) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        endpoint = %embed_endpoint,
+                        model_id = %embed_model_id,
+                        dimension = embed_dimension,
+                        "SessionTask: updating embedding provider"
+                    );
+                    // Build a new ONNX provider pointing at the updated embed service.
+                    // This follows the same pattern as UpdateProvider for LLM:
+                    // create a new provider instance and replace in AgentCore.
+                    let new_onnx_provider = crate::embedding::remote::RemoteEmbeddingProvider::with_config(
+                        &embed_endpoint,
+                        None, // No API key needed for local embed service
+                        &embed_model_id,
+                        embed_dimension,
+                    );
+                    // Wrap as FallbackEmbeddingProvider with ONNX as primary,
+                    // keeping the existing provider chain as fallback (if available).
+                    let new_emb: Arc<dyn crate::embedding::EmbeddingProvider> =
+                        if let Some(ref old_provider) = agent_loop.core.embedding_provider {
+                            // Insert ONNX as primary, old provider chain as fallback.
+                            // ArcDelegateEmbeddingProvider wraps Arc<dyn> → Box<dyn>.
+                            Arc::new(crate::embedding::FallbackEmbeddingProvider::with_providers(
+                                vec![
+                                    (Box::new(new_onnx_provider), 500),
+                                    (Box::new(crate::embedding::ArcDelegateEmbeddingProvider::from_arc(old_provider.clone())), 5000),
+                                ],
+                                crate::embedding::EmbeddingConfig::default(),
+                            ))
+                        } else {
+                            // No previous provider — ONNX becomes the sole provider
+                            Arc::new(crate::embedding::FallbackEmbeddingProvider::with_providers(
+                                vec![
+                                    (Box::new(new_onnx_provider), 500),
+                                ],
+                                crate::embedding::EmbeddingConfig::default(),
+                            ))
+                        };
+                    agent_loop.core.update_embedding_provider(new_emb);
                 }
                 None => {
                     tracing::info!(

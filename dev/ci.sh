@@ -16,11 +16,15 @@ run_check() {
 run_clippy() {
     echo "Running cargo clippy..."
     cargo clippy --all-targets -- -D warnings
+    echo "Running cargo clippy for rollball-embed..."
+    cargo clippy -p rollball-embed --all-targets -- -D warnings
 }
 
 run_test() {
     echo "Running cargo test..."
     cargo test --all
+    echo "Running rollball-embed tests..."
+    cargo test -p rollball-embed
 }
 
 run_integration() {

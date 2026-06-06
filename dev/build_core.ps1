@@ -83,6 +83,23 @@ try {
 
 Write-Host ""
 
+# Step: Build Embedding Runtime
+$step++
+Write-Host "[$step/$totalSteps] Building Embedding Runtime (release mode)..." -ForegroundColor Yellow
+try {
+    cargo build --release -p rollball-embed 2>&1 | ForEach-Object {
+        if ($_ -match "error" -or $_ -match "Compiling") {
+            Write-Host "  $_" -ForegroundColor Gray
+        }
+    }
+    Write-Host "  Embedding Runtime build completed." -ForegroundColor Green
+} catch {
+    Write-Host "  Embedding Runtime build failed: $_" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host ""
+
 # Step: Copy offline_providers.json from assets to target dirs
 $step++
 Write-Host "[$step/$totalSteps] Copying offline_providers.json to target directories..." -ForegroundColor Yellow

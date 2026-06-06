@@ -509,98 +509,125 @@ async fn async_main(
         }
     };
 
-    // ── Build FallbackEmbeddingProvider ──
-    // Primary: Ollama local (always attempted, fast /api/embed).
-    // Fallback: remote provider — auto-select embedding model from the
-    //           provider list (family == "text-embedding"), or fall back
-    //           to "text-embedding-3-small" with the first provider.
-    let ollama_primary = Box::new(
-        OllamaEmbeddingProvider::try_new()
-            .map_err(|e| RuntimeError::Config(format!("Failed to create Ollama embedding provider: {e}")))?,
-    );
+    // ── Build FallbackEmbeddingProvider (3-tier chain) ──
+    // Provider 1: ONNX local (highest priority, 500ms timeout)
+    //   — rollball-embed process at http://127.0.0.1:18080/v1
+    //   — only added if embed_endpoint is provided via AgentHello
+    // Provider 2: Ollama local (200ms timeout)
+    // Provider 3: Remote API (last resort, 5s timeout)
+    let mut embedding_providers: Vec<(Box<dyn EmbeddingProvider>, u64)> = Vec::new();
+
+    // Provider 1: ONNX local (if embed_endpoint is available from AgentHello)
+    // The Gateway delivers embed_endpoint/model_id/dimension via AgentHelloResult,
+    // which is the standard mechanism (same as provider_list delivery).
+    // Fallback: check env vars for development/testing.
+    let embed_endpoint = hello_config
+        .as_ref()
+        .and_then(|cfg| cfg.embed_endpoint.clone())
+        .or_else(|| std::env::var("ROLLBALL_EMBED_ENDPOINT").ok());
+    let embed_model_id = hello_config
+        .as_ref()
+        .and_then(|cfg| cfg.embed_model_id.clone())
+        .or_else(|| std::env::var("ROLLBALL_EMBED_MODEL").ok())
+        .unwrap_or_else(|| "bge-small-zh-v1.5".to_string());
+    let embed_dimension = hello_config
+        .as_ref()
+        .and_then(|cfg| cfg.embed_dimension)
+        .or_else(|| std::env::var("ROLLBALL_EMBED_DIMENSION").ok().and_then(|s| s.parse().ok()))
+        .unwrap_or(512);
+
+    if let Some(ref endpoint) = embed_endpoint {
+        match RemoteEmbeddingProvider::try_with_config(
+            endpoint,
+            None, // No API key for local ONNX service
+            &embed_model_id,
+            embed_dimension,
+        ) {
+            Ok(provider) => {
+                tracing::info!(
+                    endpoint = %endpoint,
+                    model = %embed_model_id,
+                    dim = embed_dimension,
+                    "ONNX embedding provider configured"
+                );
+                embedding_providers.push((Box::new(provider), 500));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to create ONNX embedding provider, skipping"
+                );
+            }
+        }
+    }
+
+    // Provider 2: Ollama local (always attempted)
+    let ollama_primary = OllamaEmbeddingProvider::try_new()
+        .map_err(|e| RuntimeError::Config(format!("Failed to create Ollama embedding provider: {e}")))?;
     let ollama_dim = ollama_primary.dimension();
+    embedding_providers.push((Box::new(ollama_primary), 200));
 
-    // ── Select remote embedding model ──
-    // Scan the provider list for a model with family == "text-embedding"
-    // (from models.dev offline data). Falls back to hardcoded default.
-    let remote_fallback = {
-        let (base_url, api_key, model, dim) = {
-            let providers = hello_config
-                .as_ref()
-                .and_then(|cfg| cfg.provider_list.as_deref())
-                .unwrap_or(&[]);
-            let key_vault = hello_config
-                .as_ref()
-                .map(|cfg| cfg.provider_key_vault.as_slice())
-                .unwrap_or(&[]);
+    // Provider 3: Remote API fallback
+    let (base_url, api_key, model, dim) = {
+        let providers = hello_config
+            .as_ref()
+            .and_then(|cfg| cfg.provider_list.as_deref())
+            .unwrap_or(&[]);
+        let key_vault = hello_config
+            .as_ref()
+            .map(|cfg| cfg.provider_key_vault.as_slice())
+            .unwrap_or(&[]);
 
-            let mut selected: Option<(String, Option<String>, String, usize)> = None;
-            'outer: for p in providers {
-                for m in &p.models {
-                    if m.capabilities.family.as_deref() == Some("text-embedding") {
-                        let api_key = key_vault
-                            .iter()
-                            .find(|k| k.provider_id == p.id)
-                            .map(|k| k.api_key.clone());
-                        // Embedding models: max_output_tokens = vector dimension.
-                        let dim = if m.capabilities.max_output_tokens > 0 {
-                            m.capabilities.max_output_tokens as usize
-                        } else {
-                            ollama_dim
-                        };
-                        selected =
-                            Some((p.base_url.clone(), api_key, m.id.clone(), dim));
-                        break 'outer;
-                    }
+        let mut selected: Option<(String, Option<String>, String, usize)> = None;
+        'outer: for p in providers {
+            for m in &p.models {
+                if m.capabilities.family.as_deref() == Some("text-embedding") {
+                    let api_key = key_vault
+                        .iter()
+                        .find(|k| k.provider_id == p.id)
+                        .map(|k| k.api_key.clone());
+                    let dim = if m.capabilities.max_output_tokens > 0 {
+                        m.capabilities.max_output_tokens as usize
+                    } else {
+                        ollama_dim
+                    };
+                    selected = Some((p.base_url.clone(), api_key, m.id.clone(), dim));
+                    break 'outer;
                 }
             }
+        }
 
-            match selected {
-                Some((url, key, name, dim)) => {
-                    tracing::info!(
-                        model = %name,
-                        dim,
-                        "Selected embedding model from provider list"
-                    );
-                    (url, key, name, dim)
-                }
-                None => {
-                    let url = providers
-                        .first()
-                        .map(|p| p.base_url.clone())
-                        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-                    let key = key_vault.first().map(|k| k.api_key.clone());
-                    tracing::info!(
-                        "No embedding model found in provider list, \
-                         defaulting to text-embedding-3-small"
-                    );
-                    (
-                        url,
-                        key,
-                        "text-embedding-3-small".to_string(),
-                        ollama_dim,
-                    )
-                }
+        match selected {
+            Some((url, key, name, dim)) => {
+                tracing::info!(model = %name, dim, "Selected embedding model from provider list");
+                (url, key, name, dim)
             }
-        };
-
-        Box::new(
-            RemoteEmbeddingProvider::try_with_config(
-                &base_url,
-                api_key.as_deref(),
-                &model,
-                dim,
-            )
-            .map_err(|e| {
-                RuntimeError::Config(format!(
-                    "Failed to create remote embedding provider: {e}"
-                ))
-            })?,
-        )
+            None => {
+                let url = providers
+                    .first()
+                    .map(|p| p.base_url.clone())
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+                let key = key_vault.first().map(|k| k.api_key.clone());
+                tracing::info!(
+                    "No embedding model found in provider list, \
+                     defaulting to text-embedding-3-small"
+                );
+                (url, key, "text-embedding-3-small".to_string(), ollama_dim)
+            }
+        }
     };
-    let fallback_emb = Arc::new(FallbackEmbeddingProvider::new(
-        Some(ollama_primary),
-        remote_fallback,
+
+    let remote_fallback = RemoteEmbeddingProvider::try_with_config(
+        &base_url,
+        api_key.as_deref(),
+        &model,
+        dim,
+    )
+    .map_err(|e| RuntimeError::Config(format!("Failed to create remote embedding provider: {e}")))?;
+    embedding_providers.push((Box::new(remote_fallback), 5000));
+
+    let fallback_emb = Arc::new(FallbackEmbeddingProvider::with_providers(
+        embedding_providers,
         EmbeddingConfig::default(),
     ));
     let emb_provider: Arc<dyn EmbeddingProvider> = fallback_emb;
@@ -1796,7 +1823,7 @@ async fn process_gateway_recv(
     skill_registry: &crate::skills::parser::SkillRegistry,
     budget_provider: &str,
     log_reload_handle: &Option<LogReloadHandle>,
-    session_idle_timeout_secs: u64,
+    _session_idle_timeout_secs: u64,
 ) -> LoopAction {
     use rollball_core::protocol::GatewayResponse;
     match recv_result {
@@ -1896,10 +1923,6 @@ async fn process_gateway_recv(
                         // Check if session is already in memory
                         if session_manager.get_session(&session_id).is_none() {
                             // Session is not in memory — try lazy resume from disk.
-                            let conversations_dir =
-                                std::path::Path::new(work_dir).join("conversations");
-                            let file_path =
-                                conversations_dir.join(format!("{}.jsonl", session_id));
                             match crate::conversation::ConversationSession::resume(
                                 std::path::Path::new(work_dir),
                                 &session_id,
@@ -2699,6 +2722,7 @@ async fn process_gateway_recv(
                     model: _,    // ADR-012: model_switch is a separate action
                     provider: _, // ADR-012: model_switch is a separate action
                     search_config_json,
+                    embed_config_json,
                 } => {
                     tracing::info!(
 
@@ -2709,6 +2733,7 @@ async fn process_gateway_recv(
                         shell_approval_threshold = ?shell_approval_threshold,
 
                         mcp_server_count = mcp_servers.as_ref().map(|s| s.len()),
+                        has_embed_config = embed_config_json.is_some(),
                         "Received RuntimeConfigUpdate from Gateway — applying to current and future sessions"
 
                     );
@@ -2775,6 +2800,39 @@ async fn process_gateway_recv(
                         }
                     }
 
+                    // Handle embedding config update: rebuild FallbackEmbeddingProvider chain.
+                    // When `embed_config_json` is Some, parse the JSON and forward to SessionManager.
+                    // Format: {"embed_endpoint":"http://...","embed_model_id":"...","embed_dimension":N}
+                    if let Some(ref ecfg_json) = embed_config_json {
+                        #[derive(serde::Deserialize)]
+                        struct EmbedConfigFields {
+                            embed_endpoint: String,
+                            embed_model_id: String,
+                            embed_dimension: usize,
+                        }
+                        match serde_json::from_str::<EmbedConfigFields>(ecfg_json) {
+                            Ok(cfg) => {
+                                tracing::info!(
+                                    endpoint = %cfg.embed_endpoint,
+                                    model_id = %cfg.embed_model_id,
+                                    dimension = cfg.embed_dimension,
+                                    "Applying embedding config update from RuntimeConfigUpdate"
+                                );
+                                session_manager.handle_embedding_config_update(
+                                    cfg.embed_endpoint,
+                                    cfg.embed_model_id,
+                                    cfg.embed_dimension,
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "Failed to parse embed_config_json in RuntimeConfigUpdate"
+                                );
+                            }
+                        }
+                    }
+
                     // Persist per-agent config to workspace/config/agent_config.json.
                     // This consolidates all overrides into a single file owned by Runtime,
                     // replacing the former Gateway-side data/agent_configs/{agent_id}.json.
@@ -2825,6 +2883,30 @@ async fn process_gateway_recv(
                     // 2. Start the DebugProtocolServer and store handles so that
                     //    sessions created *after* this call inherit debug mode.
                     session_manager.enable_debug_mode(debug_port).await;
+
+                    return LoopAction::Continue;
+                }
+
+                GatewayResponse::EmbeddingConfigUpdate {
+                    embed_endpoint,
+                    embed_model_id,
+                    embed_dimension,
+                } => {
+                    tracing::info!(
+                        endpoint = %embed_endpoint,
+                        model_id = %embed_model_id,
+                        dimension = embed_dimension,
+                        "Received EmbeddingConfigUpdate — forwarding to SessionManager"
+                    );
+
+                    // Delegate to SessionManager: it has access to the embedding
+                    // provider types and can rebuild the FallbackEmbeddingProvider
+                    // chain with the new ONNX provider as the first entry.
+                    session_manager.handle_embedding_config_update(
+                        embed_endpoint,
+                        embed_model_id,
+                        embed_dimension,
+                    );
 
                     return LoopAction::Continue;
                 }

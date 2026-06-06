@@ -1,5 +1,6 @@
 //! Lifecycle management module
 
+pub mod embed;
 pub mod manager;
 pub mod process;
 

@@ -218,6 +218,10 @@ pub struct MetricsAggregator {
     max_possible_score: f32,
     /// Conflict resolution accuracy tracker.
     conflict_stats: ConflictAccuracyStats,
+    /// LLM Judge relevance scores (1-5 scale, sliding window).
+    judge_score_history: VecDeque<f32>,
+    /// Number of LLM Judge evaluations performed.
+    judge_eval_count: usize,
     /// Alert thresholds.
     thresholds: AlertThresholds,
     /// Size of the NRR sliding window.
@@ -234,6 +238,8 @@ impl MetricsAggregator {
             high_degradation_count: 0,
             max_possible_score,
             conflict_stats: ConflictAccuracyStats::default(),
+            judge_score_history: VecDeque::with_capacity(100),
+            judge_eval_count: 0,
             thresholds,
             window_size: 100,
         }
@@ -395,6 +401,35 @@ impl MetricsAggregator {
     /// Get the total number of retrievals tracked.
     pub fn total_retrievals(&self) -> usize {
         self.total_retrievals
+    }
+
+    /// Record a LLM Judge evaluation score.
+    ///
+    /// Called from the background Judge evaluation (10% sampling).
+    /// The score is on a 1–5 scale (5 = highly relevant).
+    /// Results are tracked in a sliding window for trend analysis.
+    pub fn record_judge_score(&mut self, score: u8) {
+        let normalized = (score as f32 / 5.0).clamp(0.0, 1.0);
+        self.judge_score_history.push_back(normalized);
+        if self.judge_score_history.len() > self.window_size {
+            self.judge_score_history.pop_front();
+        }
+        self.judge_eval_count += 1;
+    }
+
+    /// Get the average LLM Judge score (normalized to 0.0–1.0).
+    ///
+    /// Returns 1.0 if no evaluations have been performed (optimistic default).
+    pub fn avg_judge_score(&self) -> f32 {
+        if self.judge_score_history.is_empty() {
+            return 1.0;
+        }
+        self.judge_score_history.iter().sum::<f32>() / self.judge_score_history.len() as f32
+    }
+
+    /// Get the total number of LLM Judge evaluations performed.
+    pub fn judge_eval_count(&self) -> usize {
+        self.judge_eval_count
     }
 }
 

@@ -1,0 +1,52 @@
+[package]
+name = "rollball-embed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ONNX-based embedding runtime with OpenAI-compatible API"
+
+[lib]
+name = "rollball_embed"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rollball-embed"
+path = "src/main.rs"
+
+[features]
+default = []
+
+# GPU acceleration features (mutually exclusive, platform-specific).
+# Only enable ONE at a time. CPU inference is used when none is enabled.
+#
+# Windows:
+#   cargo build --release -p rollball-embed --features directml
+# Linux:
+#   cargo build --release -p rollball-embed --features cuda
+# macOS:
+#   cargo build --release -p rollball-embed --features coreml
+directml = ["ort/directml"]
+cuda = ["ort/cuda"]
+coreml = ["ort/coreml"]
+
+[dependencies]
+ort.workspace = true
+tokenizers.workspace = true
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+thiserror.workspace = true
+signal-hook.workspace = true
+parking_lot.workspace = true
+ndarray.workspace = true
+futures-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+reqwest = { workspace = true, features = ["json"] }

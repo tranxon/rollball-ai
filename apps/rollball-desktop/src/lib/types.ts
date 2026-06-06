@@ -792,3 +792,36 @@ export interface McpPresetDef {
   /** Icon name from lucide-react */
   icon?: string;
 }
+
+// ── Embedding Model types ─────────────────────────────────────────────────
+
+/** Embedding model entry with status — matches GET /api/embedding-models */
+export interface EmbeddingModelWithStatus {
+  id: string;
+  name: string;
+  description?: string;
+  dimension: number;
+  max_tokens: number;
+  size_mb: number;
+  languages: string[];
+  pooling_strategy: string;
+  recommended: boolean;
+  loaded: boolean;
+  status: string;
+  /** Available ONNX variants (e.g., {"fp32": "onnx/model.onnx", "fp16": "onnx/model_fp16.onnx"}) */
+  onnx_variants?: Record<string, string>;
+}
+
+/** Response for GET /api/embedding-models */
+export interface EmbeddingModelsResponse {
+  models: EmbeddingModelWithStatus[];
+  active_model_id: string | null;
+  service_running: boolean;
+}
+
+/** Response for download/select actions */
+export interface EmbeddingModelActionResponse {
+  model_id: string;
+  status: string;
+  message: string;
+}

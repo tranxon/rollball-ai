@@ -3,11 +3,14 @@
 //! Phase 2 implements a simple age-and-evidence upgrade strategy.
 //! Phase 3 adds full LLM-based re-evaluation and generalization.
 
-use chrono::{TimeDelta, Utc};
+use std::sync::Arc;
+
+use chrono::{DateTime, TimeDelta, Utc};
 use grafeo_common::types::Value;
 
+use crate::consolidation::conflict_llm::{LlmConflictType, classify_conflict};
 use crate::consolidation::generalization::GeneralizationConfig;
-use crate::consolidation::triple_extraction::TripleExtractorLlm;
+use crate::consolidation::triple_extraction::{ExtractedTriple, TripleExtractorLlm};
 use crate::error::Result;
 use crate::grafeo::GrafeoStore;
 use crate::types::{labels, AutobioCategory, AutobiographicalNode, KnowledgeNode, NodeStatus};
@@ -40,6 +43,19 @@ impl Default for OfflineConsolidationConfig {
 // Result
 // ---------------------------------------------------------------------------
 
+/// Result of LLM conflict resolution during offline consolidation.
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConflictResolutionResult {
+    /// Total conflicts resolved.
+    pub resolved: usize,
+    /// Conflicts classified as Evolution (old → Dormant).
+    pub evolution: usize,
+    /// Conflicts classified as Correction (old → Dormant).
+    pub correction: usize,
+    /// Conflicts classified as Ambiguous (both kept).
+    pub ambiguous: usize,
+}
+
 /// Result of an offline consolidation run.
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OfflineConsolidationResult {
@@ -55,6 +71,18 @@ pub struct OfflineConsolidationResult {
     pub procedural_boosted: usize,
     /// Number of History nodes compressed into summaries.
     pub history_compressed: usize,
+    /// Number of triples extracted from unconsolidated episodes.
+    pub triples_extracted: usize,
+    /// Number of conflicts resolved by LLM arbitration.
+    pub conflicts_resolved: usize,
+    /// Number of conflicts classified as Evolution (old → Dormant, new → Active).
+    pub conflicts_evolution: usize,
+    /// Number of conflicts classified as Correction (old → Dormant, new → Active).
+    pub conflicts_correction: usize,
+    /// Number of conflicts classified as Ambiguous (both kept, user confirmation needed).
+    pub conflicts_ambiguous: usize,
+    /// Number of episodic nodes cleaned up (transitioned to Dormant by §2 rules).
+    pub episodic_cleaned: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -62,27 +90,73 @@ pub struct OfflineConsolidationResult {
 // ---------------------------------------------------------------------------
 
 impl GrafeoStore {
-    /// Run offline consolidation on pending nodes, including generalization.
+    /// Run offline consolidation on pending nodes, including full Phase 3 pipeline.
     ///
-    /// Phase 3 enhancement: after upgrading/downgrading pending KnowledgeNodes,
-    /// runs experience generalization to extract ProceduralNodes from
-    /// unconsolidated episodes (step ④ in the design doc).
+    /// Pipeline steps:
+    /// 1. Standard offline consolidation (upgrade/downgrade Pending nodes)
+    /// 2. Triple extraction from unconsolidated episodes (if LLM available)
+    /// 3. Conflict resolution via LLM arbitration (if LLM available)
+    /// 4. Experience generalization to extract ProceduralNodes
+    /// 5. Compress History nodes if too many
+    /// 6. Auto-generate Relationship nodes for long-term users
+    /// 7. Auto-generate Limitation nodes from low success-rate skills
     ///
-    /// The generalization step requires an embedding function. If `None` is
-    /// provided, generalization is skipped.
+    /// Note: this method does not use `tracing` — the grafeo crate
+    /// intentionally avoids that dependency. The caller (runtime)
+    /// logs the returned `OfflineConsolidationResult` fields instead.
     #[allow(clippy::type_complexity)]
     pub async fn run_offline_consolidation_with_generalization(
         &self,
         config: &OfflineConsolidationConfig,
         llm: Option<&dyn TripleExtractorLlm>,
-        embedding_fn: Option<&(dyn Fn(&str) -> Vec<f32> + Send + Sync)>,
+        embedding_fn: Option<Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>>,
         gen_config: Option<&GeneralizationConfig>,
     ) -> Result<OfflineConsolidationResult> {
         // Step 1: Standard offline consolidation (upgrade/downgrade Pending nodes)
         let mut result = self.run_offline_consolidation(config)?;
 
-        // Step 2: Experience generalization (if embedding function provided)
-        if let Some(emb_fn) = embedding_fn {
+        // Step 2: Triple extraction from unconsolidated episodes (if LLM available).
+        if let Some(llm_ref) = llm {
+            if let Some(ref emb_fn) = embedding_fn {
+                let episode_contents = self.get_unconsolidated_episode_contents(config.batch_size)?;
+                if !episode_contents.is_empty() {
+                    match self.extract_triples(&episode_contents, llm_ref, emb_fn).await {
+                        Ok(extraction_result) => {
+                            result.triples_extracted = extraction_result.triples.len();
+
+                            // T4.5: Apply knowledge updates for triples where
+                            // (subject, predicate) matches but object differs.
+                            // This marks the old node as Dormant before the new
+                            // triple is stored.
+                            if !extraction_result.triples.is_empty() {
+                                let updated = self.apply_knowledge_updates(&extraction_result.triples)?;
+                                // Track: updated nodes are not "new" triples,
+                                // they replace existing ones.
+                                let _ = updated;
+                            }
+
+                            // Step 3: Resolve conflicts between extracted and existing knowledge.
+                            if extraction_result.deduplicated > 0 {
+                                let conflict_result = self
+                                    .resolve_conflicts_with_llm(llm_ref)
+                                    .await?;
+                                result.conflicts_resolved = conflict_result.resolved;
+                                result.conflicts_evolution = conflict_result.evolution;
+                                result.conflicts_correction = conflict_result.correction;
+                                result.conflicts_ambiguous = conflict_result.ambiguous;
+                            }
+                        }
+                        Err(_) => {
+                            // Triple extraction failed — continue with remaining steps.
+                            // Error is captured in result.triples_extracted remaining 0.
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 4: Experience generalization (if embedding function provided)
+        if let Some(ref emb_fn) = embedding_fn {
             let gen_config = gen_config.cloned().unwrap_or_default();
             let gen_result = self
                 .run_generalization(llm, emb_fn, &gen_config)
@@ -91,8 +165,22 @@ impl GrafeoStore {
             result.procedural_boosted = gen_result.nodes_boosted;
         }
 
-        // Step 3: Compress History nodes if there are too many (> 10).
+        // Step 5: Compress History nodes if there are too many (> 10).
         result.history_compressed = self.compress_history_nodes(10)?;
+
+        // Step 6: Auto-generate Relationship nodes for long-term users.
+        // Per design §3.3: collaboration > 30 days → Relationship node.
+        let _ = self.auto_generate_relationship_nodes()?;
+
+        // Step 7: Auto-generate Limitation nodes from low success-rate skills.
+        // Per design §3.3: skill success rate < 60% with >= 5 observations → Limitation node.
+        let _ = self.auto_generate_limitation_nodes()?;
+
+        // Step 8: Run episodic forgetting scan.
+        // Per design §2: consolidated episodes > 7 days old are candidates for
+        // decay → Dormant. Unconsolidated > 14 days with importance < 0.3 → Dormant.
+        // Unconsolidated > 14 days with importance >= 0.3 → keep and trigger offline consolidation.
+        result.episodic_cleaned = self.run_episodic_cleanup()?;
 
         Ok(result)
     }
@@ -240,9 +328,10 @@ impl GrafeoStore {
                 .collect::<Vec<_>>()
                 .join("；");
 
-            // Truncate to 200 chars to avoid bloat.
-            let truncated = if summary_value.len() > 200 {
-                format!("{}…", &summary_value[..200])
+            // Truncate to 200 chars (not bytes) to avoid splitting multi-byte UTF-8.
+            let truncated = if summary_value.chars().count() > 200 {
+                let s: String = summary_value.chars().take(200).collect();
+                format!("{}…", s)
             } else {
                 summary_value
             };
@@ -276,6 +365,386 @@ impl GrafeoStore {
         }
 
         Ok(compressed)
+    }
+
+    /// Get episode content from unconsolidated episodic nodes.
+    ///
+    /// Returns (episode_id, content) pairs for episodes that have not yet
+    /// been consolidated (consolidated == false).
+    pub fn get_unconsolidated_episode_contents(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>> {
+        let graph = self.db.graph_store();
+        let node_ids = graph.nodes_by_label(labels::EPISODIC);
+
+        let mut episodes = Vec::new();
+
+        for id in node_ids {
+            if episodes.len() >= limit {
+                break;
+            }
+
+            if let Some(n) = self.db.get_node(id) {
+                // Check consolidated flag — skip already-consolidated.
+                let is_consolidated = n
+                    .get_property("consolidated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+
+                if is_consolidated {
+                    continue;
+                }
+
+                // Extract content.
+                let content = n
+                    .get_property("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+
+                if content.is_empty() {
+                    continue;
+                }
+
+                let episode_id = format!("{}", id.as_u64());
+                episodes.push((episode_id, content));
+            }
+        }
+
+        Ok(episodes)
+    }
+
+    /// Resolve knowledge conflicts using LLM arbitration.
+    ///
+    /// Finds pairs of knowledge nodes with the same (subject, predicate)
+    /// but different (object), then classifies each conflict as
+    /// Evolution, Correction, or Ambiguous using LLM.
+    async fn resolve_conflicts_with_llm(
+        &self,
+        llm: &dyn TripleExtractorLlm,
+    ) -> Result<ConflictResolutionResult> {
+        let active = self.get_all_active_knowledge()?;
+
+        // Group by (subject, predicate) to find conflicts.
+        let mut groups: std::collections::HashMap<(String, String), Vec<&KnowledgeNode>> =
+            std::collections::HashMap::new();
+        for node in &active {
+            let key = (
+                node.subject.to_lowercase(),
+                node.predicate.to_lowercase(),
+            );
+            groups.entry(key).or_default().push(node);
+        }
+
+        let mut result = ConflictResolutionResult::default();
+
+        // Process groups with 2+ nodes (potential conflicts).
+        for nodes in groups.values() {
+            if nodes.len() < 2 {
+                continue;
+            }
+
+            // Compare each pair (only the first two to limit LLM calls).
+            let old = &nodes[0];
+            let new = &nodes[1];
+
+            // Only resolve if objects differ.
+            if old.object.eq_ignore_ascii_case(&new.object) {
+                continue;
+            }
+
+            match classify_conflict(
+                &old.subject,
+                &old.predicate,
+                &old.object,
+                &new.subject,
+                &new.predicate,
+                &new.object,
+                None, // No evidence context available in offline mode
+                llm,
+            )
+            .await
+            {
+                Ok(classification) => {
+                    result.resolved += 1;
+                    match classification.conflict_type {
+                        LlmConflictType::Evolution => {
+                            // Old value is outdated — mark Dormant, new stays Active.
+                            let mut old_node = (*old).clone();
+                            old_node.status = NodeStatus::Dormant;
+                            old_node.updated_at = Utc::now();
+                            self.update_knowledge(&old_node)?;
+                            result.evolution += 1;
+                        }
+                        LlmConflictType::Correction => {
+                            // Old value was wrong — mark Dormant, new stays Active.
+                            let mut old_node = (*old).clone();
+                            old_node.status = NodeStatus::Dormant;
+                            old_node.updated_at = Utc::now();
+                            self.update_knowledge(&old_node)?;
+                            result.correction += 1;
+                        }
+                        LlmConflictType::Ambiguous => {
+                            // Both could be true — keep both, mark for user confirmation.
+                            // The Ambiguous system handles user confirmation hints separately.
+                            result.ambiguous += 1;
+                        }
+                    }
+                }
+                Err(_) => {
+                    // LLM conflict classification failed — keep both values.
+                    result.ambiguous += 1;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Auto-generate Relationship autobiographical nodes.
+    ///
+    /// Per design §3.3: if the user has collaborated with the agent for
+    /// more than 30 days (based on earliest episodic record), create a
+    /// Relationship node. Idempotent — skips if one already exists.
+    fn auto_generate_relationship_nodes(&self) -> Result<usize> {
+        // Check idempotency — skip if Relationship nodes already exist.
+        let existing = self.find_autobiographical_by_category(AutobioCategory::Relationship)?;
+        if !existing.is_empty() {
+            return Ok(0);
+        }
+
+        // Find the earliest episodic node.
+        let graph = self.db.graph_store();
+        let node_ids = graph.nodes_by_label(labels::EPISODIC);
+
+        let mut earliest_time: Option<chrono::DateTime<Utc>> = None;
+        let mut episode_count: u32 = 0;
+
+        for id in node_ids {
+            if let Some(n) = self.db.get_node(id) {
+                episode_count += 1;
+                if let Some(ts) = n.get_property("created_at").and_then(Value::as_timestamp) {
+                    if let Some(dt) = chrono::DateTime::from_timestamp_micros(ts.as_micros()) {
+                        match earliest_time {
+                            None => earliest_time = Some(dt),
+                            Some(earliest) if dt < earliest => earliest_time = Some(dt),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        let Some(earliest) = earliest_time else {
+            return Ok(0);
+        };
+
+        let span_days = (Utc::now() - earliest).num_days();
+        if span_days < 30 {
+            return Ok(0);
+        }
+
+        let key = "collaboration_span".to_string();
+        let value = format!("已合作 {} 天（{} 次对话记录）", span_days, episode_count);
+        let node = AutobiographicalNode {
+            id: None,
+            category: AutobioCategory::Relationship,
+            key,
+            value,
+            confidence: 0.9,
+            source_episode_id: None,
+            embedding: None,
+            status: NodeStatus::Active,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+        self.store_autobiographical(&node)?;
+        Ok(1)
+    }
+
+    /// Auto-generate Limitation autobiographical nodes.
+    ///
+    /// Per design §3.3: if a skill's ProceduralNodes indicate a success
+    /// rate below 60% with >= 5 total observations, create a Limitation node.
+    /// Idempotent — skips if one already exists for the skill.
+    fn auto_generate_limitation_nodes(&self) -> Result<usize> {
+        let procedures = self.get_all_procedural_nodes()?;
+
+        // Aggregate success/fail counts by source_skill.
+        let mut skill_stats: std::collections::HashMap<String, (u32, u32)> =
+            std::collections::HashMap::new();
+        for node in &procedures {
+            if let Some(ref skill) = node.source_skill {
+                let entry = skill_stats.entry(skill.clone()).or_insert((0, 0));
+                entry.0 += node.success_count;
+                entry.1 += node.fail_count;
+            }
+        }
+
+        let mut created = 0;
+        for (skill, (success, fail)) in skill_stats {
+            let total = success + fail;
+            if total < 5 {
+                continue; // Not enough observations.
+            }
+            let rate = success as f32 / total as f32;
+            if rate >= 0.60 {
+                continue; // Success rate is acceptable.
+            }
+
+            // Check idempotency — skip if Limitation node already exists.
+            let key = format!("skill_{}", skill);
+            if self.find_autobiographical_by_key(&key)?.is_some() {
+                continue;
+            }
+
+            let rate_pct = (rate * 100.0) as u32;
+            let value = format!(
+                "{} 成功率仅 {}%（{} 次成功 / {} 次失败）",
+                skill, rate_pct, success, fail
+            );
+            let node = AutobiographicalNode {
+                id: None,
+                category: AutobioCategory::Limitation,
+                key: key.clone(),
+                value,
+                confidence: 0.8,
+                source_episode_id: None,
+                embedding: None,
+                status: NodeStatus::Active,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                metadata: std::collections::HashMap::new(),
+            };
+            self.store_autobiographical(&node)?;
+            created += 1;
+        }
+
+        Ok(created)
+    }
+
+    /// Run episodic memory cleanup based on design §2 forgetting rules.
+    ///
+    /// Unlike the general `run_decay_scan()` which uses the multiplicative
+    /// decay formula on all labels, this method applies episodic-specific
+    /// rules with explicit consolidated/unconsolidated distinction:
+    ///
+    /// - **Consolidated** episodes older than 7 days → Dormant
+    ///   (knowledge already extracted; episode is redundant)
+    /// - **Unconsolidated** episodes older than 14 days with importance < 0.3 → Dormant
+    ///   (low-value and stale; unlikely to yield useful knowledge)
+    /// - **Unconsolidated** episodes older than 14 days with importance >= 0.3 → keep Active
+    ///   (high-value but missed consolidation; will be picked up next cycle)
+    /// - **Unconsolidated** episodes older than 14 days with importance >= 0.3 → mark
+    ///   `needs_consolidation = true` in metadata so the next consolidation cycle
+    ///   prioritizes them.
+    ///
+    /// Returns the number of episodic nodes transitioned to Dormant.
+    fn run_episodic_cleanup(&self) -> Result<usize> {
+        let now = Utc::now();
+        let mut transitioned = 0usize;
+
+        let graph = self.db.graph_store();
+        let node_ids = graph.nodes_by_label(labels::EPISODIC);
+
+        for node_id in node_ids {
+            if let Some(node) = self.db.get_node(node_id) {
+                // Skip non-Active nodes.
+                if let Some(Value::String(s)) = node.properties.get(&"status".into()) {
+                    if s.as_str() != NodeStatus::Active.as_str() {
+                        continue;
+                    }
+                }
+
+                // Read consolidated flag.
+                let is_consolidated = node
+                    .get_property("consolidated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+
+                // Read importance (default 0.5 if not set).
+                let importance = node
+                    .get_property("importance")
+                    .and_then(|v| v.as_float64())
+                    .unwrap_or(0.5) as f32;
+
+                // Compute age in days.
+                let created_at = node
+                    .get_property("created_at")
+                    .and_then(|v| v.as_timestamp());
+                let age_days = created_at
+                    .and_then(|ts| {
+                        DateTime::from_timestamp_micros(ts.as_micros())
+                            .map(|dt| (now - dt).num_days())
+                    })
+                    .unwrap_or(0);
+
+                // Apply design §2 rules.
+                let should_dormant = if is_consolidated && age_days > 7 {
+                    // Consolidated + > 7 days → Dormant.
+                    true
+                } else if !is_consolidated && age_days > 14 {
+                    if importance < 0.3 {
+                        // Unconsolidated + > 14 days + low importance → Dormant.
+                        true
+                    } else {
+                        // Unconsolidated + > 14 days + high importance → keep Active,
+                        // but mark for priority consolidation.
+                        self.db.set_node_property(
+                            node_id,
+                            "needs_consolidation",
+                            Value::from(true),
+                        );
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if should_dormant {
+                    self.transition_to_dormant(node_id)?;
+                    transitioned += 1;
+                }
+            }
+        }
+
+        Ok(transitioned)
+    }
+
+    /// Enhanced Fact semantic deduplication.
+    ///
+    /// Beyond the existing `has_potential_conflict()` which checks
+    /// (subject, predicate) exact match, this method also handles:
+    /// - Same (subject, predicate) with different object → knowledge update
+    ///   (replace old with new, mark old as Dormant) instead of creating duplicate
+    ///
+    /// This is called during triple extraction when dedup is detected.
+    /// Returns the number of old nodes marked Dormant due to knowledge updates.
+    pub fn apply_knowledge_updates(&self, new_triples: &[ExtractedTriple]) -> Result<usize> {
+        let existing = self.get_all_active_knowledge()?;
+        let mut updated = 0;
+
+        for triple in new_triples {
+            // Find nodes with matching subject+predicate but different object.
+            for node in &existing {
+                if node.subject.eq_ignore_ascii_case(&triple.subject)
+                    && node.predicate.eq_ignore_ascii_case(&triple.predicate)
+                    && !node.object.eq_ignore_ascii_case(&triple.object)
+                {
+                    // Knowledge update: mark old as Dormant, new will be stored
+                    // by the caller (extract_triples) as Active.
+                    let mut old = node.clone();
+                    old.status = NodeStatus::Dormant;
+                    old.updated_at = Utc::now();
+                    self.update_knowledge(&old)?;
+                    updated += 1;
+                }
+            }
+        }
+
+        Ok(updated)
     }
 }
 

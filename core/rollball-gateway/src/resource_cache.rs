@@ -23,18 +23,20 @@ use std::path::Path;
 use rollball_core::protocol::{
     McpKeyEntry, McpListItem, ProviderListItem, ProviderModelEntry,
     SearchKeyEntry, SearchProviderListItem, UserProfileListFile,
+    EmbeddingModelsFile,
 };
 
 /// In-memory resource cache loaded at Gateway startup.
 ///
-/// Provider, MCP, Search, and User Profile lists are versioned; keys are
-/// always delivered in full and are NOT stored here (built on-the-fly from Vault).
+/// Provider, MCP, Search, User Profile, and Embedding Model lists are versioned;
+/// keys are always delivered in full and are NOT stored here (built on-the-fly from Vault).
 #[derive(Debug, Clone)]
 pub struct ResourceCache {
     pub provider_list: ProviderListFile,
     pub mcp_list: McpListFile,
     pub search_list: SearchListFile,
     pub user_profile_list: UserProfileListFile,
+    pub embedding_models: EmbeddingModelsFile,
 }
 
 /// Versioned provider list persisted to disk.
@@ -76,6 +78,10 @@ fn user_profile_list_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join("user_profiles.json")
 }
 
+fn embedding_models_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("embedding_models.json")
+}
+
 // ── Loading ────────────────────────────────────────────────────────────
 
 /// Load the resource cache from disk at Gateway startup.
@@ -86,6 +92,7 @@ pub fn load_resource_cache(data_dir: &Path) -> ResourceCache {
     let mcp_list = load_mcp_list(data_dir);
     let search_list = load_search_list(data_dir);
     let user_profile_list = load_user_profile_list(data_dir);
+    let embedding_models = load_embedding_models(data_dir);
     tracing::info!(
         provider_count = provider_list.providers.len(),
         provider_version = provider_list.version,
@@ -95,6 +102,8 @@ pub fn load_resource_cache(data_dir: &Path) -> ResourceCache {
         search_version = search_list.version,
         user_profile_count = user_profile_list.users.len(),
         user_profile_version = user_profile_list.version,
+        embedding_model_count = embedding_models.models.len(),
+        embedding_models_version = embedding_models.version,
         "Resource cache loaded"
     );
     ResourceCache {
@@ -102,6 +111,7 @@ pub fn load_resource_cache(data_dir: &Path) -> ResourceCache {
         mcp_list,
         search_list,
         user_profile_list,
+        embedding_models,
     }
 }
 
@@ -221,6 +231,114 @@ fn load_user_profile_list(data_dir: &Path) -> UserProfileListFile {
     }
 }
 
+fn load_embedding_models(data_dir: &Path) -> EmbeddingModelsFile {
+    let path = embedding_models_path(data_dir);
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => match serde_json::from_str(&raw) {
+            Ok(list) => list,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to parse embedding_models.json, using empty list"
+                );
+                EmbeddingModelsFile { version: 0, models: Vec::new() }
+            }
+        },
+        Err(_) => {
+            // File not in data_dir — search fallback paths (like offline_providers.json)
+            match find_embedding_models_fallback() {
+                Some((content, source_path)) => match serde_json::from_str::<EmbeddingModelsFile>(&content) {
+                    Ok(list) => {
+                        tracing::info!(
+                            source = %source_path.display(),
+                            count = list.models.len(),
+                            "Loaded embedding_models.json from fallback path"
+                        );
+                        // Auto-seed: copy to data_dir so the user gets a writable copy
+                        // they can edit to add/update models without upgrading the program.
+                        if let Err(e) = std::fs::write(&path, &content) {
+                            tracing::warn!(
+                                dest = %path.display(),
+                                error = %e,
+                                "Failed to seed embedding_models.json into data_dir"
+                            );
+                        } else {
+                            tracing::info!(
+                                dest = %path.display(),
+                                "Auto-seeded embedding_models.json into data_dir (editable)"
+                            );
+                        }
+                        list
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to parse fallback embedding_models.json, using empty list");
+                        EmbeddingModelsFile { version: 0, models: Vec::new() }
+                    }
+                },
+                None => {
+                    tracing::info!("embedding_models.json not found, initializing empty");
+                    EmbeddingModelsFile { version: 0, models: Vec::new() }
+                }
+            }
+        }
+    }
+}
+
+/// Search fallback paths for `embedding_models.json` when not in data_dir.
+///
+/// Search order (matches the `offline_providers.json` pattern):
+///   1. `{exe_dir}/embedding_models.json`   (installer-provided)
+///   2. `$CARGO_MANIFEST_DIR/../../assets/` (dev / test via cargo)
+///   3. `{cwd}/embedding_models.json`        (dev convenience)
+///
+/// Returns the file content and the path it was found at.
+fn find_embedding_models_fallback() -> Option<(String, std::path::PathBuf)> {
+    let mut candidates = Vec::new();
+
+    // 1. Same directory as the executable (installer-provided)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("embedding_models.json"));
+        }
+    }
+
+    // 2. CARGO_MANIFEST_DIR ../../assets/ (dev and test via cargo)
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let assets = std::path::PathBuf::from(&manifest_dir)
+            .join("..").join("..").join("assets")
+            .join("embedding_models.json");
+        if assets.exists() {
+            candidates.push(assets);
+        }
+    }
+
+    // 3. Current working directory (dev convenience)
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("embedding_models.json"));
+    }
+
+    for path in &candidates {
+        if path.exists() {
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    tracing::info!("Found embedding_models.json at fallback: {}", path.display());
+                    return Some((content, path.clone()));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "Failed to read embedding_models.json"
+                    );
+                }
+            }
+        }
+    }
+
+    None
+}
+
 // ── Saving ─────────────────────────────────────────────────────────────
 
 /// Save the provider list to disk.
@@ -275,6 +393,20 @@ pub fn save_user_profile_list(data_dir: &Path, list: &UserProfileListFile) -> Re
         version = list.version,
         count = list.users.len(),
         "User profile list saved"
+    );
+    Ok(())
+}
+
+/// Save the embedding models list to disk.
+pub fn save_embedding_models(data_dir: &Path, list: &EmbeddingModelsFile) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(list)
+        .map_err(|e| format!("Failed to serialize embedding models: {}", e))?;
+    std::fs::write(embedding_models_path(data_dir), &json)
+        .map_err(|e| format!("Failed to write embedding_models.json: {}", e))?;
+    tracing::info!(
+        version = list.version,
+        count = list.models.len(),
+        "Embedding models saved"
     );
     Ok(())
 }
@@ -619,6 +751,7 @@ impl Default for ResourceCache {
             mcp_list: McpListFile::default(),
             search_list: SearchListFile::default(),
             user_profile_list: UserProfileListFile { version: 0, users: Vec::new() },
+            embedding_models: EmbeddingModelsFile { version: 0, models: Vec::new() },
         }
     }
 }

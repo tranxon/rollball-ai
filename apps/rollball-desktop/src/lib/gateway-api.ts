@@ -7,6 +7,8 @@ import type {
   UserProfileListResponse,
   CreateUserRequest,
   UpdateUserRequest,
+  EmbeddingModelsResponse,
+  EmbeddingModelActionResponse,
 } from "./types";
 import { getGatewayUrl } from "./config";
 
@@ -119,4 +121,54 @@ export async function resetOnboarding(
   // Clear frontend onboarding state
   localStorage.removeItem("rollball_onboarding");
   return result;
+}
+
+// ── Embedding Model API ──────────────────────────────────────────────────
+
+/** Fetch all embedding models with status */
+export async function fetchEmbeddingModels(
+  gatewayUrl = getGatewayUrl(),
+): Promise<EmbeddingModelsResponse> {
+  const resp = await fetch(`${gatewayUrl}/api/embedding-models`);
+  if (!resp.ok) throw new Error(`Failed to fetch embedding models: ${resp.status}`);
+  return resp.json();
+}
+
+/** Trigger download of an embedding model */
+export async function downloadEmbeddingModel(
+  modelId: string,
+  variant?: string,
+  gatewayUrl = getGatewayUrl(),
+): Promise<EmbeddingModelActionResponse> {
+  const resp = await fetch(`${gatewayUrl}/api/embedding-models/${modelId}/download`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ variant: variant ?? null }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    throw new Error((data as EmbeddingModelActionResponse).message ?? `Download failed: ${resp.status}`);
+  }
+  return data as EmbeddingModelActionResponse;
+}
+
+/** Select (activate) an embedding model */
+export async function selectEmbeddingModel(
+  modelId: string,
+  force = false,
+  gatewayUrl = getGatewayUrl(),
+): Promise<EmbeddingModelActionResponse> {
+  const resp = await fetch(`${gatewayUrl}/api/embedding-models/${modelId}/select`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ force }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    const actionResp = data as EmbeddingModelActionResponse;
+    // Return the response even on CONFLICT so caller can handle dimension_mismatch
+    if (resp.status === 409) return actionResp;
+    throw new Error(actionResp.message ?? `Select failed: ${resp.status}`);
+  }
+  return data as EmbeddingModelActionResponse;
 }

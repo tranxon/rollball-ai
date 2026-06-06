@@ -374,6 +374,10 @@ impl AgentLoop {
         // P2-4 fix: capture memory node IDs for later traceability in record_turn_to_memory
         let retrieved_memory_ids = self.retrieve_and_inject_memories(user_message, context_builder).await;
 
+        // P3: Notify consolidation scheduler that agent is active —
+        // resets idle timer so consolidation doesn't run during active use.
+        self.core.notify_consolidation_active().await;
+
         let mut iteration = 0u32;
 
         loop {
