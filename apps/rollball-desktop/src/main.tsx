@@ -9,6 +9,11 @@ import "./styles/globals.css";
 // based on the persisted preference from localStorage.
 import "./stores/settingsStore";
 
+// Disable native browser context menu to prevent accidental page refresh
+// and other browser actions that would restart the entire app.
+// Custom context menus (ChatPanel, AgentList) handle their own preventDefault.
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

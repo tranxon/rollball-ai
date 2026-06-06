@@ -320,6 +320,7 @@
         "status": "ステータス",
         "memory": "メモリ",
         "setup": "設定",
+        "workspace": "ワークスペース",
         "debugUnavailableRemote": "リモートモードではデバッグは使用できません",
         "debugRemoteDesc": "デバッグにはAgentランタイムへの直接ローカル接続が必要です。デスクトップアプリとゲートウェイは同じマシン上で実行する必要があります。",
         "connectingDebug": "デバッグサーバーに接続中...",
@@ -352,7 +353,13 @@
     },
     "workspace": {
         "delete": "削除",
-        "cancel": "キャンセル"
+        "cancel": "キャンセル",
+        "explorer": {
+            "agentNotRunning": "Agentを起動してワークスペースを閲覧",
+            "loading": "読み込み中...",
+            "refresh": "更新",
+            "searchPlaceholder": "ファイルを検索..."
+        }
     },
     "sessionPanel": {
         "loadingSessions": "セッションを読み込み中...",

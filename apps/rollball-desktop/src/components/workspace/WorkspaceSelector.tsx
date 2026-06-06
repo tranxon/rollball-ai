@@ -10,7 +10,7 @@ import { ChevronDown, FolderOpen, FolderPlus, Trash2, Shield, ShieldOff, Home } 
 import * as dialog from "@tauri-apps/plugin-dialog";
 import { cn } from "../../lib/utils";
 
-export function WorkspaceSelector() {
+export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "up" | "down" }) {
   const { t } = useTranslation();
   const { selectedAgentId } = useAgentStore();
   const { gatewayUrl } = useSettingsStore();
@@ -166,7 +166,10 @@ export function WorkspaceSelector() {
 
         {/* Dropdown menu */}
         {open && (
-          <div className="absolute bottom-full left-0 mb-1 w-60 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800" style={{ zIndex: 100 }}>
+          <div className={cn(
+            "absolute left-0 w-60 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800",
+            dropDirection === "down" ? "top-full mt-1" : "bottom-full mb-1",
+          )} style={{ zIndex: 100 }}>
             {/* Workspace list */}
             <div className="max-h-56 overflow-y-auto py-1">
               {/* Agent Home — always first, cannot be deleted */}

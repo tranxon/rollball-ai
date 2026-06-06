@@ -364,6 +364,251 @@ pub async fn delete_workspace(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ─── File Tree Explorer API ─────────────────────────────────────────────
+
+/// A single entry in a directory listing (file or subdirectory)
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeEntry {
+    /// File or directory name
+    pub name: String,
+    /// "file" or "directory"
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    /// File size in bytes (None for directories)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Last modified timestamp (RFC3339, None if unavailable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<String>,
+    /// Number of direct children (only for directories, used for showing expansion arrow)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children_count: Option<usize>,
+}
+
+/// Query parameters for the tree endpoint
+#[derive(Debug, Deserialize, Default)]
+pub struct TreeQuery {
+    /// Relative path within the workspace root (empty or "." = root)
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Workspace ID to browse. "__agent_home__" or empty = agent home directory.
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+}
+
+/// Response for the tree endpoint
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeResponse {
+    /// Absolute path of the workspace root
+    pub root: String,
+    /// Relative path that was listed
+    pub path: String,
+    /// Directory entries (directories first, then files, both alphabetical)
+    pub entries: Vec<TreeEntry>,
+}
+
+/// Resolve the absolute directory path for a tree request, ensuring it stays
+/// within the allowed workspace root. Returns `(root, abs_path, rel_path)`.
+fn resolve_tree_path(
+    root: &str,
+    requested_path: &str,
+) -> Result<(std::path::PathBuf, std::path::PathBuf, String), String> {
+    let root = std::path::Path::new(root);
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve workspace root: {}", e))?;
+
+    let rel = requested_path.trim_start_matches("./").trim_start_matches("/");
+    let abs = if rel.is_empty() || rel == "." {
+        canonical_root.clone()
+    } else {
+        let candidate = canonical_root.join(rel);
+        // Prevent path traversal: the canonicalized path must start with root
+        let canonical_candidate = candidate
+            .canonicalize()
+            .map_err(|e| format!("Path not found: {}", e))?;
+        if !canonical_candidate.starts_with(&canonical_root) {
+            return Err("Path is outside the workspace root".to_string());
+        }
+        canonical_candidate
+    };
+
+    let rel_path = abs
+        .strip_prefix(&canonical_root)
+        .unwrap_or(std::path::Path::new(""))
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    Ok((canonical_root, abs, rel_path))
+}
+
+/// `GET /api/agents/{agent_id}/workspaces/tree` — list directory contents
+///
+/// Returns a flat list of entries for a single directory level (depth=1).
+/// Security: only allows browsing within the workspace root directory.
+/// The `path` query parameter is relative to the workspace root.
+/// The `workspace_id` parameter selects which workspace to browse:
+///   - empty or `"__agent_home__"` → agent installation directory
+///   - a workspace ID (e.g. `"ws-abc123"`) → that workspace's path
+pub async fn list_tree(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<TreeQuery>,
+) -> Result<Json<TreeResponse>, (StatusCode, Json<ApiError>)> {
+    // Determine the workspace root based on workspace_id
+    let workspace_root = {
+        let gw = state.gateway_state.read().await;
+        let info = gw.running_agents.get(&agent_id).ok_or_else(|| {
+            ApiError::not_found("Agent not running — cannot browse workspace")
+        })?;
+
+        let ws_id = query.workspace_id.as_deref().unwrap_or("");
+
+        if ws_id.is_empty() || ws_id == "__agent_home__" {
+            // Agent home directory
+            info.workspace.clone()
+        } else {
+            // Look up workspace path from cached config
+            let config = info.workspace_config_json.as_ref()
+                .and_then(|json| serde_json::from_str::<WorkspaceConfig>(json).ok());
+            match config {
+                Some(cfg) => {
+                    cfg.additional_dirs
+                        .iter()
+                        .find(|d| d.id == ws_id)
+                        .map(|d| d.path.clone())
+                        .ok_or_else(|| ApiError::not_found(&format!(
+                            "Workspace directory not found: {}",
+                            ws_id
+                        )))?
+                }
+                None => {
+                    return Err(ApiError::not_found(
+                        "Agent workspace config not available yet",
+                    ));
+                }
+            }
+        }
+    };
+
+    let requested_path = query.path.as_deref().unwrap_or("").to_string();
+    let (canonical_root, abs_path, rel_path) =
+        resolve_tree_path(&workspace_root, &requested_path)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    // Read directory entries
+    let read_dir = match std::fs::read_dir(&abs_path) {
+        Ok(rd) => rd,
+        Err(e) => {
+            return Err(ApiError::internal(&format!(
+                "Failed to read directory: {}",
+                e
+            )))
+        }
+    };
+
+    let root_str = canonical_root.to_string_lossy().replace('\\', "/");
+    let mut dirs: Vec<TreeEntry> = Vec::new();
+    let mut files: Vec<TreeEntry> = Vec::new();
+
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue, // Skip unreadable entries
+        };
+
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip hidden files/dirs (starting with '.')
+        if name.starts_with('.') {
+            continue;
+        }
+
+        let metadata = entry.metadata().ok();
+        let is_dir = metadata.as_ref().map_or(false, |m| m.is_dir());
+
+        if is_dir {
+            // Count children for the expansion indicator
+            let children_count = std::fs::read_dir(entry.path())
+                .ok()
+                .map(|rd| {
+                    rd.filter(|e| {
+                        e.as_ref()
+                            .map(|e| {
+                                !e.file_name()
+                                    .to_string_lossy()
+                                    .starts_with('.')
+                            })
+                            .unwrap_or(false)
+                    })
+                    .count()
+                })
+                .unwrap_or(0);
+
+            dirs.push(TreeEntry {
+                name,
+                entry_type: "directory".to_string(),
+                size: None,
+                modified: metadata.and_then(|m| {
+                    m.modified()
+                        .ok()
+                        .and_then(|t| {
+                            t.duration_since(std::time::SystemTime::UNIX_EPOCH)
+                                .ok()
+                                .map(|d| {
+                                    chrono::DateTime::from_timestamp(
+                                        d.as_secs() as i64,
+                                        0,
+                                    )
+                                    .map(|dt| dt.to_rfc3339())
+                                    .unwrap_or_default()
+                                })
+                        })
+                }),
+                children_count: Some(children_count),
+            });
+        } else {
+            files.push(TreeEntry {
+                name,
+                entry_type: "file".to_string(),
+                size: metadata.as_ref().map(|m| m.len()),
+                modified: metadata.and_then(|m| {
+                    m.modified()
+                        .ok()
+                        .and_then(|t| {
+                            t.duration_since(std::time::SystemTime::UNIX_EPOCH)
+                                .ok()
+                                .map(|d| {
+                                    chrono::DateTime::from_timestamp(
+                                        d.as_secs() as i64,
+                                        0,
+                                    )
+                                    .map(|dt| dt.to_rfc3339())
+                                    .unwrap_or_default()
+                                })
+                        })
+                }),
+                children_count: None,
+            });
+        }
+    }
+
+    // Sort: directories first, then files — both alphabetical (case-insensitive)
+    dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    let mut entries = dirs;
+    entries.append(&mut files);
+
+    Ok(Json(TreeResponse {
+        root: root_str,
+        path: rel_path,
+        entries,
+    }))
+}
+
 // ─── Routes ─────────────────────────────────────────────────────────────
 
 use axum::routing::put;
@@ -383,5 +628,9 @@ pub fn workspace_routes() -> Router<AppState> {
         .route(
             "/api/agents/{agent_id}/workspaces/{ws_id}",
             put(update_workspace).delete(delete_workspace),
+        )
+        .route(
+            "/api/agents/{agent_id}/workspaces/tree",
+            get(list_tree),
         )
 }

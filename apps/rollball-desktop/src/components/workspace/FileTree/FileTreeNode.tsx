@@ -1,0 +1,79 @@
+import { memo, useCallback } from "react";
+import { ChevronRight, Folder, FolderOpen } from "lucide-react";
+import { cn } from "../../../lib/utils";
+import { getFileIcon } from "./fileIcons";
+import type { TreeEntry } from "../../../stores/workspaceStore";
+
+interface FileTreeNodeProps {
+  entry: TreeEntry;
+  depth: number;
+  relPath: string;
+  isExpanded: boolean;
+  isLoading: boolean;
+  isSelected: boolean;
+  onToggle: (relPath: string) => void;
+  onSelect: (entry: TreeEntry, relPath: string) => void;
+}
+
+export const FileTreeNode = memo(function FileTreeNode({
+  entry,
+  depth,
+  relPath,
+  isExpanded,
+  isLoading,
+  isSelected,
+  onToggle,
+  onSelect,
+}: FileTreeNodeProps) {
+  const isDir = entry.type === "directory";
+  const Icon = isDir ? (isExpanded ? FolderOpen : Folder) : getFileIcon(entry.name).icon;
+  const iconColor = isDir ? "text-zinc-500 dark:text-zinc-400" : getFileIcon(entry.name).color;
+
+  const handleClick = useCallback(() => {
+    if (isDir) {
+      onToggle(relPath);
+    } else {
+      onSelect(entry, relPath);
+    }
+  }, [isDir, onToggle, onSelect, relPath, entry]);
+
+  return (
+    <div
+      className={cn(
+        "flex cursor-pointer items-center gap-1 py-[2px] pr-2 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800",
+        isSelected && "bg-blue-50 dark:bg-blue-900/20",
+      )}
+      style={{ paddingLeft: `${depth * 16 + 4}px` }}
+      onClick={handleClick}
+      title={relPath}
+    >
+      {/* Expand/collapse chevron */}
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+        {isDir ? (
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 text-zinc-400 transition-transform duration-150",
+              isExpanded && "rotate-90",
+            )}
+          />
+        ) : null}
+      </span>
+
+      {/* Icon */}
+      <Icon className={cn("h-3.5 w-3.5 shrink-0", iconColor)} />
+
+      {/* Name */}
+      <span className="ml-1 truncate text-zinc-700 dark:text-zinc-400">{entry.name}</span>
+
+      {/* Loading indicator for directories being fetched */}
+      {isLoading && isDir && isExpanded && (
+        <span className="ml-auto text-[10px] text-zinc-400">...</span>
+      )}
+
+      {/* Children count badge for collapsed directories */}
+      {isDir && !isExpanded && entry.childrenCount !== undefined && entry.childrenCount > 0 && (
+        <span className="ml-auto text-[10px] text-zinc-400">{entry.childrenCount}</span>
+      )}
+    </div>
+  );
+});

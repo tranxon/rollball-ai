@@ -320,6 +320,7 @@
         "status": "狀態",
         "memory": "記憶",
         "setup": "設定",
+        "workspace": "工作區",
         "debugUnavailableRemote": "遠端模式下無法使用除錯",
         "debugRemoteDesc": "除錯需要與 Agent Runtime 建立直接本機連線。桌面應用程式和閘道必須在同一台機器上執行。",
         "connectingDebug": "正在連線除錯伺服器...",
@@ -352,7 +353,13 @@
     },
     "workspace": {
         "delete": "刪除",
-        "cancel": "取消"
+        "cancel": "取消",
+        "explorer": {
+            "agentNotRunning": "啟動 Agent 以瀏覽工作區",
+            "loading": "載入中...",
+            "refresh": "重新整理",
+            "searchPlaceholder": "搜尋檔案..."
+        }
     },
     "sessionPanel": {
         "loadingSessions": "載入工作階段中...",

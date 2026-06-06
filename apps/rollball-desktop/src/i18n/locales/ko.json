@@ -320,6 +320,7 @@
         "status": "상태",
         "memory": "메모리",
         "setup": "설정",
+        "workspace": "워크스페이스",
         "debugUnavailableRemote": "원격 모드에서는 디버그를 사용할 수 없습니다",
         "debugRemoteDesc": "디버그에는 Agent 런타임에 대한 직접 로컬 연결이 필요합니다。데스크톱 앱과 게이트웨이는 동일한 머신에서 실행되어야 합니다。",
         "connectingDebug": "디버그 서버에 연결 중...",
@@ -352,7 +353,13 @@
     },
     "workspace": {
         "delete": "삭제",
-        "cancel": "취소"
+        "cancel": "취소",
+        "explorer": {
+            "agentNotRunning": "Agent를 시작하여 워크스페이스 탐색",
+            "loading": "로딩 중...",
+            "refresh": "새로고침",
+            "searchPlaceholder": "파일 검색..."
+        }
     },
     "sessionPanel": {
         "loadingSessions": "세션 로딩 중...",

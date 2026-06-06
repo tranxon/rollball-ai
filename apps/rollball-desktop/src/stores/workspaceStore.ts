@@ -18,11 +18,37 @@ interface WorkspaceDir {
   last_selected_at: string | null;
 }
 
+/** Single file/directory entry from the tree API — matches Gateway TreeResponse.entries */
+export interface TreeEntry {
+  name: string;
+  /** "file" or "directory" */
+  type: string;
+  size?: number;
+  modified?: string;
+  childrenCount?: number;
+}
+
+/** Tree API response — matches Gateway TreeResponse */
+export interface TreeResponse {
+  root: string;
+  path: string;
+  entries: TreeEntry[];
+}
+
+/** Cache key: `${agentId}:${workspaceId}:${relPath}` → TreeEntry[] */
+type TreeCacheKey = string;
+
 interface WorkspaceState {
   workspaces: WorkspaceDir[];
   /** Per-session current workspace selection. "__agent_home__" = agent home. */
   sessionWorkspaceMap: Record<string, string>;
   loading: boolean;
+  /** Tree cache: agentId:workspaceId:relativePath → TreeEntry[] */
+  treeCache: Record<TreeCacheKey, TreeEntry[]>;
+  /** Workspace root path per agent+workspace (from tree API response) */
+  treeRoots: Record<string, string>;
+  /** Paths currently being fetched (to avoid duplicate requests) */
+  treeLoadingPaths: Set<string>;
 
   // Fetch workspace list for a given agent
   fetchWorkspaces: (agentId: string) => Promise<void>;
@@ -44,6 +70,15 @@ interface WorkspaceState {
   // Get current workspace ID for a session (defaults to "__agent_home__")
   getSessionWorkspaceId: (sessionId: string) => string;
 
+  // Fetch directory tree for a given agent + workspace + relative path
+  fetchTree: (agentId: string, workspaceId: string, relPath?: string) => Promise<TreeEntry[] | null>;
+
+  // Get cached tree entries
+  getCachedTree: (agentId: string, workspaceId: string, relPath: string) => TreeEntry[] | undefined;
+
+  // Invalidate tree cache for an agent (e.g. when workspace changes)
+  invalidateTreeCache: (agentId: string) => void;
+
   // Clear state on agent switch
   reset: () => void;
 }
@@ -60,6 +95,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   sessionWorkspaceMap: {},
   loading: false,
+  treeCache: {},
+  treeRoots: {},
+  treeLoadingPaths: new Set<string>(),
 
   fetchWorkspaces: async (agentId: string) => {
     const seq = ++requestSeq;
@@ -165,8 +203,80 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     return get().sessionWorkspaceMap[sessionId] ?? "__agent_home__";
   },
 
+  fetchTree: async (agentId: string, workspaceId: string, relPath?: string) => {
+    const path = relPath ?? "";
+    const cacheKey = `${agentId}:${workspaceId}:${path}`;
+
+    // Deduplicate in-flight requests
+    if (get().treeLoadingPaths.has(cacheKey)) return null;
+
+    set((state) => ({
+      treeLoadingPaths: new Set(state.treeLoadingPaths).add(cacheKey),
+    }));
+
+    try {
+      const baseUrl = getGatewayUrl();
+      const params = new URLSearchParams();
+      if (workspaceId && workspaceId !== "__agent_home__") {
+        params.set("workspace_id", workspaceId);
+      }
+      if (path) {
+        params.set("path", path);
+      }
+      const qs = params.toString();
+      const url = `${baseUrl}/api/agents/${agentId}/workspaces/tree${qs ? `?${qs}` : ""}`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        console.error("[WorkspaceStore] fetchTree failed:", resp.status, resp.statusText);
+        return null;
+      }
+      const data = (await resp.json()) as TreeResponse;
+      const rootKey = `${agentId}:${workspaceId}`;
+      set((state) => ({
+        treeCache: { ...state.treeCache, [cacheKey]: data.entries },
+        treeRoots: { ...state.treeRoots, [rootKey]: data.root },
+        treeLoadingPaths: (() => {
+          const next = new Set(state.treeLoadingPaths);
+          next.delete(cacheKey);
+          return next;
+        })(),
+      }));
+      return data.entries;
+    } catch (e) {
+      console.error("[WorkspaceStore] fetchTree error:", e);
+      set((state) => {
+        const next = new Set(state.treeLoadingPaths);
+        next.delete(cacheKey);
+        return { treeLoadingPaths: next };
+      });
+      return null;
+    }
+  },
+
+  getCachedTree: (agentId: string, workspaceId: string, relPath: string) => {
+    return get().treeCache[`${agentId}:${workspaceId}:${relPath}`];
+  },
+
+  invalidateTreeCache: (agentId: string) => {
+    set((state) => {
+      const nextCache: Record<string, TreeEntry[]> = {};
+      for (const [key, val] of Object.entries(state.treeCache)) {
+        if (!key.startsWith(`${agentId}:`)) {
+          nextCache[key] = val;
+        }
+      }
+      const nextRoots: Record<string, string> = {};
+      for (const [key, val] of Object.entries(state.treeRoots)) {
+        if (!key.startsWith(`${agentId}:`)) {
+          nextRoots[key] = val;
+        }
+      }
+      return { treeCache: nextCache, treeRoots: nextRoots };
+    });
+  },
+
   reset: () => {
-    set({ workspaces: [], sessionWorkspaceMap: {}, loading: false });
+    set({ workspaces: [], sessionWorkspaceMap: {}, loading: false, treeCache: {}, treeRoots: {}, treeLoadingPaths: new Set() });
   },
 }));
 

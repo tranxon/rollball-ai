@@ -320,6 +320,7 @@
         "status": "状态",
         "memory": "记忆",
         "setup": "设置",
+        "workspace": "工作区",
         "debugUnavailableRemote": "远程模式下无法使用调试",
         "debugRemoteDesc": "调试需要与 Agent Runtime 建立直接本地连接。桌面应用和网关必须在同一台机器上运行。",
         "connectingDebug": "正在连接调试服务器...",
@@ -353,7 +354,13 @@
     },
     "workspace": {
         "delete": "删除",
-        "cancel": "取消"
+        "cancel": "取消",
+        "explorer": {
+            "agentNotRunning": "启动 Agent 以浏览工作区",
+            "loading": "加载中...",
+            "refresh": "刷新",
+            "searchPlaceholder": "搜索文件..."
+        }
     },
     "sessionPanel": {
         "loadingSessions": "加载会话中...",

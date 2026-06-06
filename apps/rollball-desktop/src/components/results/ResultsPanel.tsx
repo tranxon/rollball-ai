@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { AgentSetupTab } from "./AgentSetupTab";
 import { MemoryPanel } from "../memory/MemoryPanel";
+import { WorkspaceExplorer } from "../workspace/WorkspaceExplorer";
 import { ControlButton, StateLabel, SnapshotNode } from "../debug/DebugPanel";
 import { isGatewayLocal } from "../../lib/config";
 import { useTranslation } from "../../i18n/useTranslation";
@@ -27,7 +28,7 @@ interface ResultsPanelProps {
   onResizeStart?: (e: React.MouseEvent) => void;
 }
 
-type PanelTab = "debug" | "status" | "setup" | "memory";
+type PanelTab = "debug" | "status" | "setup" | "memory" | "workspace";
 
 // Stable empty array reference to avoid Zustand selector infinite loop
 const EMPTY_MESSAGES: ChatMessage[] = [];
@@ -256,6 +257,12 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                 {t("resultsPanel.setup")}
               </TabButton>
             )}
+            <TabButton
+              active={activeTab === "workspace"}
+              onClick={() => setActiveTab("workspace")}
+            >
+              {t("resultsPanel.workspace")}
+            </TabButton>
           </div>
         </div>
       </div>
@@ -515,6 +522,9 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
 
       {/* ── Setup tab content ─────────────────────────────────────── */}
       {activeTab === "setup" && <AgentSetupTab />}
+
+      {/* ── Workspace tab content ─────────────────────────────────── */}
+      {activeTab === "workspace" && <WorkspaceExplorer />}
     </div>
   );
 }
