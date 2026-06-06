@@ -609,6 +609,247 @@ pub async fn list_tree(
     }))
 }
 
+// ─── File Content API ────────────────────────────────────────────────────
+
+/// Maximum file size for read/write operations (5 MB)
+const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024;
+
+/// Text-based MIME types allowed for file editing
+fn detect_mime(ext: &str) -> Option<&'static str> {
+    match ext.to_lowercase().as_str() {
+        "rs" => Some("text/x-rust"),
+        "ts" | "tsx" => Some("text/typescript"),
+        "js" | "jsx" => Some("text/javascript"),
+        "json" => Some("application/json"),
+        "toml" => Some("application/toml"),
+        "yaml" | "yml" => Some("text/yaml"),
+        "md" | "markdown" => Some("text/markdown"),
+        "html" | "htm" => Some("text/html"),
+        "css" | "scss" | "less" => Some("text/css"),
+        "xml" => Some("text/xml"),
+        "sh" | "bash" | "zsh" => Some("text/x-shellscript"),
+        "ps1" | "psm1" | "psd1" => Some("text/x-powershell"),
+        "bat" | "cmd" => Some("text/x-bat"),
+        "py" => Some("text/x-python"),
+        "rb" => Some("text/x-ruby"),
+        "go" => Some("text/x-go"),
+        "java" => Some("text/x-java"),
+        "c" | "h" => Some("text/x-c"),
+        "cpp" | "cc" | "cxx" | "hpp" => Some("text/x-cpp"),
+        "cs" => Some("text/x-csharp"),
+        "swift" => Some("text/x-swift"),
+        "kt" | "kts" => Some("text/x-kotlin"),
+        "sql" => Some("text/x-sql"),
+        "graphql" | "gql" => Some("text/x-graphql"),
+        "dockerfile" => Some("text/x-dockerfile"),
+        "env" | "ini" | "cfg" | "conf" => Some("text/plain"),
+        "txt" | "log" | "csv" => Some("text/plain"),
+        "gitignore" | "editorconfig" => Some("text/plain"),
+        _ => None,
+    }
+}
+
+/// Query parameters for file read/write
+#[derive(Debug, Deserialize, Default)]
+pub struct FileQuery {
+    /// Relative file path within the workspace
+    pub path: Option<String>,
+    /// Workspace ID. "__agent_home__" or empty = agent home directory
+    pub workspace_id: Option<String>,
+}
+
+/// Response for file read
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileResponse {
+    pub content: String,
+    pub size: u64,
+    pub mime_type: String,
+}
+
+/// Request body for file write
+#[derive(Debug, Deserialize)]
+pub struct WriteFileRequest {
+    pub content: String,
+}
+
+/// Response for file write
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteFileResponse {
+    pub ok: bool,
+    pub size: u64,
+}
+
+/// Resolve workspace root path for a given agent + workspace_id.
+/// Shared between tree and file APIs.
+async fn resolve_workspace_root(
+    state: &AppState,
+    agent_id: &str,
+    workspace_id: Option<&str>,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let gw = state.gateway_state.read().await;
+    let info = gw.running_agents.get(agent_id).ok_or_else(|| {
+        ApiError::not_found("Agent not running — cannot access workspace")
+    })?;
+
+    let ws_id = workspace_id.unwrap_or("");
+    if ws_id.is_empty() || ws_id == "__agent_home__" {
+        Ok(info.workspace.clone())
+    } else {
+        let config = info
+            .workspace_config_json
+            .as_ref()
+            .and_then(|json| serde_json::from_str::<WorkspaceConfig>(json).ok());
+        match config {
+            Some(cfg) => cfg
+                .additional_dirs
+                .iter()
+                .find(|d| d.id == ws_id)
+                .map(|d| d.path.clone())
+                .ok_or_else(|| ApiError::not_found(&format!(
+                    "Workspace directory not found: {}",
+                    ws_id
+                ))),
+            None => Err(ApiError::not_found(
+                "Agent workspace config not available yet",
+            )),
+        }
+    }
+}
+
+/// `GET /api/agents/{agent_id}/workspaces/file` — read a file's content
+pub async fn read_file(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<FileResponse>, (StatusCode, Json<ApiError>)> {
+    let file_rel_path = query.path.as_deref().unwrap_or("");
+    if file_rel_path.is_empty() {
+        return Err(ApiError::bad_request("Missing required 'path' parameter"));
+    }
+
+    let workspace_root =
+        resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
+
+    let (_canonical_root, abs_path, _rel_path) =
+        resolve_tree_path(&workspace_root, file_rel_path)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    // Verify it's a file
+    if !abs_path.is_file() {
+        return Err(ApiError::bad_request("Path is not a file"));
+    }
+
+    // Check file size
+    let metadata = std::fs::metadata(&abs_path)
+        .map_err(|e| ApiError::internal(&format!("Cannot read metadata: {}", e)))?;
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ApiError {
+                error: format!(
+                    "File too large ({} bytes, max {} bytes)",
+                    metadata.len(),
+                    MAX_FILE_SIZE
+                ),
+                code: 413,
+            }),
+        ));
+    }
+
+    // Detect MIME type
+    let ext = abs_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let mime_type = detect_mime(ext).unwrap_or("text/plain").to_string();
+
+    // Read content
+    let content = std::fs::read_to_string(&abs_path).map_err(|e| {
+        ApiError::internal(&format!("Failed to read file: {}", e))
+    })?;
+
+    Ok(Json(FileResponse {
+        content,
+        size: metadata.len(),
+        mime_type,
+    }))
+}
+
+/// `PUT /api/agents/{agent_id}/workspaces/file` — write content to a file
+pub async fn write_file(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<FileQuery>,
+    Json(req): Json<WriteFileRequest>,
+) -> Result<Json<WriteFileResponse>, (StatusCode, Json<ApiError>)> {
+    let file_rel_path = query.path.as_deref().unwrap_or("");
+    if file_rel_path.is_empty() {
+        return Err(ApiError::bad_request("Missing required 'path' parameter"));
+    }
+
+    // Check content size
+    let content_bytes = req.content.len() as u64;
+    if content_bytes > MAX_FILE_SIZE {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ApiError {
+                error: format!(
+                    "Content too large ({} bytes, max {} bytes)",
+                    content_bytes, MAX_FILE_SIZE
+                ),
+                code: 413,
+            }),
+        ));
+    }
+
+    let workspace_root =
+        resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
+
+    // Check workspace access level (read-only → reject writes)
+    {
+        let gw = state.gateway_state.read().await;
+        if let Some(info) = gw.running_agents.get(&agent_id) {
+            let ws_id = query.workspace_id.as_deref().unwrap_or("");
+            if !ws_id.is_empty() && ws_id != "__agent_home__" {
+                if let Some(config) = info
+                    .workspace_config_json
+                    .as_ref()
+                    .and_then(|json| serde_json::from_str::<WorkspaceConfig>(json).ok())
+                {
+                    if let Some(dir) = config.additional_dirs.iter().find(|d| d.id == ws_id) {
+                        if dir.access == AccessLevel::ReadOnly {
+                            return Err(ApiError::bad_request(
+                                "Workspace is read-only, cannot write files",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let (_canonical_root, abs_path, _rel_path) =
+        resolve_tree_path(&workspace_root, file_rel_path)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    // Verify it's a file (must exist for write)
+    if !abs_path.is_file() {
+        return Err(ApiError::bad_request("Path is not a file or does not exist"));
+    }
+
+    // Write content
+    std::fs::write(&abs_path, &req.content).map_err(|e| {
+        ApiError::internal(&format!("Failed to write file: {}", e))
+    })?;
+
+    Ok(Json(WriteFileResponse {
+        ok: true,
+        size: content_bytes,
+    }))
+}
+
 // ─── Routes ─────────────────────────────────────────────────────────────
 
 use axum::routing::put;
@@ -632,5 +873,9 @@ pub fn workspace_routes() -> Router<AppState> {
         .route(
             "/api/agents/{agent_id}/workspaces/tree",
             get(list_tree),
+        )
+        .route(
+            "/api/agents/{agent_id}/workspaces/file",
+            get(read_file).put(write_file),
         )
 }

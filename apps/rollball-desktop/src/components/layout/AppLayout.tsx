@@ -5,9 +5,11 @@ import { TitleBar } from "./TitleBar";
 import { AgentList } from "../agent-list/AgentList";
 import { ChatPanel } from "../chat/ChatPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
+import { FileEditorPanel } from "../editor/FileEditorPanel";
 import { GatewayBanner } from "./GatewayBanner";
 import { useGatewayStore } from "../../stores/gatewayStore";
 import { useAgentStore } from "../../stores/agentStore";
+import { useFileEditorStore } from "../../stores/fileEditorStore";
 import { SettingsPage } from "../settings/SettingsPage";
 import { HarnessPage } from "../harness/HarnessPage";
 import { useChatStore } from "../../stores/chatStore";
@@ -21,10 +23,15 @@ const MAX_SIDEBAR_WIDTH = 400;
 const DEFAULT_SIDEBAR_WIDTH = 240;
 const SIDEBAR_WIDTH_KEY = "rollball-sidebar-width";
 
-const MIN_RIGHT_WIDTH = 340;
+const MIN_RIGHT_WIDTH = 260;
 const MAX_RIGHT_WIDTH = 600;
 const DEFAULT_RIGHT_WIDTH = 340;
 const RIGHT_WIDTH_KEY = "rollball-right-width";
+
+const MIN_FILE_WIDTH = 200;
+const MAX_FILE_WIDTH = 900;
+const DEFAULT_FILE_WIDTH = 450;
+const FILE_WIDTH_KEY = "rollball-file-width";
 
 export function AppLayout() {
   const [currentView, setCurrentView] = useState<NavView>("chat");
@@ -38,6 +45,11 @@ export function AppLayout() {
     const stored = localStorage.getItem(RIGHT_WIDTH_KEY);
     return stored ? Math.min(Math.max(parseInt(stored, 10), MIN_RIGHT_WIDTH), MAX_RIGHT_WIDTH) : DEFAULT_RIGHT_WIDTH;
   });
+  const [fileWidth, setFileWidth] = useState(() => {
+    const stored = localStorage.getItem(FILE_WIDTH_KEY);
+    return stored ? Math.min(Math.max(parseInt(stored, 10), MIN_FILE_WIDTH), MAX_FILE_WIDTH) : DEFAULT_FILE_WIDTH;
+  });
+  const hasOpenFiles = useFileEditorStore((s) => s.openFiles.length > 0);
   const gatewayStatus = useGatewayStore((s) => s.status);
   const checkHealth = useGatewayStore((s) => s.checkHealth);
   const startLocalGateway = useGatewayStore((s) => s.startLocalGateway);
@@ -54,6 +66,10 @@ export function AppLayout() {
   const startXRight = useRef(0);
   const startWidthRight = useRef(DEFAULT_RIGHT_WIDTH);
   const currentWidthRefRight = useRef(DEFAULT_RIGHT_WIDTH);
+  const isResizingFile = useRef(false);
+  const startXFile = useRef(0);
+  const startWidthFile = useRef(DEFAULT_FILE_WIDTH);
+  const currentWidthRefFile = useRef(DEFAULT_FILE_WIDTH);
 
   // Check Gateway health on mount and periodically.
   // In local mode, attempt auto-start; in remote mode, just check.
@@ -165,6 +181,32 @@ export function AppLayout() {
     document.addEventListener("mouseup", handleMouseUpRight);
   }, [handleMouseMoveRight, handleMouseUpRight, rightWidth]);
 
+  // File panel resize handlers
+  const handleMouseMoveFile = useCallback((e: MouseEvent) => {
+    if (!isResizingFile.current) return;
+    const delta = e.clientX - startXFile.current;
+    const newWidth = Math.min(Math.max(startWidthFile.current - delta, MIN_FILE_WIDTH), MAX_FILE_WIDTH);
+    currentWidthRefFile.current = newWidth;
+    setFileWidth(newWidth);
+  }, []);
+
+  const handleMouseUpFile = useCallback(() => {
+    if (!isResizingFile.current) return;
+    isResizingFile.current = false;
+    document.removeEventListener("mousemove", handleMouseMoveFile);
+    document.removeEventListener("mouseup", handleMouseUpFile);
+    localStorage.setItem(FILE_WIDTH_KEY, String(currentWidthRefFile.current));
+  }, [handleMouseMoveFile]);
+
+  const handleMouseDownFile = useCallback((e: React.MouseEvent) => {
+    isResizingFile.current = true;
+    startXFile.current = e.clientX;
+    startWidthFile.current = fileWidth;
+    currentWidthRefFile.current = fileWidth;
+    document.addEventListener("mousemove", handleMouseMoveFile);
+    document.addEventListener("mouseup", handleMouseUpFile);
+  }, [handleMouseMoveFile, handleMouseUpFile, fileWidth]);
+
   return (
     <div className="flex h-full w-full flex-col">
       {/* Custom title bar */}
@@ -199,6 +241,23 @@ export function AppLayout() {
 
             {/* Chat panel — elastic */}
             <ChatPanel />
+
+            {/* File editor panel — shown when files are open */}
+            {hasOpenFiles && (
+              <>
+                {/* Resize handle between chat and file editor */}
+                <div
+                  className="group relative w-px shrink-0 cursor-col-resize select-none"
+                  onMouseDown={handleMouseDownFile}
+                  role="separator"
+                  aria-label="Resize file editor"
+                >
+                  <div className="absolute inset-y-0 left-0 w-px bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="absolute inset-y-0 -left-2 w-[7px] group-hover:bg-blue-400/30 group-active:bg-blue-400/60 transition-colors" />
+                </div>
+                <FileEditorPanel width={fileWidth} />
+              </>
+            )}
 
             {/* Results panel / Debug panel — unified tabs, collapsible, resizable */}
             {!resultsCollapsed && (

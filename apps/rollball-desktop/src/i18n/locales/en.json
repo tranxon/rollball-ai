@@ -362,6 +362,13 @@
             "searchPlaceholder": "Search files..."
         }
     },
+    "fileEditor": {
+        "emptyState": "Double-click a file in the workspace tree to open it",
+        "unsavedChanges": "Unsaved Changes",
+        "saveChanges": "This file has unsaved changes. Discard and close?",
+        "cancel": "Cancel",
+        "discard": "Discard"
+    },
     "sessionPanel": {
         "loadingSessions": "Loading sessions...",
         "noSessions": "No sessions yet",

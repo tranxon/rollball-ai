@@ -361,6 +361,13 @@
             "searchPlaceholder": "搜尋檔案..."
         }
     },
+    "fileEditor": {
+        "emptyState": "雙擊工作區目錄樹中的檔案以開啟",
+        "unsavedChanges": "未儲存的變更",
+        "saveChanges": "此檔案有未儲存的變更。放棄並關閉？",
+        "cancel": "取消",
+        "discard": "放棄"
+    },
     "sessionPanel": {
         "loadingSessions": "載入工作階段中...",
         "noSessions": "暫無工作階段",

@@ -13,6 +13,7 @@ interface FileTreeNodeProps {
   isSelected: boolean;
   onToggle: (relPath: string) => void;
   onSelect: (entry: TreeEntry, relPath: string) => void;
+  onDoubleClick?: (entry: TreeEntry, relPath: string) => void;
 }
 
 export const FileTreeNode = memo(function FileTreeNode({
@@ -24,10 +25,13 @@ export const FileTreeNode = memo(function FileTreeNode({
   isSelected,
   onToggle,
   onSelect,
+  onDoubleClick,
 }: FileTreeNodeProps) {
   const isDir = entry.type === "directory";
-  const Icon = isDir ? (isExpanded ? FolderOpen : Folder) : getFileIcon(entry.name).icon;
-  const iconColor = isDir ? "text-zinc-500 dark:text-zinc-400" : getFileIcon(entry.name).color;
+  const fileIcon = isDir ? null : getFileIcon(entry.name);
+  const Icon = isDir ? (isExpanded ? FolderOpen : Folder) : fileIcon!.icon;
+  const isDevicon = !isDir && fileIcon?.isDevicon;
+  const iconColor = isDir ? "text-zinc-500 dark:text-zinc-400" : fileIcon!.color;
 
   const handleClick = useCallback(() => {
     if (isDir) {
@@ -37,6 +41,12 @@ export const FileTreeNode = memo(function FileTreeNode({
     }
   }, [isDir, onToggle, onSelect, relPath, entry]);
 
+  const handleDoubleClick = useCallback(() => {
+    if (!isDir && onDoubleClick) {
+      onDoubleClick(entry, relPath);
+    }
+  }, [isDir, onDoubleClick, entry, relPath]);
+
   return (
     <div
       className={cn(
@@ -45,6 +55,7 @@ export const FileTreeNode = memo(function FileTreeNode({
       )}
       style={{ paddingLeft: `${depth * 16 + 4}px` }}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       title={relPath}
     >
       {/* Expand/collapse chevron */}
@@ -60,7 +71,13 @@ export const FileTreeNode = memo(function FileTreeNode({
       </span>
 
       {/* Icon */}
-      <Icon className={cn("h-3.5 w-3.5 shrink-0", iconColor)} />
+      <Icon
+        className={cn(
+          "h-3.5 w-3.5 shrink-0",
+          !isDevicon && iconColor,
+        )}
+        style={!isDevicon && iconColor.startsWith("#") ? { color: iconColor } : undefined}
+      />
 
       {/* Name */}
       <span className="ml-1 truncate text-zinc-700 dark:text-zinc-400">{entry.name}</span>

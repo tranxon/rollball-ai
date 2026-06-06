@@ -361,6 +361,13 @@
             "searchPlaceholder": "파일 검색..."
         }
     },
+    "fileEditor": {
+        "emptyState": "워크스페이스 트리에서 파일을 더블클릭하여 열기",
+        "unsavedChanges": "저장되지 않은 변경사항",
+        "saveChanges": "이 파일에 저장되지 않은 변경사항이 있습니다. 삭제하고 닫으시겠습니까?",
+        "cancel": "취소",
+        "discard": "삭제"
+    },
     "sessionPanel": {
         "loadingSessions": "세션 로딩 중...",
         "noSessions": "세션 없음",

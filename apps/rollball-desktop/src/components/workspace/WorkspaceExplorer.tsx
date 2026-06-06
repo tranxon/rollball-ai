@@ -3,8 +3,10 @@ import { Search, RefreshCw, FolderOpen } from "lucide-react";
 import { useAgentStore } from "../../stores/agentStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useChatStore } from "../../stores/chatStore";
+import { useFileEditorStore } from "../../stores/fileEditorStore";
 import { FileTree } from "./FileTree/FileTree";
 import { WorkspaceSelector } from "./WorkspaceSelector";
+import type { TreeEntry } from "../../stores/workspaceStore";
 import { useTranslation } from "../../i18n/useTranslation";
 
 export function WorkspaceExplorer() {
@@ -16,6 +18,7 @@ export function WorkspaceExplorer() {
     const fetchTree = useWorkspaceStore((s) => s.fetchTree);
     const treeRoots = useWorkspaceStore((s) => s.treeRoots);
     const sessionWorkspaceMap = useWorkspaceStore((s) => s.sessionWorkspaceMap);
+    const openFile = useFileEditorStore((s) => s.openFile);
 
     // Get the current workspace ID for the active session
     const activeSessionId = useChatStore((s) =>
@@ -32,6 +35,11 @@ export function WorkspaceExplorer() {
         invalidateTreeCache(selectedAgentId);
         fetchTree(selectedAgentId, currentWorkspaceId, "");
     }, [selectedAgentId, currentWorkspaceId, invalidateTreeCache, fetchTree]);
+
+    const handleFileDoubleClick = useCallback((_entry: TreeEntry, relPath: string) => {
+        if (!selectedAgentId) return;
+        void openFile(selectedAgentId, currentWorkspaceId, relPath);
+    }, [selectedAgentId, currentWorkspaceId, openFile]);
 
     if (!selectedAgent?.running) {
         return (
@@ -87,7 +95,7 @@ export function WorkspaceExplorer() {
 
             {/* File tree */}
             {selectedAgentId && (
-                <FileTree agentId={selectedAgentId} workspaceId={currentWorkspaceId} searchQuery={searchQuery} />
+                <FileTree agentId={selectedAgentId} workspaceId={currentWorkspaceId} searchQuery={searchQuery} onFileDoubleClick={handleFileDoubleClick} />
             )}
         </div>
     );

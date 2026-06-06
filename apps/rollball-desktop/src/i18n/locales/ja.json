@@ -361,6 +361,13 @@
             "searchPlaceholder": "ファイルを検索..."
         }
     },
+    "fileEditor": {
+        "emptyState": "ワークスペースツリーのファイルをダブルクリックして開く",
+        "unsavedChanges": "未保存の変更",
+        "saveChanges": "このファイルには未保存の変更があります。破棄して閉じますか？",
+        "cancel": "キャンセル",
+        "discard": "破棄"
+    },
     "sessionPanel": {
         "loadingSessions": "セッションを読み込み中...",
         "noSessions": "セッションはまだありません",

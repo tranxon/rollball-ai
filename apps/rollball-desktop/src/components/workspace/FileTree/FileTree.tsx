@@ -15,9 +15,10 @@ interface FileTreeProps {
     agentId: string;
     workspaceId: string;
     searchQuery: string;
+    onFileDoubleClick?: (entry: TreeEntry, relPath: string) => void;
 }
 
-export function FileTree({ agentId, workspaceId, searchQuery }: FileTreeProps) {
+export function FileTree({ agentId, workspaceId, searchQuery, onFileDoubleClick }: FileTreeProps) {
     const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set([""]));
     const [selectedPath, setSelectedPath] = useState<string | null>(null);
     const treeCache = useWorkspaceStore((s) => s.treeCache);
@@ -168,6 +169,7 @@ export function FileTree({ agentId, workspaceId, searchQuery }: FileTreeProps) {
                                 isSelected={selectedPath === node.relPath}
                                 onToggle={handleToggle}
                                 onSelect={handleSelect}
+                                onDoubleClick={onFileDoubleClick}
                             />
                         </div>
                     );
