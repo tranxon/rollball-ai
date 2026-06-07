@@ -35,9 +35,9 @@ export function SettingsPage({ initialTab = "profile" }: { initialTab?: Settings
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              "border-b-2 px-3 py-2 text-sm transition-colors",
+              "border-b px-3 py-2 text-sm transition-colors",
               activeTab === tab.id
-                ? "border-[var(--color-accent)] font-semibold text-zinc-700 dark:text-zinc-200"
+                ? "border-current font-semibold text-zinc-700 dark:text-zinc-200"
                 : "border-transparent font-normal text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300",
             )}
           >

@@ -16,6 +16,7 @@ import {
     DiRuby,
     DiPhp,
     DiMongodb,
+    DiMarkdown,
 } from "react-icons/di";
 import {
     SiTypescript,
@@ -82,8 +83,8 @@ const EXT_MAP: Record<string, IconMapping> = {
     xml: { icon: FileText, color: "#F97316" },
 
     // Markdown / Docs
-    md: { icon: FileText, color: "#6B7280" },
-    mdx: { icon: FileText, color: "#6B7280" },
+    md: { icon: DiMarkdown, color: "#1565C0", isDevicon: false },
+    mdx: { icon: DiMarkdown, color: "#1565C0", isDevicon: false },
     txt: { icon: FileText, color: "#9CA3AF" },
     pdf: { icon: FileType, color: "#EF4444" },
 

@@ -403,9 +403,9 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
               data-session-id={sessionId}
               onClick={() => handleTabClick(sessionId)}
               className={cn(
-                "group relative flex items-center gap-1 pl-2.5 pr-1.5 py-[var(--tab-py)] min-w-[60px] max-w-[160px] cursor-pointer transition-colors shrink-0 border-b-2",
+                "group relative flex items-center gap-1 pl-2.5 pr-1.5 py-[var(--tab-py)] min-w-[60px] max-w-[160px] cursor-pointer transition-colors shrink-0 border-b",
                 isActive
-                  ? "border-[var(--color-accent)] text-zinc-700 dark:text-zinc-200"
+                  ? "border-current text-zinc-700 dark:text-zinc-200"
                   : "border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300",
               )}
               title={getTitle(sessionId)}

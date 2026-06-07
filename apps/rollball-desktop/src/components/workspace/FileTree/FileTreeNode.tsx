@@ -1,5 +1,5 @@
 import { memo, useCallback } from "react";
-import { ChevronRight, Folder, FolderOpen } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { getFileIcon } from "./fileIcons";
 import type { TreeEntry } from "../../../stores/workspaceStore";
@@ -57,25 +57,15 @@ export const FileTreeNode = memo(function FileTreeNode({
       onDoubleClick={handleDoubleClick}
       title={relPath}
     >
-      {/* Chevron — rotates for expanded dirs, invisible for files */}
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-        <ChevronRight
-          className={cn(
-            "h-3.5 w-3.5 text-zinc-400 transition-transform duration-150",
-            isDir && isExpanded && "rotate-90",
-            !isDir && "invisible",
-          )}
-        />
-      </span>
-
-      {/* Icon — folder for dirs, file-type for files; keeps names aligned */}
+      {/* Icon — chevron for dirs, file-type for files; both occupy same 16px slot so names align */}
       <span className="flex h-4 w-4 shrink-0 items-center justify-center">
         {isDir ? (
-          isExpanded ? (
-            <FolderOpen className="h-3.5 w-3.5 text-zinc-400" />
-          ) : (
-            <Folder className="h-3.5 w-3.5 text-zinc-400" />
-          )
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 text-zinc-400 transition-transform duration-150",
+              isExpanded && "rotate-90",
+            )}
+          />
         ) : fileIcon ? (
           <fileIcon.icon
             className={cn(
