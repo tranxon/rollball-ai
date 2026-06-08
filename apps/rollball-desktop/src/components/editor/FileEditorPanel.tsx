@@ -306,19 +306,41 @@ export function FileEditorPanel({ width }: { width: number }) {
         );
     }, [lspLanguage, lspStatus, lspEnabled]);
 
-    // Jump to cursorLine when search result navigates to a file
+    // Jump to cursorLine when search result navigates to a file.
+    // Must handle two cases:
+    //   1. File already active → same model, navigate directly.
+    //   2. New file (loading) → model not yet switched; defer via
+    //      pendingNavigationRef so onDidChangeModel applies it.
     useEffect(() => {
         const line = activeFile?.cursorLine;
-        if (line && editorRef.current) {
-            editorRef.current.revealLineInCenter(line);
-            editorRef.current.setPosition({ lineNumber: line, column: 1 });
-            // Clear cursorLine so re-mounts don't re-jump
-            useFileEditorStore.setState((state) => ({
-                openFiles: state.openFiles.map((f) =>
-                    f.id === activeFile!.id ? { ...f, cursorLine: undefined } : f,
-                ),
-            }));
+        if (!line) return;
+
+        const ed = editorRef.current;
+        let sameModel = false;
+        if (ed) {
+            const model = ed.getModel();
+            if (model) {
+                const modelPath = model.uri.path.replace(/^\/+/, "");
+                sameModel = modelPath === activeFile!.relPath;
+            }
         }
+
+        if (sameModel) {
+            // Editor already has the right model — navigate immediately.
+            ed!.revealLineInCenter(line);
+            ed!.setPosition({ lineNumber: line, column: 1 });
+        } else {
+            // Model hasn't switched yet (or editor not mounted) —
+            // defer to onDidChangeModel for correct model.
+            pendingNavigationRef.current = { line, column: 1 };
+        }
+
+        // Clear cursorLine so re-renders don't re-jump
+        useFileEditorStore.setState((state) => ({
+            openFiles: state.openFiles.map((f) =>
+                f.id === activeFile!.id ? { ...f, cursorLine: undefined } : f,
+            ),
+        }));
     }, [activeFile?.id, activeFile?.cursorLine]);
 
     // Determine Monaco theme based on app theme
@@ -482,13 +504,20 @@ export function FileEditorPanel({ width }: { width: number }) {
         // Ctrl+Shift+F / Cmd+Shift+F — Search in files (ripgrep backend).
         // Same visual style as GoToFilePalette.
         // KeyCode.KeyF = 33 in monaco-editor 0.55.x.
-        editor.addCommand(
-            // eslint-disable-next-line no-bitwise
-            3072 | 33, // KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyF
-            () => {
+        // Use addAction (not addCommand) to ensure the keybinding overrides
+        // any built-in Monaco action that may silently consume the event.
+        editor.addAction({
+            id: "rollball.globalSearch",
+            label: "Search in Files",
+            keybindings: [
+                // eslint-disable-next-line no-bitwise
+                monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
+            ],
+            run: () => {
+                console.log("[GlobalSearch] addAction fired — opening panel");
                 setShowGlobalSearch(true);
             },
-        );
+        });
 
         // ── Override ICodeEditorService.openCodeEditor ───────────────
         // In Monaco standalone, the default ICodeEditorService.openCodeEditor()

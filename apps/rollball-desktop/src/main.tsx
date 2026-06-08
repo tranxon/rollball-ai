@@ -51,8 +51,8 @@ window.addEventListener("keydown", (e: KeyboardEvent) => {
   // case where an inner handler called preventDefault() without stopPropagation().
   if (e.defaultPrevented) return;
 
-  // Block Ctrl+<key> combinations (but not Ctrl+Alt or Ctrl+Meta)
-  if (e.ctrlKey && !e.altKey && !e.metaKey) {
+  // Block Ctrl+<key> combinations (but not Ctrl+Alt, Ctrl+Meta, or Ctrl+Shift)
+  if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
     if (BLOCKED_SHORTCUTS.has(e.key.toLowerCase())) {
       e.preventDefault();
       return;

@@ -99,6 +99,8 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
     const [totalMatches, setTotalMatches] = useState(0);
     const [truncated, setTruncated] = useState(false);
     const [searched, setSearched] = useState(false);
+    const [caseSensitive, setCaseSensitive] = useState(false);
+    const [wholeWord, setWholeWord] = useState(false);
     const [inputFocused, setInputFocused] = useState(false);
 
     const inputRef = useRef<HTMLInputElement>(null);
@@ -133,6 +135,12 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
             if (fileFilter.trim()) {
                 params.set("include", fileFilter.trim());
             }
+            if (caseSensitive) {
+                params.set("case_sensitive", "true");
+            }
+            if (wholeWord) {
+                params.set("whole_word", "true");
+            }
             params.set("max_results", "200");
             const url = `${baseUrl}/api/agents/${agentId}/workspaces/search?${params.toString()}`;
             const resp = await fetch(url);
@@ -156,7 +164,7 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
         } finally {
             setLoading(false);
         }
-    }, [agentId, workspaceId, fileFilter]);
+    }, [agentId, workspaceId, fileFilter, caseSensitive, wholeWord]);
 
     /* ── Auto-focus ──────────────────────────────────────────────────── */
 
@@ -170,6 +178,15 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
         const timer = setTimeout(() => doSearch(query), 200);
         return () => clearTimeout(timer);
     }, [query, doSearch]);
+
+    /* Re-search immediately when toggles change (if already searched) */
+
+    useEffect(() => {
+        if (query.trim() && searched) {
+            doSearch(query);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [caseSensitive, wholeWord]);
 
     /* ── Reset focus when matches change ─────────────────────────────── */
 
@@ -334,7 +351,7 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
                             style={{
                                 flexGrow: 1,
                                 height: 30,
-                                padding: "0 80px 0 28px",
+                                padding: "0 0 0 28px",
                                 backgroundColor: colors.inputBg,
                                 color: colors.inputFg,
                                 border: `1px solid ${colors.inputBorder}`,
@@ -347,16 +364,71 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
                             onFocus={() => setInputFocused(true)}
                             onBlur={() => setInputFocused(false)}
                         />
-                        {/* Result count */}
-                        {searched && !loading && (
-                            <span style={{
-                                position: "absolute", right: 8, padding: "2px 4px", borderRadius: 2,
-                                fontSize: 11, lineHeight: "normal",
-                                backgroundColor: colors.countBg, color: colors.countFg,
-                            }}>
-                                {totalMatches}
-                            </span>
-                        )}
+                        {/* Toggle buttons + count badge */}
+                        <div style={{
+                            position: "absolute", right: 4, display: "flex", alignItems: "center",
+                            height: 30, gap: 0,
+                        }}>
+                            {/* Match Case (Aa) */}
+                            <button
+                                onClick={(e) => { e.preventDefault(); setCaseSensitive((p) => !p); }}
+                                onMouseDown={(e) => e.preventDefault()}
+                                title="Match Case"
+                                style={{
+                                    width: 20, height: 20,
+                                    display: "flex", alignItems: "center", justifyContent: "center",
+                                    border: caseSensitive
+                                        ? `1px solid ${colors.inputFocusBorder}`
+                                        : "1px solid transparent",
+                                    borderRadius: 3,
+                                    backgroundColor: caseSensitive
+                                        ? isDark ? "rgba(0,127,212,0.3)" : "rgba(0,144,241,0.15)"
+                                        : "transparent",
+                                    color: caseSensitive ? colors.highlight : colors.description,
+                                    fontSize: 11, fontWeight: 600,
+                                    cursor: "pointer",
+                                    padding: 0, lineHeight: 1,
+                                    fontFamily: "inherit",
+                                }}
+                            >
+                                Aa
+                            </button>
+                            {/* Match Whole Word (ab) */}
+                            <button
+                                onClick={(e) => { e.preventDefault(); setWholeWord((p) => !p); }}
+                                onMouseDown={(e) => e.preventDefault()}
+                                title="Match Whole Word"
+                                style={{
+                                    width: 20, height: 20,
+                                    display: "flex", alignItems: "center", justifyContent: "center",
+                                    border: wholeWord
+                                        ? `1px solid ${colors.inputFocusBorder}`
+                                        : "1px solid transparent",
+                                    borderRadius: 3,
+                                    backgroundColor: wholeWord
+                                        ? isDark ? "rgba(0,127,212,0.3)" : "rgba(0,144,241,0.15)"
+                                        : "transparent",
+                                    color: wholeWord ? colors.highlight : colors.description,
+                                    fontSize: 11, fontWeight: 600,
+                                    cursor: "pointer",
+                                    padding: 0, lineHeight: 1,
+                                    fontFamily: "inherit",
+                                }}
+                            >
+                                ab
+                            </button>
+                            {/* Result count */}
+                            {searched && !loading && (
+                                <span style={{
+                                    padding: "2px 4px", borderRadius: 2,
+                                    fontSize: 11, lineHeight: "normal",
+                                    backgroundColor: colors.countBg, color: colors.countFg,
+                                    marginLeft: 4,
+                                }}>
+                                    {totalMatches}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     {/* File filter (collapsed row) */}
                     <div style={{ padding: "4px 0 2px 0" }}>

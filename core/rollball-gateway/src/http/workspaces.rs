@@ -872,6 +872,12 @@ pub struct SearchQuery {
     pub include: Option<String>,
     /// Maximum number of match results to return (default 200, max 1000)
     pub max_results: Option<usize>,
+    /// Enable case-sensitive matching (default: false = case-insensitive)
+    #[serde(default)]
+    pub case_sensitive: bool,
+    /// Match whole words only — wraps pattern in \b word boundaries
+    #[serde(default)]
+    pub whole_word: bool,
 }
 
 /// A single search match result
@@ -914,9 +920,15 @@ pub async fn search_files(
         return Err(ApiError::bad_request("Missing required 'q' parameter"));
     }
 
-    // Compile regex (case-insensitive for UX — users rarely want case-sensitive)
-    let re = regex::RegexBuilder::new(pattern)
-        .case_insensitive(true)
+    // Compile regex with user-controlled case-sensitivity and whole-word options
+    let re_pattern = if query.whole_word {
+        // Wrap in non-capturing group with word boundaries for whole-word matching
+        format!(r"\b(?:{})\b", pattern)
+    } else {
+        pattern.to_string()
+    };
+    let re = regex::RegexBuilder::new(&re_pattern)
+        .case_insensitive(!query.case_sensitive)
         .build()
         .map_err(|e| ApiError::bad_request(&format!("Invalid regex: {}", e)))?;
 
