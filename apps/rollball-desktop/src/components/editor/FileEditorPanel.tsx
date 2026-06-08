@@ -3,9 +3,11 @@ import { useTranslation } from "../../i18n/useTranslation";
 import { useFileEditorStore, type OpenFile } from "../../stores/fileEditorStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useChatStore } from "../../stores/chatStore";
+import { useAgentStore } from "../../stores/agentStore";
 import { useLspClientPool, type LspStatus } from "../../hooks/useLspClientPool";
 import { cn } from "../../lib/utils";
-import { X, Save, Loader2, FileText, CircleDot, Circle, Copy, Check } from "lucide-react";
+import { X, Save, Loader2, FileText, CircleDot, Circle, Copy, Check, MessageSquarePlus } from "lucide-react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { ScrollableTabBar } from "../common/ScrollableTabBar";
 import { TabItem } from "../common/tab";
@@ -229,6 +231,9 @@ export function FileEditorPanel({ width }: { width: number }) {
     const updateContent = useFileEditorStore((s) => s.updateContent);
     const saveFile = useFileEditorStore((s) => s.saveFile);
     const closeFile = useFileEditorStore((s) => s.closeFile);
+    const addAttachedContext = useChatStore((s) => s.addAttachedContext);
+    const getActiveSessionId = useChatStore((s) => s.getActiveSessionId);
+    const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
 
     const theme = useSettingsStore((s) => s.theme);
     const [closingFileId, setClosingFileId] = useState<string | null>(null);
@@ -238,6 +243,9 @@ export function FileEditorPanel({ width }: { width: number }) {
     const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
     const [cursor, setCursor] = useState({ line: 1, column: 1 });
     const [selectedCount, setSelectedCount] = useState(0);
+    // Selection range for "Add to Chat" floating button
+    const [selectionRange, setSelectionRange] = useState<{ startLine: number; endLine: number } | null>(null);
+    const [addToChatPos, setAddToChatPos] = useState<{ top: number; left: number } | null>(null);
     const lspProvidersRef = useRef<IDisposable | null>(null);
     const documentTrackerRef = useRef<LspDocumentTracker | null>(null);
     // Track the previous lspClient to detect reconnections
@@ -370,19 +378,37 @@ export function FileEditorPanel({ width }: { width: number }) {
     const handleEditorMount: OnMount = useCallback((editor, monaco) => {
         editorRef.current = editor;
         monacoRef.current = monaco;
-        // Track cursor position + selection
-        editor.onDidChangeCursorPosition((e) => {
-            setCursor({ line: e.position.lineNumber, column: e.position.column });
-            // Sync selection count
-            const sel = editor.getSelection();
+        // Track cursor position + selection + "Add to Chat" button position
+        editor.onDidChangeCursorSelection((e) => {
+            setCursor({ line: e.selection.positionLineNumber, column: e.selection.positionColumn });
+            // Sync selection count and "Add to Chat" button
+            const sel = e.selection;
             if (sel && !sel.isEmpty()) {
                 const model = editor.getModel();
                 if (model) {
                     setSelectedCount(model.getValueInRange(sel).length);
+                    setSelectionRange({
+                        startLine: sel.startLineNumber,
+                        endLine: sel.endLineNumber,
+                    });
+                    // Position the floating button near the end of the selection
+                    requestAnimationFrame(() => {
+                        const ed = editorRef.current;
+                        if (!ed) return;
+                        const endPos = ed.getScrolledVisiblePosition({
+                            lineNumber: sel.endLineNumber,
+                            column: sel.endColumn,
+                        });
+                        if (endPos) {
+                            setAddToChatPos({ top: endPos.top + 18, left: endPos.left + 20 });
+                        }
+                    });
                     return;
                 }
             }
             setSelectedCount(0);
+            setSelectionRange(null);
+            setAddToChatPos(null);
         });
 
         // Handle model switches — the authoritative lifecycle hook for both
@@ -814,6 +840,25 @@ export function FileEditorPanel({ width }: { width: number }) {
         };
     }, [lspClient, lspLanguage]);
 
+    /** Add selected lines to chat context */
+    const handleAddSelectionToChat = useCallback(() => {
+        const agentId = selectedAgentId;
+        if (!agentId || !activeFile || !selectionRange) return;
+        const sessionId = getActiveSessionId(agentId);
+        if (!sessionId) return;
+
+        const { startLine, endLine } = selectionRange;
+        const lineLabel = startLine === endLine ? `L${startLine}` : `L${startLine}-L${endLine}`;
+        addAttachedContext(agentId, sessionId, {
+            id: `${agentId}:${activeFile.relPath}:${startLine}:${endLine}`,
+            type: "selection",
+            name: `${activeFile.relPath.split("/").pop() || activeFile.relPath} ${lineLabel}`,
+            relPath: activeFile.relPath,
+            startLine,
+            endLine,
+        });
+    }, [selectedAgentId, activeFile, selectionRange, getActiveSessionId, addAttachedContext]);
+
     const handleEditorChange = useCallback((value: string | undefined) => {
         if (value === undefined) return;
         const currentId = useFileEditorStore.getState().activeFileId;
@@ -975,6 +1020,17 @@ export function FileEditorPanel({ width }: { width: number }) {
                                 readOnly: false,
                             }}
                         />
+                        {/* Floating "Add to Chat" button near selection end */}
+                        {selectionRange && addToChatPos && selectedAgentId && (
+                            <button
+                                onClick={handleAddSelectionToChat}
+                                className="absolute z-30 flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 shadow-sm hover:bg-blue-100 transition-colors dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300 dark:hover:bg-blue-900"
+                                style={{ top: addToChatPos.top, left: addToChatPos.left }}
+                            >
+                                <MessageSquarePlus className="h-3.5 w-3.5" />
+                                Add to Chat
+                            </button>
+                        )}
                         {activeFile.loading && (
                             <div className="absolute inset-0 flex items-center justify-center gap-2 bg-[#FAFAFA]/80 text-xs text-zinc-400 dark:bg-zinc-900/80">
                                 <Loader2 className="h-4 w-4 animate-spin" />

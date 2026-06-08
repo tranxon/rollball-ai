@@ -1,5 +1,5 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { Search, RefreshCw, FolderOpen, FileText, ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { RefreshCw, FolderOpen, FilePlus, FolderPlus } from "lucide-react";
 import { useAgentStore } from "../../stores/agentStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useChatStore } from "../../stores/chatStore";
@@ -9,22 +9,6 @@ import { WorkspaceSelector } from "./WorkspaceSelector";
 import type { TreeEntry } from "../../stores/workspaceStore";
 import { useTranslation } from "../../i18n/useTranslation";
 
-const PAGE_SIZE = 15;
-
-/** Abbreviate a file path from the left: "…/parent/filename.ext" */
-function abbreviatePath(path: string): string {
-    const maxLen = 38;
-    if (path.length <= maxLen) return path;
-    const parts = path.split("/");
-    const filename = parts[parts.length - 1];
-    // Try progressively shorter tails until within maxLen
-    for (let i = parts.length - 2; i >= 1; i--) {
-        const abbreviated = `…/${parts.slice(i).join("/")}`;
-        if (abbreviated.length <= maxLen) return abbreviated;
-    }
-    return `…/${filename}`;
-}
-
 export function WorkspaceExplorer() {
     const { t } = useTranslation();
     const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
@@ -32,8 +16,13 @@ export function WorkspaceExplorer() {
     const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
     const invalidateTreeCache = useWorkspaceStore((s) => s.invalidateTreeCache);
     const fetchTree = useWorkspaceStore((s) => s.fetchTree);
-    const treeCache = useWorkspaceStore((s) => s.treeCache);
     const sessionWorkspaceMap = useWorkspaceStore((s) => s.sessionWorkspaceMap);
+    const createFile = useWorkspaceStore((s) => s.createFile);
+    const createDir = useWorkspaceStore((s) => s.createDir);
+    const deleteFile = useWorkspaceStore((s) => s.deleteFile);
+    const deleteDir = useWorkspaceStore((s) => s.deleteDir);
+    const copyItem = useWorkspaceStore((s) => s.copyItem);
+    const setCopiedEntry = useWorkspaceStore((s) => s.setCopiedEntry);
     const openFile = useFileEditorStore((s) => s.openFile);
 
     // Get the current workspace ID for the active session
@@ -44,90 +33,16 @@ export function WorkspaceExplorer() {
         ? (sessionWorkspaceMap[activeSessionId] ?? "__agent_home__")
         : "__agent_home__";
 
-    const ck = `${selectedAgentId}:${currentWorkspaceId}`;
-    const [searchQuery, setSearchQuery] = useState("");
-    const [searchFocused, setSearchFocused] = useState(false);
-    const [currentPage, setCurrentPage] = useState(1);
-    const inputRef = useRef<HTMLInputElement>(null);
-    const dropdownRef = useRef<HTMLDivElement>(null);
+    const [newItemPrompt, setNewItemPrompt] = useState<{ type: "file" | "dir"; parentPath: string } | null>(null);
+    const [newItemName, setNewItemName] = useState("");
+    const promptInputRef = useRef<HTMLInputElement | null>(null);
 
-    // Reset page when search query changes
+    // Auto-focus the prompt input when it appears
     useEffect(() => {
-        setCurrentPage(1);
-    }, [searchQuery]);
-
-    const showDropdown = searchFocused && searchQuery.length > 0;
-
-    // Auto-fetch unfetched directories when searching to broaden match scope
-    useEffect(() => {
-        if (!searchQuery || !selectedAgentId) return;
-        const doFetch = () => {
-            const toFetch: string[] = [];
-            for (const [key, entries] of Object.entries(treeCache)) {
-                if (!key.startsWith(`${ck}:`)) continue;
-                for (const entry of entries) {
-                    if (entry.type !== "directory") continue;
-                    const dirPath = key.slice(ck.length + 1);
-                    const childPath = dirPath ? `${dirPath}/${entry.name}` : entry.name;
-                    if (!treeCache[`${ck}:${childPath}`]) {
-                        toFetch.push(childPath);
-                    }
-                }
-            }
-            for (const p of toFetch.slice(0, 20)) {
-                fetchTree(selectedAgentId, currentWorkspaceId, p);
-            }
-        };
-        doFetch();
-        const timer = setInterval(doFetch, 300);
-        return () => clearInterval(timer);
-    }, [searchQuery, ck, treeCache, selectedAgentId, currentWorkspaceId, fetchTree]);
-
-    // Collect matching files from cached tree entries
-    const matchingFiles = useMemo(() => {
-        if (!searchQuery) return [];
-        const q = searchQuery.toLowerCase();
-        const qParts = q.split(/[\s\/\\]+/).filter(Boolean);
-        const results: { name: string; relPath: string; dir: string; score: number }[] = [];
-        const seen = new Set<string>();
-
-        for (const [key, entries] of Object.entries(treeCache)) {
-            if (!key.startsWith(`${ck}:`)) continue;
-            const dirPath = key.slice(ck.length + 1);
-
-            for (const entry of entries) {
-                if (entry.type !== "file") continue;
-                const fullPath = dirPath ? `${dirPath}/${entry.name}` : entry.name;
-                if (seen.has(fullPath)) continue;
-                seen.add(fullPath);
-
-                const nameLower = entry.name.toLowerCase();
-                const pathLower = fullPath.toLowerCase();
-
-                let score = 0;
-                if (qParts.every((p) => nameLower.includes(p))) {
-                    score = nameLower === q ? 3 : nameLower.startsWith(q) ? 2 : 1;
-                } else if (qParts.every((p) => pathLower.includes(p))) {
-                    score = 0.5;
-                } else {
-                    continue;
-                }
-
-                results.push({ name: entry.name, relPath: fullPath, dir: dirPath, score });
-            }
+        if (newItemPrompt && promptInputRef.current) {
+            promptInputRef.current.focus();
         }
-
-        results.sort((a, b) => b.score - a.score || a.relPath.length - b.relPath.length);
-        return results;
-    }, [searchQuery, treeCache, ck]);
-
-    const totalPages = Math.max(1, Math.ceil(matchingFiles.length / PAGE_SIZE));
-    const currentPageFiles = matchingFiles.slice(
-        (currentPage - 1) * PAGE_SIZE,
-        currentPage * PAGE_SIZE,
-    );
-    const start = matchingFiles.length > 0 ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
-    const end = Math.min(currentPage * PAGE_SIZE, matchingFiles.length);
+    }, [newItemPrompt]);
 
     const handleRefresh = useCallback(() => {
         if (!selectedAgentId) return;
@@ -135,17 +50,122 @@ export function WorkspaceExplorer() {
         fetchTree(selectedAgentId, currentWorkspaceId, "");
     }, [selectedAgentId, currentWorkspaceId, invalidateTreeCache, fetchTree]);
 
+    const handleNewFile = useCallback(() => {
+        console.log("[WorkspaceExplorer] handleNewFile clicked, agent:", selectedAgentId, "workspace:", currentWorkspaceId);
+        setNewItemName("");
+        setNewItemPrompt({ type: "file", parentPath: "" });
+    }, [selectedAgentId, currentWorkspaceId]);
+
+    const handleNewFolder = useCallback(() => {
+        console.log("[WorkspaceExplorer] handleNewFolder clicked");
+        setNewItemName("");
+        setNewItemPrompt({ type: "dir", parentPath: "" });
+    }, []);
+
+    const cancelPrompt = useCallback(() => {
+        setNewItemPrompt(null);
+        setNewItemName("");
+    }, []);
+
+    const handlePromptSubmit = useCallback(async () => {
+        if (!selectedAgentId || !newItemPrompt) return;
+        const name = newItemName.trim();
+        if (!name) return;
+
+        const relPath = newItemPrompt.parentPath ? `${newItemPrompt.parentPath}/${name}` : name;
+
+        console.log("[WorkspaceExplorer] Creating", newItemPrompt.type, "at", relPath, "workspace:", currentWorkspaceId);
+
+        let ok: boolean;
+        if (newItemPrompt.type === "file") {
+            ok = await createFile(selectedAgentId, currentWorkspaceId, relPath);
+        } else {
+            ok = await createDir(selectedAgentId, currentWorkspaceId, relPath);
+        }
+
+        console.log("[WorkspaceExplorer] Create result:", ok);
+
+        if (ok) {
+            // Re-fetch only the parent directory — fetchTree overwrites its cache entry,
+            // so we don't need to invalidate everything (which would blank the tree).
+            if (newItemPrompt.parentPath) {
+                fetchTree(selectedAgentId, currentWorkspaceId, newItemPrompt.parentPath);
+            } else {
+                fetchTree(selectedAgentId, currentWorkspaceId, "");
+            }
+        }
+
+        setNewItemPrompt(null);
+        setNewItemName("");
+    }, [selectedAgentId, currentWorkspaceId, newItemPrompt, newItemName, createFile, createDir, fetchTree]);
+
+    const handlePromptKeyDown = useCallback((e: React.KeyboardEvent) => {
+        console.log("[WorkspaceExplorer] keyDown:", e.key, "newItemName:", newItemName);
+        if (e.key === "Escape") {
+            cancelPrompt();
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            handlePromptSubmit();
+        }
+    }, [handlePromptSubmit, cancelPrompt, newItemName]);
+
     const handleFileDoubleClick = useCallback((_entry: TreeEntry, relPath: string) => {
         if (!selectedAgentId) return;
         void openFile(selectedAgentId, currentWorkspaceId, relPath);
     }, [selectedAgentId, currentWorkspaceId, openFile]);
 
-    const handleSearchSelect = useCallback((relPath: string) => {
+    /** Called from FileTree context menu to create item at a specific path */
+    const handleContextNewItem = useCallback((type: "file" | "dir", parentPath: string) => {
+        setNewItemName("");
+        setNewItemPrompt({ type, parentPath });
+    }, []);
+
+    const handleDelete = useCallback(async (relPath: string, isDir: boolean) => {
         if (!selectedAgentId) return;
-        void openFile(selectedAgentId, currentWorkspaceId, relPath);
-        setSearchQuery("");
-        setSearchFocused(false);
-    }, [selectedAgentId, currentWorkspaceId, openFile]);
+        const ok = isDir
+            ? await deleteDir(selectedAgentId, currentWorkspaceId, relPath)
+            : await deleteFile(selectedAgentId, currentWorkspaceId, relPath);
+        if (ok) {
+            // Re-fetch parent directory
+            const parentPath = relPath.substring(0, relPath.lastIndexOf("/"));
+            if (parentPath) {
+                fetchTree(selectedAgentId, currentWorkspaceId, parentPath);
+            } else {
+                fetchTree(selectedAgentId, currentWorkspaceId, "");
+            }
+        }
+    }, [selectedAgentId, currentWorkspaceId, deleteFile, deleteDir, fetchTree]);
+
+    const handleCopy = useCallback((relPath: string, isDir: boolean) => {
+        if (!selectedAgentId) return;
+        setCopiedEntry({
+            agentId: selectedAgentId,
+            workspaceId: currentWorkspaceId,
+            path: relPath,
+            type: isDir ? "directory" : "file",
+        });
+    }, [selectedAgentId, currentWorkspaceId, setCopiedEntry]);
+
+    const handlePaste = useCallback(async (parentPath: string) => {
+        if (!selectedAgentId) return;
+        const entry = useWorkspaceStore.getState().copiedEntry;
+        if (!entry || entry.agentId !== selectedAgentId || entry.workspaceId !== currentWorkspaceId) return;
+
+        const name = entry.path.split("/").pop() || entry.path;
+        // Generate a unique name to avoid "Destination already exists":
+        // "aaa.txt" → "aaa copy.txt", "bbbb" → "bbbb copy"
+        const dotIdx = name.lastIndexOf(".");
+        const uniqueName = dotIdx > 0
+            ? `${name.slice(0, dotIdx)} copy${name.slice(dotIdx)}`
+            : `${name} copy`;
+        const dest = parentPath ? `${parentPath}/${uniqueName}` : uniqueName;
+
+        const ok = await copyItem(selectedAgentId, currentWorkspaceId, entry.path, dest);
+        setCopiedEntry(null); // clear clipboard after paste (one-shot)
+        if (ok) {
+            fetchTree(selectedAgentId, currentWorkspaceId, parentPath || "");
+        }
+    }, [selectedAgentId, currentWorkspaceId, copyItem, fetchTree, setCopiedEntry]);
 
     if (!selectedAgent?.running) {
         return (
@@ -158,112 +178,64 @@ export function WorkspaceExplorer() {
 
     return (
         <div className="flex flex-1 flex-col overflow-hidden">
-            {/* Workspace selector + root name */}
-            <div className="flex items-center gap-1.5 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
+            {/* Workspace selector + action buttons */}
+            <div className="flex items-center gap-0.5 border-b border-zinc-200 px-1.5 py-1.5 dark:border-zinc-800">
                 <WorkspaceSelector dropDirection="down" />
-                <button
-                    onClick={handleRefresh}
-                    className="ml-auto rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-                    title={t("workspace.explorer.refresh")}
-                >
-                    <RefreshCw className="h-3 w-3" />
-                </button>
-            </div>
-
-            {/* Search box with dropdown */}
-            <div className="relative border-b border-zinc-200 dark:border-zinc-800">
-                <div className="flex items-center gap-1.5 px-3 py-1">
-                    <Search className="h-3 w-3 shrink-0 text-zinc-400" />
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onFocus={() => setSearchFocused(true)}
-                        onBlur={() => setTimeout(() => setSearchFocused(false), 200)}
-                        placeholder={t("workspace.explorer.searchPlaceholder")}
-                        className="flex-1 bg-transparent text-xs text-zinc-700 outline-none placeholder:text-zinc-400 dark:text-zinc-400 dark:placeholder:text-zinc-500"
-                    />
-                    {searchQuery && (
-                        <button
-                            onClick={() => setSearchQuery("")}
-                            className="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-                        >
-                            ✕
-                        </button>
-                    )}
-                </div>
-
-                {/* Dropdown results */}
-                {showDropdown && (
-                    <div
-                        ref={dropdownRef}
-                        className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
+                <div className="ml-auto flex items-center gap-0.5">
+                    <button
+                        onClick={handleNewFile}
+                        className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-blue-600 dark:hover:bg-zinc-800 dark:hover:text-blue-400"
+                        title={t("workspace.explorer.newFile")}
                     >
-                        {/* Header with count */}
-                        <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                            {matchingFiles.length > 0 ? (
-                                <span>Showing {start}&ndash;{end} of {matchingFiles.length}</span>
-                            ) : (
-                                <span>No matching files</span>
-                            )}
-                        </div>
-
-                        {/* Items */}
-                        <div className="max-h-80 overflow-y-auto py-1">
-                            {currentPageFiles.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
-                                    No matching files
-                                </div>
-                            ) : (
-                                currentPageFiles.map((f) => (
-                                    <div
-                                        key={f.relPath}
-                                        onMouseDown={(e) => e.preventDefault()}
-                                        onClick={() => handleSearchSelect(f.relPath)}
-                                        className="group flex items-center gap-2 px-3 py-1.5 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-700/50"
-                                    >
-                                        <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-                                        <span className="shrink-0 text-xs text-zinc-700 dark:text-zinc-300">
-                                            {f.name}
-                                        </span>
-                                        <span className="min-w-0 truncate text-[10px] text-zinc-400 dark:text-zinc-500 ml-3">
-                                            {abbreviatePath(f.dir)}
-                                        </span>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-
-                        {/* Pagination */}
-                        {totalPages > 1 && (
-                            <div className="flex items-center justify-between border-t border-zinc-200 px-1 py-1.5 dark:border-zinc-700">
-                                <button
-                                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                                    disabled={currentPage <= 1}
-                                    className="inline-flex items-center rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                                >
-                                    <ChevronLeft className="h-3.5 w-3.5" />
-                                </button>
-                                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                                    Page {currentPage} of {totalPages}
-                                </span>
-                                <button
-                                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                                    disabled={currentPage >= totalPages}
-                                    className="inline-flex items-center rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                                >
-                                    <ChevronRight className="h-3.5 w-3.5" />
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                )}
+                        <FilePlus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                        onClick={handleNewFolder}
+                        className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-yellow-600 dark:hover:bg-zinc-800 dark:hover:text-yellow-400"
+                        title={t("workspace.explorer.newFolder")}
+                    >
+                        <FolderPlus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                        onClick={handleRefresh}
+                        className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                        title={t("workspace.explorer.refresh")}
+                    >
+                        <RefreshCw className="h-3 w-3" />
+                    </button>
+                </div>
             </div>
+
+            {/* Inline name prompt for new file/directory */}
+            {newItemPrompt && (
+                <div className="flex items-center gap-1.5 border-b border-blue-200 bg-blue-50 px-3 py-1.5 dark:border-blue-800 dark:bg-blue-950">
+                    <span className="text-[10px] font-medium text-blue-600 shrink-0 dark:text-blue-400">
+                        {newItemPrompt.type === "file" ? "New file:" : "New folder:"}
+                    </span>
+                    <input
+                        ref={promptInputRef}
+                        type="text"
+                        value={newItemName}
+                        onChange={(e) => setNewItemName(e.target.value)}
+                        onKeyDown={handlePromptKeyDown}
+                        placeholder={newItemPrompt.type === "file" ? "filename.ext" : "folder-name"}
+                        className="flex-1 bg-transparent text-xs text-zinc-700 outline-none placeholder:text-zinc-400 dark:text-zinc-300 dark:placeholder:text-zinc-500"
+                    />
+                </div>
+            )}
 
             {/* File tree (normal mode, no search filtering) */}
             {selectedAgentId && activeSessionId && (
-                <FileTree agentId={selectedAgentId} workspaceId={currentWorkspaceId} sessionId={activeSessionId} onFileDoubleClick={handleFileDoubleClick} />
+                <FileTree
+                    agentId={selectedAgentId}
+                    workspaceId={currentWorkspaceId}
+                    sessionId={activeSessionId}
+                    onFileDoubleClick={handleFileDoubleClick}
+                    onContextNewItem={handleContextNewItem}
+                    onDelete={handleDelete}
+                    onCopy={handleCopy}
+                    onPaste={handlePaste}
+                />
             )}
         </div>
     );

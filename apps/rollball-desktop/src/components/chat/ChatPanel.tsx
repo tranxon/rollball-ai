@@ -50,6 +50,7 @@ import { WorkspaceSelector } from "../workspace/WorkspaceSelector";
 import { UserAvatar } from "../common/UserAvatar";
 import { AgentAvatar } from "../common/AgentAvatar";
 import { DocumentChip } from "./DocumentChip";
+import { AttachedContextChips } from "./AttachedContextChips";
 import { ToolbarDropdownTrigger } from "../common/ToolbarDropdown";
 
 // Module-level: persists across ChatPanel mount/unmount cycles
@@ -1228,6 +1229,8 @@ export function ChatPanel() {
               ))}
             </div>
           )}
+          {/* Attached context chips (from right-click "Add to Chat") */}
+          <AttachedContextChips />
           {/* Textarea area — borderless, transparent background */}
           <textarea
             value={inputValue}

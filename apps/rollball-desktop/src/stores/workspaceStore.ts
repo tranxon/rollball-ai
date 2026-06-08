@@ -79,6 +79,25 @@ interface WorkspaceState {
   // Invalidate tree cache for an agent (e.g. when workspace changes)
   invalidateTreeCache: (agentId: string) => void;
 
+  // Create a new empty file in the workspace
+  createFile: (agentId: string, workspaceId: string, path: string) => Promise<boolean>;
+
+  // Create a new directory in the workspace
+  createDir: (agentId: string, workspaceId: string, path: string) => Promise<boolean>;
+
+  // Delete a file from the workspace
+  deleteFile: (agentId: string, workspaceId: string, path: string) => Promise<boolean>;
+
+  // Delete a directory from the workspace (recursive)
+  deleteDir: (agentId: string, workspaceId: string, path: string) => Promise<boolean>;
+
+  // Copy a file or directory within the workspace
+  copyItem: (agentId: string, workspaceId: string, source: string, dest: string) => Promise<boolean>;
+
+  // Clipboard for copy/paste — stores the source entry to be pasted
+  copiedEntry: { agentId: string; workspaceId: string; path: string; type: "file" | "directory" } | null;
+  setCopiedEntry: (entry: { agentId: string; workspaceId: string; path: string; type: "file" | "directory" } | null) => void;
+
   // Clear state on agent switch
   reset: () => void;
 }
@@ -275,8 +294,139 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     });
   },
 
+  createFile: async (agentId: string, workspaceId: string, path: string) => {
+    try {
+      const baseUrl = getGatewayUrl();
+      const params = new URLSearchParams();
+      if (workspaceId && workspaceId !== "__agent_home__") {
+        params.set("workspace_id", workspaceId);
+      }
+      const qs = params.toString();
+      const resp = await fetch(`${baseUrl}/api/agents/${agentId}/workspaces/file${qs ? `?${qs}` : ""}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "<unreadable>");
+        console.error("[WorkspaceStore] createFile failed:", resp.status, resp.statusText, body);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error("[WorkspaceStore] createFile error:", e);
+      return false;
+    }
+  },
+
+  createDir: async (agentId: string, workspaceId: string, path: string) => {
+    try {
+      const baseUrl = getGatewayUrl();
+      const params = new URLSearchParams();
+      if (workspaceId && workspaceId !== "__agent_home__") {
+        params.set("workspace_id", workspaceId);
+      }
+      const qs = params.toString();
+      const resp = await fetch(`${baseUrl}/api/agents/${agentId}/workspaces/dir${qs ? `?${qs}` : ""}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "<unreadable>");
+        console.error("[WorkspaceStore] createDir failed:", resp.status, resp.statusText, body);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error("[WorkspaceStore] createDir error:", e);
+      return false;
+    }
+  },
+
+  deleteFile: async (agentId: string, workspaceId: string, path: string) => {
+    try {
+      const baseUrl = getGatewayUrl();
+      const params = new URLSearchParams();
+      if (workspaceId && workspaceId !== "__agent_home__") {
+        params.set("workspace_id", workspaceId);
+      }
+      const qs = params.toString();
+      const resp = await fetch(`${baseUrl}/api/agents/${agentId}/workspaces/file${qs ? `?${qs}` : ""}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "<unreadable>");
+        console.error("[WorkspaceStore] deleteFile failed:", resp.status, resp.statusText, body);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error("[WorkspaceStore] deleteFile error:", e);
+      return false;
+    }
+  },
+
+  deleteDir: async (agentId: string, workspaceId: string, path: string) => {
+    try {
+      const baseUrl = getGatewayUrl();
+      const params = new URLSearchParams();
+      if (workspaceId && workspaceId !== "__agent_home__") {
+        params.set("workspace_id", workspaceId);
+      }
+      const qs = params.toString();
+      const resp = await fetch(`${baseUrl}/api/agents/${agentId}/workspaces/dir${qs ? `?${qs}` : ""}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "<unreadable>");
+        console.error("[WorkspaceStore] deleteDir failed:", resp.status, resp.statusText, body);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error("[WorkspaceStore] deleteDir error:", e);
+      return false;
+    }
+  },
+
+  copyItem: async (agentId: string, workspaceId: string, source: string, dest: string) => {
+    try {
+      const baseUrl = getGatewayUrl();
+      const params = new URLSearchParams();
+      if (workspaceId && workspaceId !== "__agent_home__") {
+        params.set("workspace_id", workspaceId);
+      }
+      const qs = params.toString();
+      const resp = await fetch(`${baseUrl}/api/agents/${agentId}/workspaces/copy${qs ? `?${qs}` : ""}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source, dest }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "<unreadable>");
+        console.error("[WorkspaceStore] copyItem failed:", resp.status, resp.statusText, body);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error("[WorkspaceStore] copyItem error:", e);
+      return false;
+    }
+  },
+
+  copiedEntry: null,
+
+  setCopiedEntry: (entry) => {
+    set({ copiedEntry: entry });
+  },
+
   reset: () => {
-    set({ workspaces: [], sessionWorkspaceMap: {}, loading: false, treeCache: {}, treeRoots: {}, treeLoadingPaths: new Set() });
+    set({ workspaces: [], sessionWorkspaceMap: {}, loading: false, treeCache: {}, treeRoots: {}, treeLoadingPaths: new Set(), copiedEntry: null });
   },
 }));
 

@@ -2415,6 +2415,12 @@ async fn process_gateway_recv(
                             .get("content_parts")
                             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
+                    // Extract attached_context (files/selections added by user)
+                    let attached_context: Option<Vec<rollball_core::protocol::AttachedContextItem>> =
+                        params
+                            .get("attached_context")
+                            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
                     // Pure routing: send to session's inbound channel, immediately return
                     if let Err(e) = session_manager.send_to_session(
                         &target_session_id,
@@ -2424,6 +2430,7 @@ async fn process_gateway_recv(
                             skill_instructions,
                             documents,
                             content_parts,
+                            attached_context,
                         },
                     ) {
                         tracing::error!(

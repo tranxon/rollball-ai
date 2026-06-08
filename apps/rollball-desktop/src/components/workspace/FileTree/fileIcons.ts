@@ -1,221 +1,177 @@
-import type { ComponentType } from "react";
-import {
-    DiRust,
-    DiJavascript,
-    DiHtml5,
-    DiCss3Full,
-    DiSass,
-    DiPython,
-    DiGo,
-    DiDocker,
-    DiGit,
-    DiNodejsSmall,
-    DiReact,
-    DiJava,
-    DiSwift,
-    DiRuby,
-    DiPhp,
-    DiMongodb,
-    DiMarkdown,
-} from "react-icons/di";
-import {
-    SiTypescript,
-    SiTailwindcss,
-    SiWebpack,
-    SiVite,
-    SiEslint,
-    SiPrettier,
-    SiVuedotjs,
-} from "react-icons/si";
-import {
-    File,
-    FileText,
-    FileJson,
-    FileType,
-    FileImage,
-    FileVideo,
-    FileAudio,
-    FileArchive,
-    FileSpreadsheet,
-    Package,
-    Settings,
-    Shield,
-    Database,
-    Terminal,
-    Lock,
-} from "lucide-react";
+/**
+ * File icon mappings — uses Seti UI icons (MIT license)
+ * Source: https://github.com/jesseweed/seti-ui
+ *
+ * All colors are controlled by the SetiIcon component's theme-aware color maps
+ * (DARK_COLORS / LIGHT_COLORS). The `color` prop is only used for rare overrides.
+ */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type IconComponent = ComponentType<any>;
-
-interface IconMapping {
-    icon: IconComponent;
-    color: string; // CSS color or Tailwind class
-    isDevicon?: boolean; // true = icon has built-in brand color, ignore `color` class
+interface FileIconInfo {
+    /** Seti icon name — must match a key in SETI_ICONS */
+    name: string;
 }
 
-/** Map file extension to icon and color */
-const EXT_MAP: Record<string, IconMapping> = {
+/* ─── Extension → icon mapping ─────────────────────────────────────── */
+
+const EXT_MAP: Record<string, FileIconInfo> = {
     // Rust
-    rs: { icon: DiRust, color: "", isDevicon: true },
-    toml: { icon: Settings, color: "#9CA3AF" },
-    lock: { icon: Lock, color: "#9CA3AF" },
+    rs: { name: "rust" },
+    toml: { name: "settings" },
+    lock: { name: "lock" },
 
     // TypeScript / JavaScript
-    ts: { icon: SiTypescript, color: "", isDevicon: true },
-    tsx: { icon: DiReact, color: "", isDevicon: true },
-    js: { icon: DiJavascript, color: "", isDevicon: true },
-    jsx: { icon: DiReact, color: "", isDevicon: true },
-    mjs: { icon: DiJavascript, color: "", isDevicon: true },
-    cjs: { icon: DiJavascript, color: "", isDevicon: true },
+    ts: { name: "typescript" },
+    tsx: { name: "react" },
+    js: { name: "javascript" },
+    jsx: { name: "react" },
+    mjs: { name: "javascript" },
+    cjs: { name: "javascript" },
 
     // Web
-    html: { icon: DiHtml5, color: "", isDevicon: true },
-    css: { icon: DiCss3Full, color: "", isDevicon: true },
-    scss: { icon: DiSass, color: "", isDevicon: true },
-    less: { icon: DiCss3Full, color: "", isDevicon: true },
-    svg: { icon: FileImage, color: "#F59E0B" },
+    html: { name: "html" },
+    css: { name: "css" },
+    scss: { name: "sass" },
+    less: { name: "less" },
+    svg: { name: "svg" },
 
     // Data / Config
-    json: { icon: FileJson, color: "#EAB308" },
-    yaml: { icon: FileJson, color: "#EF4444" },
-    yml: { icon: FileJson, color: "#EF4444" },
-    xml: { icon: FileText, color: "#F97316" },
+    json: { name: "json" },
+    yaml: { name: "yml" },
+    yml: { name: "yml" },
+    xml: { name: "xml" },
 
     // Markdown / Docs
-    md: { icon: DiMarkdown, color: "#1565C0", isDevicon: false },
-    mdx: { icon: DiMarkdown, color: "#1565C0", isDevicon: false },
-    txt: { icon: FileText, color: "#9CA3AF" },
-    pdf: { icon: FileType, color: "#EF4444" },
+    md: { name: "markdown" },
+    mdx: { name: "markdown" },
+    txt: { name: "default" },
+    pdf: { name: "pdf" },
 
     // Shell
-    sh: { icon: Terminal, color: "#22C55E" },
-    bash: { icon: Terminal, color: "#22C55E" },
-    zsh: { icon: Terminal, color: "#22C55E" },
-    fish: { icon: Terminal, color: "#22C55E" },
-    ps1: { icon: Terminal, color: "#3B82F6" },
-    bat: { icon: Terminal, color: "#6B7280" },
-    cmd: { icon: Terminal, color: "#6B7280" },
+    sh: { name: "shell" },
+    bash: { name: "shell" },
+    zsh: { name: "shell" },
+    fish: { name: "shell" },
+    ps1: { name: "powershell" },
+    bat: { name: "windows" },
+    cmd: { name: "windows" },
 
     // Python
-    py: { icon: DiPython, color: "", isDevicon: true },
-    pyi: { icon: DiPython, color: "", isDevicon: true },
+    py: { name: "python" },
+    pyi: { name: "python" },
 
     // Go
-    go: { icon: DiGo, color: "", isDevicon: true },
-    mod: { icon: Package, color: "#06B6D4" },
-    sum: { icon: Lock, color: "#9CA3AF" },
+    go: { name: "go" },
+    mod: { name: "go2" },
+    sum: { name: "lock" },
 
     // Java / JVM
-    java: { icon: DiJava, color: "", isDevicon: true },
-    kt: { icon: FileText, color: "#7C3AED" },
-    scala: { icon: FileText, color: "#EF4444" },
+    java: { name: "java" },
+    kt: { name: "kotlin" },
+    scala: { name: "java" },
 
     // Swift
-    swift: { icon: DiSwift, color: "", isDevicon: true },
+    swift: { name: "swift" },
 
     // Ruby
-    rb: { icon: DiRuby, color: "", isDevicon: true },
+    rb: { name: "ruby" },
 
     // PHP
-    php: { icon: DiPhp, color: "", isDevicon: true },
+    php: { name: "php" },
 
     // Images
-    png: { icon: FileImage, color: "#A855F7" },
-    jpg: { icon: FileImage, color: "#A855F7" },
-    jpeg: { icon: FileImage, color: "#A855F7" },
-    gif: { icon: FileImage, color: "#A855F7" },
-    webp: { icon: FileImage, color: "#A855F7" },
-    ico: { icon: FileImage, color: "#A855F7" },
-    bmp: { icon: FileImage, color: "#A855F7" },
+    png: { name: "image" },
+    jpg: { name: "image" },
+    jpeg: { name: "image" },
+    gif: { name: "image" },
+    webp: { name: "image" },
+    ico: { name: "favicon" },
+    bmp: { name: "image" },
 
     // Media
-    mp4: { icon: FileVideo, color: "#EC4899" },
-    mov: { icon: FileVideo, color: "#EC4899" },
-    avi: { icon: FileVideo, color: "#EC4899" },
-    webm: { icon: FileVideo, color: "#EC4899" },
-    mp3: { icon: FileAudio, color: "#EC4899" },
-    wav: { icon: FileAudio, color: "#EC4899" },
-    flac: { icon: FileAudio, color: "#EC4899" },
+    mp4: { name: "video" },
+    mov: { name: "video" },
+    avi: { name: "video" },
+    webm: { name: "video" },
+    mp3: { name: "audio" },
+    wav: { name: "audio" },
+    flac: { name: "audio" },
 
     // Archives
-    zip: { icon: FileArchive, color: "#EAB308" },
-    tar: { icon: FileArchive, color: "#EAB308" },
-    gz: { icon: FileArchive, color: "#EAB308" },
-    rar: { icon: FileArchive, color: "#EAB308" },
-    "7z": { icon: FileArchive, color: "#EAB308" },
+    zip: { name: "zip" },
+    tar: { name: "zip" },
+    gz: { name: "zip" },
+    rar: { name: "zip" },
+    "7z": { name: "zip" },
 
     // Spreadsheets
-    csv: { icon: FileSpreadsheet, color: "#22C55E" },
-    xlsx: { icon: FileSpreadsheet, color: "#22C55E" },
-    xls: { icon: FileSpreadsheet, color: "#22C55E" },
+    csv: { name: "csv" },
+    xlsx: { name: "xls" },
+    xls: { name: "xls" },
 
     // Database
-    db: { icon: Database, color: "#6B7280" },
-    sqlite: { icon: Database, color: "#6B7280" },
-    sql: { icon: DiMongodb, color: "#22C55E" },
+    db: { name: "db" },
+    sqlite: { name: "db" },
+    sql: { name: "db" },
 
     // Security
-    pem: { icon: Shield, color: "#EF4444" },
-    key: { icon: Shield, color: "#EF4444" },
-    cert: { icon: Shield, color: "#EF4444" },
-    crt: { icon: Shield, color: "#EF4444" },
+    pem: { name: "lock" },
+    key: { name: "lock" },
+    cert: { name: "lock" },
+    crt: { name: "lock" },
 
     // C/C++
-    c: { icon: FileText, color: "#3B82F6" },
-    h: { icon: FileText, color: "#3B82F6" },
-    cpp: { icon: FileText, color: "#6366F1" },
-    hpp: { icon: FileText, color: "#6366F1" },
+    c: { name: "c" },
+    h: { name: "c" },
+    cpp: { name: "cpp" },
+    hpp: { name: "cpp" },
 
     // C#
-    cs: { icon: FileText, color: "#22C55E" },
+    cs: { name: "c-sharp" },
+
+    // F#
+    fs: { name: "f-sharp" },
 
     // VCS
-    gitignore: { icon: DiGit, color: "", isDevicon: true },
-    gitattributes: { icon: DiGit, color: "", isDevicon: true },
-
-    // Package managers
-    lockfile: { icon: Lock, color: "#9CA3AF" },
+    gitignore: { name: "git_ignore" },
+    gitattributes: { name: "git" },
 };
 
-/** Filename-only matches (no extension) */
-const NAME_MAP: Record<string, IconMapping> = {
-    Dockerfile: { icon: DiDocker, color: "", isDevicon: true },
-    Makefile: { icon: Terminal, color: "#6B7280" },
-    LICENSE: { icon: Shield, color: "#6B7280" },
-    CONTRIBUTING: { icon: FileText, color: "#6B7280" },
-    CHANGELOG: { icon: FileText, color: "#6B7280" },
-    "package.json": { icon: DiNodejsSmall, color: "", isDevicon: true },
-    "tsconfig.json": { icon: SiTypescript, color: "", isDevicon: true },
-    ".eslintrc": { icon: SiEslint, color: "", isDevicon: true },
-    ".eslintrc.js": { icon: SiEslint, color: "", isDevicon: true },
-    ".eslintrc.json": { icon: SiEslint, color: "", isDevicon: true },
-    ".prettierrc": { icon: SiPrettier, color: "", isDevicon: true },
-    "tailwind.config.js": { icon: SiTailwindcss, color: "", isDevicon: true },
-    "tailwind.config.ts": { icon: SiTailwindcss, color: "", isDevicon: true },
-    "vite.config.ts": { icon: SiVite, color: "", isDevicon: true },
-    "vite.config.js": { icon: SiVite, color: "", isDevicon: true },
-    "webpack.config.js": { icon: SiWebpack, color: "", isDevicon: true },
-    "vue.config.js": { icon: SiVuedotjs, color: "", isDevicon: true },
+/* ─── Filename-only matches (exact name, no extension lookup) ─────── */
+
+const NAME_MAP: Record<string, FileIconInfo> = {
+    Dockerfile: { name: "docker" },
+    Makefile: { name: "makefile" },
+    LICENSE: { name: "license" },
+    CONTRIBUTING: { name: "markdown" },
+    CHANGELOG: { name: "markdown" },
+    "package.json": { name: "npm" },
+    "tsconfig.json": { name: "tsconfig" },
+    ".eslintrc": { name: "eslint" },
+    ".eslintrc.js": { name: "eslint" },
+    ".eslintrc.json": { name: "eslint" },
+    ".prettierrc": { name: "config" },
+    "tailwind.config.js": { name: "config" },
+    "tailwind.config.ts": { name: "config" },
+    "vite.config.ts": { name: "vite" },
+    "vite.config.js": { name: "vite" },
+    "webpack.config.js": { name: "webpack" },
+    "vue.config.js": { name: "vue" },
 };
 
-const DEFAULT: IconMapping = { icon: File, color: "#9CA3AF" };
+const DEFAULT_ICON: FileIconInfo = { name: "default" };
 
-/** Get icon info for a filename */
-export function getFileIcon(filename: string): IconMapping {
+/** Get icon info for a filename — returns Seti icon name */
+export function getFileIcon(filename: string): FileIconInfo {
     // Check filename-only matches first (exact filename like "package.json")
     const nameMatch = NAME_MAP[filename];
     if (nameMatch) return nameMatch;
 
     // Check special dot-files
-    if (filename === ".gitignore" || filename === ".gitattributes") {
-        return EXT_MAP["gitignore"] ?? DEFAULT;
-    }
-    if (filename.endsWith(".lock")) {
-        return EXT_MAP["lock"] ?? DEFAULT;
-    }
+    if (filename === ".gitignore") return EXT_MAP["gitignore"] ?? DEFAULT_ICON;
+    if (filename === ".gitattributes") return EXT_MAP["gitattributes"] ?? DEFAULT_ICON;
+    if (filename.endsWith(".lock")) return EXT_MAP["lock"] ?? DEFAULT_ICON;
 
     // Check extension
     const ext = filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : "";
-    return EXT_MAP[ext] ?? DEFAULT;
+    return EXT_MAP[ext] ?? DEFAULT_ICON;
 }

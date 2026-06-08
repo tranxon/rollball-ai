@@ -66,6 +66,9 @@ pub struct SendMessageRequest {
     /// When present, providers serialize content as an array instead of a plain string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_parts: Option<Vec<serde_json::Value>>,
+    /// Files/selections attached by user (from workspace explorer / editor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached_context: Option<Vec<rollball_core::protocol::AttachedContextItem>>,
 }
 
 /// Response for send message
@@ -142,6 +145,10 @@ struct WsClientMessage {
     /// When present, providers serialize content as an array instead of a plain string.
     #[serde(default)]
     content_parts: Option<Vec<serde_json::Value>>,
+    /// Files/selections attached by the user from workspace explorer / editor.
+    /// Passed through to Runtime for file-content injection via ContextBuilder.
+    #[serde(default)]
+    attached_context: Option<Vec<rollball_core::protocol::AttachedContextItem>>,
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────
@@ -222,6 +229,12 @@ pub async fn send_message(
                 // Pass through multimodal content_parts (e.g. text + image_url)
                 if let Some(ref parts) = body.content_parts {
                     params["content_parts"] = serde_json::json!(parts);
+                }
+                // Pass through attached_context (files/selections added by user)
+                if let Some(ref ctx) = body.attached_context {
+                    if !ctx.is_empty() {
+                        params["attached_context"] = serde_json::json!(ctx);
+                    }
                 }
                 let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
                     from: "http-api".to_string(),
@@ -753,6 +766,12 @@ async fn handle_ws_text(
             // Pass through multimodal content_parts (e.g. text + image_url)
             if let Some(ref parts) = client_msg.content_parts {
                 params["content_parts"] = serde_json::json!(parts);
+            }
+            // Pass through attached_context (files/selections added by user)
+            if let Some(ref ctx) = client_msg.attached_context {
+                if !ctx.is_empty() {
+                    params["attached_context"] = serde_json::json!(ctx);
+                }
             }
             let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
                 from: "http-ws".to_string(),

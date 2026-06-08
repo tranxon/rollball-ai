@@ -36,6 +36,11 @@ pub enum SessionMessage {
         /// When present, the agent loop constructs a ChatMessage::user_multimodal()
         /// instead of ChatMessage::user(), enabling image inputs to flow to the LLM.
         content_parts: Option<Vec<rollball_core::providers::traits::ContentPart>>,
+        /// Files/selections attached by the user from workspace explorer / editor.
+        /// Each entry: { rel_path, type ("file"/"selection"), start_line?, end_line? }
+        /// The Runtime reads the actual file content from the workspace filesystem
+        /// and injects it into the enriched user message (same pattern as documents).
+        attached_context: Option<Vec<rollball_core::protocol::AttachedContextItem>>,
     },
     /// Continue execution after tool result or iteration pause
     ContinueExecution,
@@ -110,13 +115,14 @@ pub enum SessionMessage {
 impl std::fmt::Debug for SessionMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SessionMessage::ChatMessage { content, message_id, skill_instructions, documents, content_parts } => f
+            SessionMessage::ChatMessage { content, message_id, skill_instructions, documents, content_parts, attached_context } => f
                 .debug_struct("ChatMessage")
                 .field("content", &content.chars().take(64).collect::<String>())
                 .field("message_id", message_id)
                 .field("has_skill", &skill_instructions.is_some())
                 .field("has_docs", &documents.is_some())
                 .field("has_content_parts", &content_parts.is_some())
+                .field("attached_count", &attached_context.as_ref().map(|c| c.len()).unwrap_or(0))
                 .finish(),
             SessionMessage::ContinueExecution => f.debug_tuple("ContinueExecution").finish(),
             SessionMessage::ModelSwitch { model, provider } => f.debug_struct("ModelSwitch").field("model", model).field("provider", provider).finish(),
@@ -429,10 +435,11 @@ impl SessionTask {
             // Note: msg is now Option<SessionMessage> directly (no
             // Ok/Err wrapper from the old timeout pattern).
             match msg {
-                Some(SessionMessage::ChatMessage { content, message_id, skill_instructions, documents, content_parts }) => {
+                Some(SessionMessage::ChatMessage { content, message_id, skill_instructions, documents, content_parts, attached_context }) => {
                     let has_documents = documents.as_ref().map_or(false, |d| !d.is_empty());
                     let has_content_parts = content_parts.as_ref().map_or(false, |p| !p.is_empty());
-                    if content.trim().is_empty() && !has_documents && !has_content_parts {
+                    let has_attached = attached_context.as_ref().map_or(false, |a| !a.is_empty());
+                    if content.trim().is_empty() && !has_documents && !has_content_parts && !has_attached {
                         tracing::warn!(
                             session_id = %session_id,
                             "SessionTask received empty chat message, ignoring"
@@ -530,6 +537,131 @@ impl SessionTask {
                                 doc_blocks = doc_blocks.len(),
                                 enriched_len = enriched_content.len(),
                                 "SessionTask: document pre-extraction complete"
+                            );
+                        }
+                    }
+
+                    // Build attached context: read workspace files selected by the user
+                    // from the workspace explorer or editor "Add to Chat" button, and
+                    // inject their contents directly into the user message. This avoids
+                    // an extra LLM round-trip where the agent would re-read the file
+                    // using the workspace read_file tool.
+                    if let Some(ref att_ctx) = attached_context {
+                        if !att_ctx.is_empty() {
+                            let work_dir = agent_loop.core.config().work_dir.clone();
+                            let workspace_root = std::path::Path::new(&work_dir).join("workspace");
+                            tracing::info!(
+                                session_id = %session_id,
+                                count = att_ctx.len(),
+                                workspace = %workspace_root.display(),
+                                "SessionTask: pre-extracting attached workspace files"
+                            );
+
+                            let mut file_blocks: Vec<String> = Vec::new();
+                            for item in att_ctx {
+                                // Only process file and selection types
+                                if item.context_type == "directory" {
+                                    continue;
+                                }
+                                let abs_path = workspace_root.join(&item.rel_path);
+                                tracing::info!(
+                                    session_id = %session_id,
+                                    rel_path = %item.rel_path,
+                                    abs_path = %abs_path.display(),
+                                    "SessionTask: reading attached workspace file"
+                                );
+
+                                // Read file content
+                                let file_content = match std::fs::read_to_string(&abs_path) {
+                                    Ok(content) => content,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            session_id = %session_id,
+                                            rel_path = %item.rel_path,
+                                            error = %e,
+                                            "SessionTask: failed to read attached workspace file"
+                                        );
+                                        file_blocks.push(format!(
+                                            "## `{}` — [Failed to read: {}]\n",
+                                            item.rel_path, e
+                                        ));
+                                        continue;
+                                    }
+                                };
+
+                                // For selection type, extract the specified line range
+                                let content = if item.context_type == "selection"
+                                    && (item.start_line.is_some() || item.end_line.is_some())
+                                {
+                                    let lines: Vec<&str> = file_content.lines().collect();
+                                    let start = item.start_line.unwrap_or(1).saturating_sub(1) as usize;
+                                    let end = item
+                                        .end_line
+                                        .unwrap_or(lines.len() as u32)
+                                        .min(lines.len() as u32) as usize;
+                                    if start >= lines.len() {
+                                        file_content
+                                    } else {
+                                        lines[start..end.min(lines.len())].join("\n")
+                                    }
+                                } else {
+                                    file_content
+                                };
+
+                                // Truncate very large files to avoid token explosion
+                                const MAX_ATTACHED_LEN: usize = 15000;
+                                let truncated = content.len() > MAX_ATTACHED_LEN;
+                                let display_content = if truncated {
+                                    &content[..MAX_ATTACHED_LEN]
+                                } else {
+                                    &content
+                                };
+
+                                let ext = std::path::Path::new(&item.rel_path)
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("");
+                                let line_label = match (item.start_line, item.end_line) {
+                                    (Some(s), Some(e)) if s != e => {
+                                        format!(" (L{}-L{})", s, e)
+                                    }
+                                    (Some(s), _) => format!(" (L{})", s),
+                                    _ => String::new(),
+                                };
+                                let trunc_label = if truncated {
+                                    " [truncated]"
+                                } else {
+                                    ""
+                                };
+                                file_blocks.push(format!(
+                                    "## `{}{}`{}\n```{}\n{}\n```",
+                                    item.rel_path,
+                                    line_label,
+                                    trunc_label,
+                                    ext,
+                                    display_content,
+                                ));
+                            }
+
+                            if !file_blocks.is_empty() {
+                                let prefix = if enriched_content.trim().is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("{}\n\n", enriched_content)
+                                };
+                                enriched_content = format!(
+                                    "{}The following workspace files were attached by the user. \
+                                     Their contents have been read and included below. \
+                                     You do NOT need to use the `read_file` tool for these files.\n\n{}",
+                                    prefix,
+                                    file_blocks.join("\n\n")
+                                );
+                            }
+                            tracing::info!(
+                                session_id = %session_id,
+                                file_blocks = file_blocks.len(),
+                                enriched_len = enriched_content.len(),
+                                "SessionTask: attached workspace file pre-extraction complete"
                             );
                         }
                     }

@@ -313,6 +313,28 @@ impl Default for PoolingStrategy {
     }
 }
 
+/// A file or selection attached to a chat message from the Desktop App.
+///
+/// The frontend sends an array of these via WebSocket (`attached_context`).
+/// The Gateway forwards them through `IntentReceived.params`, and the
+/// Runtime reads the actual file content from the filesystem and injects
+/// it into the LLM system prompt via ContextBuilder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachedContextItem {
+    /// Relative path within the workspace (e.g. "src/main.rs")
+    pub rel_path: String,
+    /// Context type: "file", "directory", or "selection"
+    #[serde(rename = "type")]
+    pub context_type: String,
+    /// Start line (1-based) for selection type, None for whole file
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    /// End line (1-based) for selection type, None for whole file
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+}
+
 /// Embedding model entry in embedding_models.json.
 ///
 /// Describes a downloadable embedding model with ONNX runtime metadata.

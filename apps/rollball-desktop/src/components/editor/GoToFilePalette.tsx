@@ -17,6 +17,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useFileEditorStore } from "../../stores/fileEditorStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { SetiIcon } from "../common/SetiIcon";
+import { getFileIcon } from "../workspace/FileTree/fileIcons";
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
 
@@ -128,17 +130,6 @@ function HighlightedLabel({
                 ),
             )}
         </span>
-    );
-}
-
-/* ─── File Icon SVG ─────────────────────────────────────────────────── */
-
-function FileIcon({ color }: { color: string }) {
-    return (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-            <path d="M3 1h7l3 3v10a1 1 0 01-1 1H3a1 1 0 01-1-1V2a1 1 0 011-1z" stroke={color} strokeWidth="1" fill="none" />
-            <path d="M10 1v3h3" stroke={color} strokeWidth="1" fill="none" />
-        </svg>
     );
 }
 
@@ -434,7 +425,7 @@ export function GoToFilePalette({ agentId, workspaceId, onClose }: GoToFilePalet
                                 >
                                     {/* File icon */}
                                     <div style={{ width: 16, height: 22, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                                        <FileIcon color={focused ? colors.listFocusFg : colors.description} />
+                                        <SetiIcon {...getFileIcon(item.label)} size={16} />
                                     </div>
                                     {/* Text */}
                                     <div style={{ marginLeft: 5, overflow: "hidden", display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>

@@ -411,6 +411,10 @@ pub struct TreeResponse {
 
 /// Resolve the absolute directory path for a tree request, ensuring it stays
 /// within the allowed workspace root. Returns `(root, abs_path, rel_path)`.
+///
+/// For paths that don't yet exist on disk (e.g. creating a new file), the
+/// canonicalization is skipped and containment is verified by checking for
+/// parent-directory traversal (`..`) and absolute-path components.
 fn resolve_tree_path(
     root: &str,
     requested_path: &str,
@@ -426,13 +430,29 @@ fn resolve_tree_path(
     } else {
         let candidate = canonical_root.join(rel);
         // Prevent path traversal: the canonicalized path must start with root
-        let canonical_candidate = candidate
-            .canonicalize()
-            .map_err(|e| format!("Path not found: {}", e))?;
-        if !canonical_candidate.starts_with(&canonical_root) {
-            return Err("Path is outside the workspace root".to_string());
+        match candidate.canonicalize() {
+            Ok(canonical_candidate) => {
+                if !canonical_candidate.starts_with(&canonical_root) {
+                    return Err("Path is outside the workspace root".to_string());
+                }
+                canonical_candidate
+            }
+            Err(_) => {
+                // Path doesn't exist on disk yet (e.g. creating a new file/dir).
+                // Validate containment without requiring the path to exist.
+                let rel_path = std::path::Path::new(rel);
+                // Reject `..` components that would escape the workspace
+                if rel_path.components().any(|c| c == std::path::Component::ParentDir) {
+                    return Err("Path traversal not allowed".to_string());
+                }
+                // Reject absolute-looking paths: on Windows `root.join("C:\\x")`
+                // replaces the entire path, bypassing the workspace root.
+                if rel_path.has_root() {
+                    return Err("Absolute paths not allowed".to_string());
+                }
+                candidate
+            }
         }
-        canonical_candidate
     };
 
     let rel_path = abs
@@ -682,12 +702,43 @@ pub struct WriteFileRequest {
     pub content: String,
 }
 
+/// Request body for creating a new file/directory
+#[derive(Debug, Deserialize)]
+pub struct CreateFileRequest {
+    /// Relative path of the new file within the workspace
+    pub path: String,
+}
+
+/// Response for file/directory creation
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFileResponse {
+    pub ok: bool,
+    pub path: String,
+}
+
 /// Response for file write
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteFileResponse {
     pub ok: bool,
     pub size: u64,
+}
+
+/// Request body for copy operation
+#[derive(Debug, Deserialize)]
+pub struct CopyRequest {
+    /// Relative path of the source file/directory
+    pub source: String,
+    /// Relative path of the destination
+    pub dest: String,
+}
+
+/// Request body for delete operation
+#[derive(Debug, Deserialize)]
+pub struct DeleteRequest {
+    /// Relative path to delete
+    pub path: String,
 }
 
 /// Resolve workspace root path for a given agent + workspace_id.
@@ -816,7 +867,20 @@ pub async fn write_file(
     let workspace_root =
         resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
 
-    // Check workspace access level (read-only → reject writes)
+    let (_canonical_root, abs_path, _rel_path) =
+        resolve_tree_path(&workspace_root, file_rel_path)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    // Verify parent directory exists (allow creating new files)
+    if let Some(parent) = abs_path.parent() {
+        if !parent.is_dir() {
+            return Err(ApiError::bad_request(
+                &format!("Parent directory does not exist: {}", parent.display()),
+            ));
+        }
+    }
+
+    // Check write access for read-only workspaces
     {
         let gw = state.gateway_state.read().await;
         if let Some(info) = gw.running_agents.get(&agent_id) {
@@ -839,15 +903,6 @@ pub async fn write_file(
         }
     }
 
-    let (_canonical_root, abs_path, _rel_path) =
-        resolve_tree_path(&workspace_root, file_rel_path)
-            .map_err(|e| ApiError::bad_request(&e))?;
-
-    // Verify it's a file (must exist for write)
-    if !abs_path.is_file() {
-        return Err(ApiError::bad_request("Path is not a file or does not exist"));
-    }
-
     // Write content
     std::fs::write(&abs_path, &req.content).map_err(|e| {
         ApiError::internal(&format!("Failed to write file: {}", e))
@@ -857,6 +912,251 @@ pub async fn write_file(
         ok: true,
         size: content_bytes,
     }))
+}
+
+/// `POST /api/agents/{agent_id}/workspaces/file` — create an empty new file
+pub async fn create_file(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<FileQuery>,
+    Json(req): Json<CreateFileRequest>,
+) -> Result<(StatusCode, Json<CreateFileResponse>), (StatusCode, Json<ApiError>)> {
+    let file_rel_path = if !req.path.is_empty() {
+        req.path.as_str()
+    } else {
+        query.path.as_deref().unwrap_or("")
+    };
+    if file_rel_path.is_empty() {
+        return Err(ApiError::bad_request("Missing required 'path' parameter"));
+    }
+
+    let workspace_root =
+        resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
+
+    let (_canonical_root, abs_path, _rel_path) =
+        resolve_tree_path(&workspace_root, file_rel_path)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    // Create parent directories if needed
+    if let Some(parent) = abs_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            ApiError::internal(&format!("Failed to create parent directory: {}", e))
+        })?;
+    }
+
+    // Create empty file (error if already exists)
+    std::fs::File::create_new(&abs_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            ApiError::bad_request(&format!("File already exists: {}", file_rel_path))
+        } else {
+            ApiError::internal(&format!("Failed to create file: {}", e))
+        }
+    })?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateFileResponse {
+            ok: true,
+            path: file_rel_path.to_string(),
+        }),
+    ))
+}
+
+/// `POST /api/agents/{agent_id}/workspaces/dir` — create a new directory
+pub async fn create_dir(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<FileQuery>,
+    Json(req): Json<CreateFileRequest>,
+) -> Result<(StatusCode, Json<CreateFileResponse>), (StatusCode, Json<ApiError>)> {
+    let dir_rel_path = if !req.path.is_empty() {
+        req.path.as_str()
+    } else {
+        query.path.as_deref().unwrap_or("")
+    };
+    if dir_rel_path.is_empty() {
+        return Err(ApiError::bad_request("Missing required 'path' parameter"));
+    }
+
+    let workspace_root =
+        resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
+
+    let (_canonical_root, abs_path, _rel_path) =
+        resolve_tree_path(&workspace_root, dir_rel_path)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    std::fs::create_dir_all(&abs_path).map_err(|e| {
+        ApiError::internal(&format!("Failed to create directory: {}", e))
+    })?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateFileResponse {
+            ok: true,
+            path: dir_rel_path.to_string(),
+        }),
+    ))
+}
+
+// ─── Delete / Copy API ─────────────────────────────────────────────────
+
+/// `DELETE /api/agents/{agent_id}/workspaces/file` — delete a file
+pub async fn delete_file(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<FileQuery>,
+    Json(req): Json<DeleteRequest>,
+) -> Result<Json<CreateFileResponse>, (StatusCode, Json<ApiError>)> {
+    let file_rel_path = if !req.path.is_empty() {
+        req.path.as_str()
+    } else {
+        query.path.as_deref().unwrap_or("")
+    };
+    if file_rel_path.is_empty() {
+        return Err(ApiError::bad_request("Missing required 'path' parameter"));
+    }
+
+    let workspace_root =
+        resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
+
+    let (_canonical_root, abs_path, _rel_path) =
+        resolve_tree_path(&workspace_root, file_rel_path)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    let metadata = std::fs::metadata(&abs_path).map_err(|e| {
+        ApiError::internal(&format!("Failed to read file metadata: {}", e))
+    })?;
+
+    if metadata.is_dir() {
+        return Err(ApiError::bad_request("Path is a directory, use /dir endpoint"));
+    }
+
+    std::fs::remove_file(&abs_path).map_err(|e| {
+        ApiError::internal(&format!("Failed to delete file: {}", e))
+    })?;
+
+    Ok(Json(CreateFileResponse {
+        ok: true,
+        path: file_rel_path.to_string(),
+    }))
+}
+
+/// `DELETE /api/agents/{agent_id}/workspaces/dir` — delete a directory recursively
+pub async fn delete_dir(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<FileQuery>,
+    Json(req): Json<DeleteRequest>,
+) -> Result<Json<CreateFileResponse>, (StatusCode, Json<ApiError>)> {
+    let dir_rel_path = if !req.path.is_empty() {
+        req.path.as_str()
+    } else {
+        query.path.as_deref().unwrap_or("")
+    };
+    if dir_rel_path.is_empty() {
+        return Err(ApiError::bad_request("Missing required 'path' parameter"));
+    }
+
+    let workspace_root =
+        resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
+
+    let (_canonical_root, abs_path, _rel_path) =
+        resolve_tree_path(&workspace_root, dir_rel_path)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    let metadata = std::fs::metadata(&abs_path).map_err(|e| {
+        ApiError::internal(&format!("Failed to read directory metadata: {}", e))
+    })?;
+
+    if !metadata.is_dir() {
+        return Err(ApiError::bad_request("Path is a file, use /file endpoint"));
+    }
+
+    std::fs::remove_dir_all(&abs_path).map_err(|e| {
+        ApiError::internal(&format!("Failed to delete directory: {}", e))
+    })?;
+
+    Ok(Json(CreateFileResponse {
+        ok: true,
+        path: dir_rel_path.to_string(),
+    }))
+}
+
+/// Recursively copy a directory
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create destination directory: {}", e))?;
+
+    let entries = std::fs::read_dir(src)
+        .map_err(|e| format!("Failed to read source directory: {}", e))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("Failed to copy file: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// `POST /api/agents/{agent_id}/workspaces/copy` — copy a file or directory
+pub async fn copy_item(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<FileQuery>,
+    Json(req): Json<CopyRequest>,
+) -> Result<(StatusCode, Json<CreateFileResponse>), (StatusCode, Json<ApiError>)> {
+    if req.source.is_empty() || req.dest.is_empty() {
+        return Err(ApiError::bad_request("Missing required 'source' or 'dest' parameter"));
+    }
+
+    let workspace_root =
+        resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
+
+    let (_canonical_root, abs_src, _rel_src) =
+        resolve_tree_path(&workspace_root, &req.source)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    let (_canonical_root, abs_dest, _rel_dest) =
+        resolve_tree_path(&workspace_root, &req.dest)
+            .map_err(|e| ApiError::bad_request(&e))?;
+
+    if abs_dest.exists() {
+        return Err(ApiError::bad_request(&format!(
+            "Destination already exists: {}",
+            req.dest
+        )));
+    }
+
+    if abs_src.is_dir() {
+        copy_dir_recursive(&abs_src, &abs_dest)
+            .map_err(|e| ApiError::internal(&e))?;
+    } else {
+        // Ensure parent directory exists
+        if let Some(parent) = abs_dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                ApiError::internal(&format!("Failed to create parent directory: {}", e))
+            })?;
+        }
+        std::fs::copy(&abs_src, &abs_dest).map_err(|e| {
+            ApiError::internal(&format!("Failed to copy file: {}", e))
+        })?;
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateFileResponse {
+            ok: true,
+            path: req.dest.clone(),
+        }),
+    ))
 }
 
 // ─── Content Search API ─────────────────────────────────────────────────
@@ -1020,7 +1320,7 @@ pub async fn search_files(
 
 // ─── Routes ─────────────────────────────────────────────────────────────
 
-use axum::routing::put;
+use axum::routing::{put, post};
 use axum::Router;
 
 /// Create workspace management routes
@@ -1044,7 +1344,15 @@ pub fn workspace_routes() -> Router<AppState> {
         )
         .route(
             "/api/agents/{agent_id}/workspaces/file",
-            get(read_file).put(write_file),
+            get(read_file).put(write_file).post(create_file).delete(delete_file),
+        )
+        .route(
+            "/api/agents/{agent_id}/workspaces/dir",
+            post(create_dir).delete(delete_dir),
+        )
+        .route(
+            "/api/agents/{agent_id}/workspaces/copy",
+            post(copy_item),
         )
         .route(
             "/api/agents/{agent_id}/workspaces/search",

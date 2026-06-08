@@ -15,6 +15,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useFileEditorStore } from "../../stores/fileEditorStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { DEFAULT_GATEWAY_URL } from "../../lib/config";
+import { SetiIcon } from "../common/SetiIcon";
+import { getFileIcon } from "../workspace/FileTree/fileIcons";
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
 
@@ -76,17 +78,6 @@ const lightTheme = {
     scrollbarThumbHover: "rgba(100,100,100,0.7)",
     shadow: "rgba(0,0,0,0.16) 0 2px 8px",
 };
-
-/* ─── File Icon SVG ─────────────────────────────────────────────────── */
-
-function FileIcon({ color }: { color: string }) {
-    return (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-            <path d="M3 1h7l3 3v10a1 1 0 01-1 1H3a1 1 0 01-1-1V2a1 1 0 011-1z" stroke={color} strokeWidth="1" fill="none" />
-            <path d="M10 1v3h3" stroke={color} strokeWidth="1" fill="none" />
-        </svg>
-    );
-}
 
 /* ─── Main Component ────────────────────────────────────────────────── */
 
@@ -486,7 +477,7 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
                                         fontSize: 11,
                                         fontWeight: 600,
                                     }}>
-                                        <FileIcon color={colors.description} />
+                                        <SetiIcon {...getFileIcon(fileName)} size={16} />
                                         <span style={{ marginLeft: 5, color: colors.highlight, fontWeight: 700 }}>
                                             {fileName}
                                         </span>

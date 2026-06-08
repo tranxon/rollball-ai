@@ -69,6 +69,16 @@ interface SessionChatState {
   isCompacting: boolean;
   /** File tree expanded directory paths (persisted per-session) */
   treeExpandedPaths: string[];
+  /** Files/directories/selection attached to chat context (persistent until manually removed) */
+  attachedContext: Array<{
+    id: string;
+    type: "file" | "directory" | "selection";
+    name: string;
+    relPath: string;
+    /** Line range for selection type (1-based, inclusive) */
+    startLine?: number;
+    endLine?: number;
+  }>;
 }
 
 const DEFAULT_SESSION_STATE: SessionChatState = {
@@ -96,6 +106,7 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   provider: null,
   isCompacting: false,
   treeExpandedPaths: [],
+  attachedContext: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -324,6 +335,12 @@ interface ChatStore {
   compactContext: (agentId: string, sessionId: string) => void;
   /** Toggle a file tree directory expansion (per-session) */
   toggleTreeExpandedPath: (agentId: string, sessionId: string, relPath: string) => void;
+  /** Add a file/directory/selection to attached chat context */
+  addAttachedContext: (agentId: string, sessionId: string, item: { id: string; type: "file" | "directory" | "selection"; name: string; relPath: string; startLine?: number; endLine?: number }) => void;
+  /** Remove a file/directory from attached chat context */
+  removeAttachedContext: (agentId: string, sessionId: string, id: string) => void;
+  /** Clear all attached chat context for a session */
+  clearAttachedContext: (agentId: string, sessionId: string) => void;
 }
 
 function toWsUrl(httpUrl: string, agentId: string): string {
@@ -812,15 +829,60 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       ]
       : undefined;
 
+    // Build attached context block from session state (files/selections from
+    // workspace explorer right-click or editor "Add to Chat" button).
+    // Passes file paths + line ranges as structured metadata in the WebSocket
+    // message so the Runtime can read the actual content from the filesystem
+    // and inject it into the LLM system prompt via ContextBuilder.
+    // A human-readable summary is also prepended to the user message so the
+    // chat history shows what was attached (LLM also sees this as fallback).
+    let attachedContextBlock = "";
+    let attachedContextPayload: Array<{ relPath: string; type: string; startLine?: number; endLine?: number }> | undefined;
+    if (sessionId) {
+      const ss = getSessionState(get(), agentId, sessionId);
+      if (ss.attachedContext.length > 0) {
+        const lines = ss.attachedContext.map((ctx) => {
+          const lineInfo = ctx.startLine != null
+            ? ` (L${ctx.startLine}${ctx.endLine && ctx.endLine !== ctx.startLine ? `-L${ctx.endLine}` : ""})`
+            : "";
+          return `- ${ctx.type === "directory" ? "folder: " : "file: "}\`${ctx.relPath}\`${lineInfo}`;
+        });
+        attachedContextBlock = `[Attached context:]\n${lines.join("\n")}\n\n`;
+        attachedContextPayload = ss.attachedContext.map((ctx) => ({
+          relPath: ctx.relPath,
+          type: ctx.type,
+          startLine: ctx.startLine,
+          endLine: ctx.endLine,
+        }));
+      }
+    }
+
+    // Combine attached context with user message for LLM delivery.
+    // visibleContent = what the user typed (stored in UI); enrichedContent = what the LLM receives.
+    const enrichedContent = attachedContextBlock ? `${attachedContextBlock}${content}` : content;
+    const enrichedContentParts = contentParts
+      ? [{ type: "text", text: enrichedContent }, ...contentParts.filter((p) => p.type !== "text").slice(0)]
+      : undefined;
+
     const sendViaWs = (socket: WebSocket) => {
       socket.send(JSON.stringify({
         type: "message",
-        content,
+        content: enrichedContent,
         command,
         ...(sessionId ? { session_id: sessionId } : {}),
         ...(documentIds && documentIds.length > 0 ? { document_ids: documentIds } : {}),
-        ...(contentParts ? { content_parts: contentParts } : {}),
+        ...(enrichedContentParts ? { content_parts: enrichedContentParts } : {}),
+        ...(attachedContextPayload ? { attached_context: attachedContextPayload } : {}),
       }));
+
+      // Clear attached context after sending (one-shot)
+      if (sessionId) {
+        const state = get();
+        const ss = getSessionState(state, agentId, sessionId);
+        if (ss.attachedContext.length > 0) {
+          set((s) => updateSessionState(s, agentId, sessionId, { attachedContext: [] }));
+        }
+      }
 
       // Reset streaming state for the active session
       if (sessionId) {
@@ -870,7 +932,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       const result = await invoke<{ message_id: string; status: string }>(
         "send_message",
-        { agentId, content, command, sessionId, documentIds, contentParts },
+        { agentId, content: enrichedContent, command, sessionId, documentIds, contentParts: enrichedContentParts, attachedContext: attachedContextPayload },
       );
       console.log("[ChatStore] Message sent via HTTP:", result);
       const replyMsg: ChatMessage = {
@@ -1274,6 +1336,30 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         : [...current, relPath];
       return updateSessionState(state, agentId, sessionId, { treeExpandedPaths: next });
     });
+  },
+
+  addAttachedContext: (agentId: string, sessionId: string, item: { id: string; type: "file" | "directory" | "selection"; name: string; relPath: string; startLine?: number; endLine?: number }) => {
+    set((state) => {
+      const ss = getSessionState(state, agentId, sessionId);
+      // Avoid duplicates
+      if (ss.attachedContext.some((c) => c.id === item.id)) return {};
+      return updateSessionState(state, agentId, sessionId, {
+        attachedContext: [...ss.attachedContext, item],
+      });
+    });
+  },
+
+  removeAttachedContext: (agentId: string, sessionId: string, id: string) => {
+    set((state) => {
+      const ss = getSessionState(state, agentId, sessionId);
+      return updateSessionState(state, agentId, sessionId, {
+        attachedContext: ss.attachedContext.filter((c) => c.id !== id),
+      });
+    });
+  },
+
+  clearAttachedContext: (agentId: string, sessionId: string) => {
+    set((state) => updateSessionState(state, agentId, sessionId, { attachedContext: [] }));
   },
 }));
 

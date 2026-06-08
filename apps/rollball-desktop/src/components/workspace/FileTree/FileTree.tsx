@@ -17,9 +17,13 @@ interface FileTreeProps {
     workspaceId: string;
     sessionId: string;
     onFileDoubleClick?: (entry: TreeEntry, relPath: string) => void;
+    onContextNewItem?: (type: "file" | "dir", parentPath: string) => void;
+    onDelete?: (relPath: string, isDir: boolean) => void;
+    onCopy?: (relPath: string, isDir: boolean) => void;
+    onPaste?: (parentPath: string) => void;
 }
 
-export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick }: FileTreeProps) {
+export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, onContextNewItem, onDelete, onCopy, onPaste }: FileTreeProps) {
     const [selectedPath, setSelectedPath] = useState<string | null>(null);
     const treeCache = useWorkspaceStore((s) => s.treeCache);
     const fetchTree = useWorkspaceStore((s) => s.fetchTree);
@@ -157,6 +161,10 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick }:
                                 onToggle={handleToggle}
                                 onSelect={handleSelect}
                                 onDoubleClick={onFileDoubleClick}
+                                onContextNewItem={onContextNewItem}
+                                onDelete={onDelete}
+                                onCopy={onCopy}
+                                onPaste={onPaste}
                             />
                         </div>
                     );
