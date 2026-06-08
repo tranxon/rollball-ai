@@ -13,6 +13,7 @@ import { registerLspProviders, disposeModelForFile, unpinPreviewModel } from "./
 import { LspDocumentTracker } from "./LspDocumentTracker";
 import type { IDisposable } from "monaco-editor";
 import { GoToFilePalette } from "./GoToFilePalette";
+import { GlobalSearchPanel } from "./GlobalSearchPanel";
 
 // ── LSP Install Hints ─────────────────────────────────────────────────
 
@@ -232,6 +233,7 @@ export function FileEditorPanel({ width }: { width: number }) {
     const theme = useSettingsStore((s) => s.theme);
     const [closingFileId, setClosingFileId] = useState<string | null>(null);
     const [showGoToFile, setShowGoToFile] = useState(false);
+    const [showGlobalSearch, setShowGlobalSearch] = useState(false);
     const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
     const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
     const [cursor, setCursor] = useState({ line: 1, column: 1 });
@@ -303,6 +305,21 @@ export function FileEditorPanel({ width }: { width: number }) {
             "lspEnabled:", lspEnabled,
         );
     }, [lspLanguage, lspStatus, lspEnabled]);
+
+    // Jump to cursorLine when search result navigates to a file
+    useEffect(() => {
+        const line = activeFile?.cursorLine;
+        if (line && editorRef.current) {
+            editorRef.current.revealLineInCenter(line);
+            editorRef.current.setPosition({ lineNumber: line, column: 1 });
+            // Clear cursorLine so re-mounts don't re-jump
+            useFileEditorStore.setState((state) => ({
+                openFiles: state.openFiles.map((f) =>
+                    f.id === activeFile!.id ? { ...f, cursorLine: undefined } : f,
+                ),
+            }));
+        }
+    }, [activeFile?.id, activeFile?.cursorLine]);
 
     // Determine Monaco theme based on app theme
     const monacoTheme = useMemo(() => {
@@ -459,6 +476,17 @@ export function FileEditorPanel({ width }: { width: number }) {
             2048 | 46, // KeyMod.CtrlCmd | KeyCode.KeyP
             () => {
                 setShowGoToFile(true);
+            },
+        );
+
+        // Ctrl+Shift+F / Cmd+Shift+F — Search in files (ripgrep backend).
+        // Same visual style as GoToFilePalette.
+        // KeyCode.KeyF = 33 in monaco-editor 0.55.x.
+        editor.addCommand(
+            // eslint-disable-next-line no-bitwise
+            3072 | 33, // KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyF
+            () => {
+                setShowGlobalSearch(true);
             },
         );
 
@@ -987,6 +1015,18 @@ export function FileEditorPanel({ width }: { width: number }) {
                     workspaceId={activeFile.workspaceId}
                     onClose={() => {
                         setShowGoToFile(false);
+                        editorRef.current?.focus();
+                    }}
+                />
+            )}
+
+            {/* Global Search panel (Ctrl+Shift+F) */}
+            {showGlobalSearch && activeFile && (
+                <GlobalSearchPanel
+                    agentId={activeFile.agentId}
+                    workspaceId={activeFile.workspaceId}
+                    onClose={() => {
+                        setShowGlobalSearch(false);
                         editorRef.current?.focus();
                     }}
                 />

@@ -69,14 +69,17 @@ export interface OpenFile {
     language: string;
     /** Whether the file has unsaved changes */
     dirty: boolean;
+    /** If set, editor should reveal this line (1-based) after mount */
+    cursorLine?: number;
 }
 
 interface FileEditorState {
     openFiles: OpenFile[];
     activeFileId: string | null;
 
-    /** Open a file (or activate if already open). Fetches content from Gateway. */
-    openFile: (agentId: string, workspaceId: string, relPath: string) => Promise<void>;
+    /** Open a file (or activate if already open). Fetches content from Gateway.
+     * @param line - Optional 1-based line number to reveal after opening */
+    openFile: (agentId: string, workspaceId: string, relPath: string, line?: number) => Promise<void>;
     /** Open a file with pre-loaded content (skips Gateway fetch). Used by LSP cross-file navigation. */
     openFileWithContent: (agentId: string, workspaceId: string, relPath: string, content: string, language: string) => void;
     /** Close a file tab. Returns false if dirty (caller should confirm first). */
@@ -109,12 +112,19 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
     openFiles: [],
     activeFileId: null,
 
-    openFile: async (agentId: string, workspaceId: string, relPath: string) => {
+    openFile: async (agentId: string, workspaceId: string, relPath: string, line?: number) => {
         const fileId = `${agentId}:${workspaceId}:${relPath}`;
         const existing = get().openFiles.find((f) => f.id === fileId);
         if (existing) {
-            // Already open, just activate
-            set({ activeFileId: fileId });
+            // Already open — activate and jump to line if specified
+            set({
+                activeFileId: fileId,
+                openFiles: get().openFiles.map((f) =>
+                    f.id === fileId && line !== undefined
+                        ? { ...f, cursorLine: line }
+                        : f,
+                ),
+            });
             return;
         }
 
@@ -134,6 +144,7 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
             saving: false,
             language,
             dirty: false,
+            ...(line !== undefined ? { cursorLine: line } : {}),
         };
 
         set((state) => ({

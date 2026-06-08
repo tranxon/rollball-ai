@@ -859,6 +859,153 @@ pub async fn write_file(
     }))
 }
 
+// ─── Content Search API ─────────────────────────────────────────────────
+
+/// Query parameters for workspace content search
+#[derive(Debug, Deserialize, Default)]
+pub struct SearchQuery {
+    /// Regex pattern to search for (case-insensitive by default)
+    pub q: Option<String>,
+    /// Workspace ID. "__agent_home__" or empty = agent home directory
+    pub workspace_id: Option<String>,
+    /// Optional comma-separated file glob filter, e.g. "*.rs,*.toml"
+    pub include: Option<String>,
+    /// Maximum number of match results to return (default 200, max 1000)
+    pub max_results: Option<usize>,
+}
+
+/// A single search match result
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchMatch {
+    /// Relative file path within the workspace
+    pub file: String,
+    /// 1-based line number
+    pub line: usize,
+    /// 1-based column number (byte offset of match start)
+    pub column: usize,
+    /// The matching line text (trimmed)
+    pub text: String,
+}
+
+/// Response for content search
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResponse {
+    /// Matching results (capped at max_results)
+    pub matches: Vec<SearchMatch>,
+    /// Total number of matches found (may exceed matches.len() if truncated)
+    pub total_matches: usize,
+    /// True if results were truncated due to max_results limit
+    pub truncated: bool,
+}
+
+/// `GET /api/agents/{agent_id}/workspaces/search` — search file contents
+///
+/// Uses the `ignore` crate (same as ripgrep) for .gitignore-aware file
+/// traversal and regex matching. Results are case-insensitive by default.
+pub async fn search_files(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<SearchResponse>, (StatusCode, Json<ApiError>)> {
+    let pattern = query.q.as_deref().unwrap_or("");
+    if pattern.is_empty() {
+        return Err(ApiError::bad_request("Missing required 'q' parameter"));
+    }
+
+    // Compile regex (case-insensitive for UX — users rarely want case-sensitive)
+    let re = regex::RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| ApiError::bad_request(&format!("Invalid regex: {}", e)))?;
+
+    // Resolve workspace root
+    let workspace_root =
+        resolve_workspace_root(&state, &agent_id, query.workspace_id.as_deref()).await?;
+
+    let max_results = query.max_results.unwrap_or(200).min(1000);
+    let include_glob = query.include.as_deref();
+
+    let mut results: Vec<SearchMatch> = Vec::with_capacity(max_results);
+    let mut total_matches: usize = 0;
+    let mut truncated = false;
+
+    let walker = ignore::WalkBuilder::new(&workspace_root)
+        .hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .build();
+
+    'outer: for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+            continue;
+        }
+
+        let path = entry.path();
+
+        // Apply file filter if specified (comma-separated globs like "*.rs,*.toml")
+        if let Some(glob) = include_glob {
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
+            let matched = glob.split(',').any(|g| {
+                let pat = g.trim();
+                if pat.starts_with("*.") {
+                    file_name.ends_with(&pat[1..])
+                } else {
+                    file_name.contains(pat)
+                }
+            });
+            if !matched {
+                continue;
+            }
+        }
+
+        // Compute relative path (normalize backslashes to forward slashes)
+        let rel_path = path
+            .strip_prefix(&workspace_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in content.lines().enumerate() {
+            if let Some(m) = re.find(line) {
+                total_matches += 1;
+                if results.len() < max_results {
+                    results.push(SearchMatch {
+                        file: rel_path.clone(),
+                        line: line_num + 1,
+                        column: m.start() + 1,
+                        text: line.trim_end().to_string(),
+                    });
+                } else {
+                    truncated = true;
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    Ok(Json(SearchResponse {
+        matches: results,
+        total_matches,
+        truncated,
+    }))
+}
+
 // ─── Routes ─────────────────────────────────────────────────────────────
 
 use axum::routing::put;
@@ -886,5 +1033,9 @@ pub fn workspace_routes() -> Router<AppState> {
         .route(
             "/api/agents/{agent_id}/workspaces/file",
             get(read_file).put(write_file),
+        )
+        .route(
+            "/api/agents/{agent_id}/workspaces/search",
+            get(search_files),
         )
 }

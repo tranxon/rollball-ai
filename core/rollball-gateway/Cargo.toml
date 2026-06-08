@@ -53,6 +53,8 @@ reqwest = { workspace = true, features = ["blocking", "json", "rustls-tls"] }
 tonic.workspace = true
 prost.workspace = true
 tokio-stream.workspace = true
+ignore.workspace = true
+regex.workspace = true
 
 # Interactive CLI (feature-gated)
 dialoguer = { workspace = true, optional = true }
