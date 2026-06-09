@@ -19,40 +19,40 @@ loader.config({ monaco });
 // Vite-compatible worker resolution: each language label maps to a
 // monaco-editor worker entry that Vite bundles as a separate chunk.
 (window as any).MonacoEnvironment = {
-	getWorker(_workerId: string, label: string) {
-		switch (label) {
-			case "json":
-				return new Worker(
-					new URL("monaco-editor/esm/vs/language/json/json.worker.js", import.meta.url),
-					{ type: "module" },
-				);
-			case "css":
-			case "scss":
-			case "less":
-				return new Worker(
-					new URL("monaco-editor/esm/vs/language/css/css.worker.js", import.meta.url),
-					{ type: "module" },
-				);
-			case "html":
-			case "handlebars":
-			case "razor":
-				return new Worker(
-					new URL("monaco-editor/esm/vs/language/html/html.worker.js", import.meta.url),
-					{ type: "module" },
-				);
-			case "typescript":
-			case "javascript":
-				return new Worker(
-					new URL("monaco-editor/esm/vs/language/typescript/ts.worker.js", import.meta.url),
-					{ type: "module" },
-				);
-			default:
-				return new Worker(
-					new URL("monaco-editor/esm/vs/editor/editor.worker.js", import.meta.url),
-					{ type: "module" },
-				);
-		}
-	},
+  getWorker(_workerId: string, label: string) {
+    switch (label) {
+      case "json":
+        return new Worker(
+          new URL("monaco-editor/esm/vs/language/json/json.worker.js", import.meta.url),
+          { type: "module" },
+        );
+      case "css":
+      case "scss":
+      case "less":
+        return new Worker(
+          new URL("monaco-editor/esm/vs/language/css/css.worker.js", import.meta.url),
+          { type: "module" },
+        );
+      case "html":
+      case "handlebars":
+      case "razor":
+        return new Worker(
+          new URL("monaco-editor/esm/vs/language/html/html.worker.js", import.meta.url),
+          { type: "module" },
+        );
+      case "typescript":
+      case "javascript":
+        return new Worker(
+          new URL("monaco-editor/esm/vs/language/typescript/ts.worker.js", import.meta.url),
+          { type: "module" },
+        );
+      default:
+        return new Worker(
+          new URL("monaco-editor/esm/vs/editor/editor.worker.js", import.meta.url),
+          { type: "module" },
+        );
+    }
+  },
 };
 // ═══ End Monaco bootstrap ═══
 
@@ -60,6 +60,10 @@ loader.config({ monaco });
 // The store initializer calls applyTheme() which toggles the .dark class
 // based on the persisted preference from localStorage.
 import "./stores/settingsStore";
+import { useSettingsStore } from "./stores/settingsStore";
+
+// Font size steps for Ctrl+/Ctrl- global shortcuts.
+const FONT_SIZE_STEPS = [0.75, 0.875, 1.0, 1.125, 1.25];
 
 // Disable native browser context menu to prevent accidental page refresh
 // and other browser actions that would restart the entire app.
@@ -102,6 +106,32 @@ window.addEventListener("keydown", (e: KeyboardEvent) => {
   // which prevents the event from bubbling here. This check covers the edge
   // case where an inner handler called preventDefault() without stopPropagation().
   if (e.defaultPrevented) return;
+
+  // ── Global font size shortcuts: Ctrl+= / Ctrl+- ──────────────────────
+  // Ctrl+= increases font size, Ctrl+- decreases. These are the same
+  // shortcuts as browser zoom, repurposed for app-level font scaling.
+  // Monaco Editor handles its own Ctrl+/- via internal actions, so when
+  // the editor is focused, this handler won't fire (preventDefault).
+  if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+    if (e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      const state = useSettingsStore.getState();
+      const idx = FONT_SIZE_STEPS.indexOf(state.fontSize);
+      if (idx < FONT_SIZE_STEPS.length - 1) {
+        state.setFontSize(FONT_SIZE_STEPS[idx + 1]);
+      }
+      return;
+    }
+    if (e.key === "-") {
+      e.preventDefault();
+      const state = useSettingsStore.getState();
+      const idx = FONT_SIZE_STEPS.indexOf(state.fontSize);
+      if (idx > 0) {
+        state.setFontSize(FONT_SIZE_STEPS[idx - 1]);
+      }
+      return;
+    }
+  }
 
   // Block Ctrl+<key> combinations (but not Ctrl+Alt, Ctrl+Meta, or Ctrl+Shift)
   if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {

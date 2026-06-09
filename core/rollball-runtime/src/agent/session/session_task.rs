@@ -18,6 +18,7 @@ use crate::agent::loop_::{AgentLoop, ChunkEvent, SessionChunkEvent};
 use crate::agent::session_state::SessionState;
 use crate::debug::DebugHandles;
 use crate::debug::DebugObserverImpl;
+use crate::tools::builtin::doc_reader::{self, detect_format, ExtractOptions};
 
 /// Messages that can be sent to a SessionTask.
 #[derive(Clone)]
@@ -197,6 +198,48 @@ pub(crate) struct SessionTask {
     identity_context: Option<String>,
     /// LLM protocol type (for image token estimation)
     protocol_type: rollball_core::protocol::ProtocolType,
+}
+
+/// Extract text from a document file directly, bypassing PathGuardedTool.
+///
+/// Used during session message pre-processing to read user-uploaded documents
+/// from the session documents directory — which is NOT a workspace directory
+/// and would be rejected by `PathGuardedTool::validate_path()`.
+///
+/// Delegates to the doc_reader format-specific extractors in a `spawn_blocking`
+/// worker so that PDF rendering never blocks the async runtime.
+async fn extract_document_text(path: &std::path::Path) -> Result<String, String> {
+    let format = detect_format(path)
+        .ok_or_else(|| {
+            format!(
+                "Unsupported document format: {}",
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("(none)")
+            )
+        })?;
+
+    let opts = ExtractOptions {
+        start_page: None,
+        end_page: None,
+        include_tables: true,
+    };
+
+    let path_clone = path.to_path_buf();
+    let opts_clone = opts.clone();
+
+    tokio::task::spawn_blocking(move || {
+        match format {
+            "pdf" => doc_reader::pdf::extract_text(&path_clone, &opts_clone),
+            "docx" => doc_reader::docx::extract_text(&path_clone, &opts_clone),
+            "pptx" => doc_reader::pptx::extract_text(&path_clone, &opts_clone),
+            "xlsx" => doc_reader::xlsx::extract_text(&path_clone, &opts_clone),
+            _ => unreachable!(),
+        }
+    })
+    .await
+    .map_err(|e| format!("Document extraction error: {e}"))
+    .and_then(|r| r)
 }
 
 impl SessionTask {
@@ -469,8 +512,11 @@ impl SessionTask {
                                     abs_path = %abs_path,
                                     "SessionTask: extracting document"
                                 );
-                                let params = serde_json::json!({"path": abs_path, "include_tables": true});
-                                match agent_loop.execute_tool_by_name("doc_reader", params).await {
+                                let doc_path = std::path::Path::new(abs_path);
+                                // Bypass PathGuardedTool: session documents dir is NOT a
+                                // workspace directory, but the user explicitly uploaded
+                                // these files — they are trusted input.
+                                match extract_document_text(doc_path).await {
                                     Ok(text) if !text.trim().is_empty() => {
                                         doc_blocks.push(format!(
                                             "<attached_document filename=\"{}\" format=\"{}\">\n{}\n</attached_document>",
@@ -551,30 +597,61 @@ impl SessionTask {
                                     "SessionTask: reading attached workspace file"
                                 );
 
-                                // Read file content
-                                let file_content = match std::fs::read_to_string(&abs_path) {
-                                    Ok(content) => content,
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            session_id = %session_id,
-                                            rel_path = %item.rel_path,
-                                            error = %e,
-                                            "SessionTask: failed to read attached workspace file"
-                                        );
-                                        file_blocks.push(format!(
-                                            "## `{}` — [Failed to read: {}]\n",
-                                            item.rel_path, e
-                                        ));
-                                        continue;
+                                // Read file content — use doc_reader for binary document
+                                // formats (PDF, DOCX, PPTX, XLSX) which would fail
+                                // utf-8 parsing; use read_to_string for text files.
+                                let is_document_format = abs_path
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|ext| matches!(ext, "pdf" | "docx" | "pptx" | "xlsx"))
+                                    .unwrap_or(false);
+
+                                let file_content = if is_document_format {
+                                    match extract_document_text(&abs_path).await {
+                                        Ok(text) => text,
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                session_id = %session_id,
+                                                rel_path = %item.rel_path,
+                                                error = %e,
+                                                "SessionTask: failed to extract attached document"
+                                            );
+                                            file_blocks.push(format!(
+                                                "## `{}` — [Failed to extract: {}]\n",
+                                                item.rel_path, e
+                                            ));
+                                            continue;
+                                        }
+                                    }
+                                } else {
+                                    match std::fs::read_to_string(&abs_path) {
+                                        Ok(content) => content,
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                session_id = %session_id,
+                                                rel_path = %item.rel_path,
+                                                error = %e,
+                                                "SessionTask: failed to read attached workspace file"
+                                            );
+                                            file_blocks.push(format!(
+                                                "## `{}` — [Failed to read: {}]\n",
+                                                item.rel_path, e
+                                            ));
+                                            continue;
+                                        }
                                     }
                                 };
 
-                                // For selection type, extract the specified line range
-                                let content = if item.context_type == "selection"
+                                // For selection type, extract the specified line range.
+                                // Only applies to text files — binary documents don't
+                                // support line-level selection.
+                                let content = if !is_document_format
+                                    && item.context_type == "selection"
                                     && (item.start_line.is_some() || item.end_line.is_some())
                                 {
                                     let lines: Vec<&str> = file_content.lines().collect();
-                                    let start = item.start_line.unwrap_or(1).saturating_sub(1) as usize;
+                                    let start =
+                                        item.start_line.unwrap_or(1).saturating_sub(1) as usize;
                                     let end = item
                                         .end_line
                                         .unwrap_or(lines.len() as u32)
@@ -613,14 +690,19 @@ impl SessionTask {
                                 } else {
                                     ""
                                 };
-                                file_blocks.push(format!(
-                                    "## `{}{}`{}\n```{}\n{}\n```",
-                                    item.rel_path,
-                                    line_label,
-                                    trunc_label,
-                                    ext,
-                                    display_content,
-                                ));
+                                if is_document_format {
+                                    // Document text already has page/slide markers —
+                                    // render without a code fence.
+                                    file_blocks.push(format!(
+                                        "## `{}{}`{}\n\n{}\n",
+                                        item.rel_path, line_label, trunc_label, display_content
+                                    ));
+                                } else {
+                                    file_blocks.push(format!(
+                                        "## `{}{}`{}\n```{}\n{}\n```",
+                                        item.rel_path, line_label, trunc_label, ext, display_content
+                                    ));
+                                }
                             }
 
                             if !file_blocks.is_empty() {

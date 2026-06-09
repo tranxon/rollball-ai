@@ -239,6 +239,7 @@ export function FileEditorPanel({ width }: { width: number }) {
     const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
 
     const theme = useSettingsStore((s) => s.theme);
+    const fontSize = useSettingsStore((s) => s.fontSize);
     const [closingFileId, setClosingFileId] = useState<string | null>(null);
     // Tab right-click context menu (fileId, viewport position)
     const [tabContextMenu, setTabContextMenu] = useState<
@@ -386,6 +387,10 @@ export function FileEditorPanel({ width }: { width: number }) {
     const resolvedMonacoTheme = theme === "system"
         ? (systemDark ? "vs-dark" : "vs")
         : monacoTheme;
+
+    // Compute Monaco editor font size in pixels from global fontSize (rem-based).
+    // Root font size is 16px by browser default, so fontSize rem * 16 = px.
+    const editorFontSize = useMemo(() => Math.round(fontSize * 16), [fontSize]);
 
     const handleEditorMount: OnMount = useCallback((editor, monaco) => {
         editorRef.current = editor;
@@ -1148,7 +1153,7 @@ export function FileEditorPanel({ width }: { width: number }) {
                             keepCurrentModel
                             options={{
                                 minimap: { enabled: false },
-                                fontSize: 13,
+                                fontSize: editorFontSize,
                                 lineNumbers: "on",
                                 scrollBeyondLastLine: false,
                                 wordWrap: "off",

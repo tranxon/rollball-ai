@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore, type TreeEntry } from "../../../stores/workspaceStore";
 import { useAgentStore } from "../../../stores/agentStore";
 import { useChatStore } from "../../../stores/chatStore";
+import { useFileEditorStore } from "../../../stores/fileEditorStore";
 import { FileTreeNode } from "./FileTreeNode";
 
 /** Flattened tree node for virtualized rendering */
@@ -40,6 +41,20 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
         return ss?.treeExpandedPaths ?? [];
     });
     const expandedPaths = useMemo(() => new Set(expandedPathsArr), [expandedPathsArr]);
+
+    // Compute set of directory paths that contain at least one open editor tab.
+    // e.g. open file "src/components/Foo.tsx" → dirs: "src", "src/components"
+    const openFiles = useFileEditorStore((s) => s.openFiles);
+    const openFileDirSet = useMemo(() => {
+        const dirs = new Set<string>();
+        for (const f of openFiles) {
+            const parts = f.relPath.split("/");
+            for (let i = 0; i < parts.length - 1; i++) {
+                dirs.add(parts.slice(0, i + 1).join("/"));
+            }
+        }
+        return dirs;
+    }, [openFiles]);
 
     // Reset state when agent or workspace changes
     useEffect(() => {
@@ -158,6 +173,7 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
                                 isExpanded={expandedPaths.has(node.relPath)}
                                 isLoading={isLoading}
                                 isSelected={selectedPath === node.relPath}
+                                hasOpenDescendant={openFileDirSet.has(node.relPath)}
                                 onToggle={handleToggle}
                                 onSelect={handleSelect}
                                 onDoubleClick={onFileDoubleClick}

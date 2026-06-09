@@ -24,6 +24,8 @@ interface FileTreeNodeProps {
   isExpanded: boolean;
   isLoading: boolean;
   isSelected: boolean;
+  /** True when at least one open editor tab lives under this directory */
+  hasOpenDescendant?: boolean;
   onToggle: (relPath: string) => void;
   onSelect: (entry: TreeEntry, relPath: string) => void;
   onDoubleClick?: (entry: TreeEntry, relPath: string) => void;
@@ -40,6 +42,7 @@ export const FileTreeNode = memo(function FileTreeNode({
   isExpanded,
   isLoading,
   isSelected,
+  hasOpenDescendant,
   onToggle,
   onSelect,
   onDoubleClick,
@@ -193,9 +196,9 @@ export const FileTreeNode = memo(function FileTreeNode({
           <span className="ml-auto text-[10px] text-zinc-400">...</span>
         )}
 
-        {/* Children count badge for collapsed directories */}
-        {isDir && !isExpanded && entry.childrenCount !== undefined && entry.childrenCount > 0 && (
-          <span className="ml-auto text-[10px] text-zinc-400">{entry.childrenCount}</span>
+        {/* Open-files dot indicator for directories (VS Code style) */}
+        {isDir && hasOpenDescendant && (
+          <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
         )}
       </div>
 
