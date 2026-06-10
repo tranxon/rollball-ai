@@ -189,36 +189,42 @@ impl AgentLoop {
                     } else if tool_calls.is_some() {
                         // Finished has no tool_calls — apply accumulated argument chunks
                         // from the stream to the ToolCallStart entries.
-                        // When ToolCallStart already carries initial arguments
-                        // (e.g. GLM/DeepSeek send name+args together), do NOT
-                        // append buffer content — they are already complete.
+                        // Same three-pattern logic as the post-stream handler below.
                         if let Some(ref mut tcs) = tool_calls {
                             for (i, tc) in tcs.iter_mut().enumerate() {
-                                if let Some(args) =
+                                if let Some(buffer_args) =
                                     tool_call_args_buffer.get(&(i as u64))
-                                    && (tc.function.arguments.is_empty()
-                                        || tc.function.arguments == "{}")
                                 {
-                                    // Validate JSON before applying — stream interruption can
-                                    // leave incomplete arguments that would fail at tool execution.
-                                    if serde_json::from_str::<serde_json::Value>(args).is_ok() {
-                                        tc.function.arguments = args.clone();
+                                    let initial_is_complete_json =
+                                        serde_json::from_str::<serde_json::Value>(
+                                            &tc.function.arguments,
+                                        ).is_ok();
+
+                                    if initial_is_complete_json {
+                                        // GLM/DeepSeek same-chunk — already complete.
                                     } else {
-                                        tracing::error!(
-                                            tool_name = %tc.function.name,
-                                            index = i,
-                                            raw_len = args.len(),
-                                            raw_preview = %&args[..args.len().min(200)],
-                                            "Accumulated tool call arguments are not valid JSON"
-                                        );
-                                        tc.function.arguments =
-                                            make_incomplete_marker(&tc.function.name, args.len());
+                                        let combined = if tc.function.arguments.is_empty() {
+                                            buffer_args.clone()
+                                        } else {
+                                            format!(
+                                                "{}{}",
+                                                tc.function.arguments,
+                                                buffer_args,
+                                            )
+                                        };
+                                        if serde_json::from_str::<serde_json::Value>(
+                                            &combined,
+                                        ).is_ok() {
+                                            tc.function.arguments = combined;
+                                        } else {
+                                            tc.function.arguments =
+                                                make_incomplete_marker(
+                                                    &tc.function.name,
+                                                    combined.len(),
+                                                );
+                                        }
                                     }
                                 }
-                                // If arguments already non-empty (GLM/DeepSeek same-chunk pattern),
-                                // they are already complete — do not append buffer content.
-                                // DeepSeek sends duplicate complete arguments in subsequent chunks,
-                                // appending would produce invalid JSON like {"path": "."}{"path": "."}
                             }
                         }
                     }
@@ -306,44 +312,69 @@ impl AgentLoop {
         // Post-stream: Apply accumulated argument chunks to tool calls.
         // This handles the case where the OpenAI SSE stream ends without
         // a Finished event (common with OpenAI-compatible APIs like MiniMax).
-        // When ToolCallStart already carries initial arguments from the same
-        // SSE chunk (e.g. GLM, DeepSeek), do NOT append buffer content —
-        // they are already complete.
+        //
+        // Three streaming patterns exist across providers:
+        //   1. OpenAI standard: initial_args="" + buffer=full args
+        //      → apply buffer alone (replaces empty initial_args)
+        //   2. GLM/DeepSeek same-chunk: initial_args=complete JSON
+        //      → keep initial_args, discard buffer (avoid duplicates)
+        //   3. MiniMax partial-start: initial_args="{" + buffer=rest
+        //      → concatenate initial_args + buffer to form complete JSON
+        //
+        // The key distinction: if initial_args are already valid JSON,
+        // they are complete (pattern 2). Otherwise, they are a partial
+        // prefix that needs buffer content appended (patterns 1 & 3).
         if tool_calls.is_some()
             && !tool_call_args_buffer.is_empty()
             && let Some(ref mut tcs) = tool_calls
         {
             for (i, tc) in tcs.iter_mut().enumerate() {
-                if let Some(args) = tool_call_args_buffer.get(&(i as u64))
-                    && (tc.function.arguments.is_empty()
-                        || tc.function.arguments == "{}")
-                {
-                    // Validate JSON before applying — stream interruption can
-                    // leave incomplete arguments that would fail at tool execution.
-                    if serde_json::from_str::<serde_json::Value>(args).is_ok() {
-                        tracing::info!(
-                            tool_name = %tc.function.name,
-                            index = i,
-                            accumulated_len = args.len(),
-                            "Applying accumulated arguments to tool call"
-                        );
-                        tc.function.arguments = args.clone();
+                if let Some(buffer_args) = tool_call_args_buffer.get(&(i as u64)) {
+                    let initial_is_complete_json =
+                        serde_json::from_str::<serde_json::Value>(&tc.function.arguments).is_ok();
+
+                    if initial_is_complete_json {
+                        // Pattern 2: arguments already complete (GLM/DeepSeek).
+                        // DeepSeek sends duplicate complete arguments in subsequent
+                        // chunks — appending would produce invalid JSON.
+                        // Do NOT apply buffer content.
                     } else {
-                        tracing::error!(
-                            tool_name = %tc.function.name,
-                            index = i,
-                            raw_len = args.len(),
-                            raw_preview = %&args[..args.len().min(200)],
-                            "Accumulated tool call arguments are not valid JSON"
-                        );
-                        tc.function.arguments =
-                            make_incomplete_marker(&tc.function.name, args.len());
+                        // Pattern 1 or 3: arguments are empty or incomplete.
+                        // Concatenate initial_args + buffer to form complete JSON.
+                        let combined = if tc.function.arguments.is_empty() {
+                            buffer_args.clone()
+                        } else {
+                            format!("{}{}", tc.function.arguments, buffer_args)
+                        };
+
+                        // Validate JSON before applying — stream interruption can
+                        // leave incomplete arguments that would fail at tool execution.
+                        if serde_json::from_str::<serde_json::Value>(&combined).is_ok() {
+                            tracing::info!(
+                                tool_name = %tc.function.name,
+                                index = i,
+                                initial_len = tc.function.arguments.len(),
+                                buffer_len = buffer_args.len(),
+                                combined_len = combined.len(),
+                                "Applying combined arguments to tool call"
+                            );
+                            tc.function.arguments = combined;
+                        } else {
+                            tracing::error!(
+                                tool_name = %tc.function.name,
+                                index = i,
+                                initial_len = tc.function.arguments.len(),
+                                initial_preview = %&tc.function.arguments[..tc.function.arguments.len().min(100)],
+                                buffer_len = buffer_args.len(),
+                                buffer_preview = %&buffer_args[..buffer_args.len().min(100)],
+                                combined_len = combined.len(),
+                                "Combined tool call arguments are not valid JSON"
+                            );
+                            tc.function.arguments =
+                                make_incomplete_marker(&tc.function.name, combined.len());
+                        }
                     }
                 }
-                // If arguments already non-empty (GLM/DeepSeek same-chunk pattern),
-                // they are already complete — do not append buffer content.
-                // DeepSeek sends duplicate complete arguments in subsequent chunks,
-                // appending would produce invalid JSON like {"path": "."}{"path": "."}
             }
         }
 
