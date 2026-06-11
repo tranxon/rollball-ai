@@ -984,7 +984,7 @@ export function ChatPanel() {
                       >
                         <div className="flex items-center gap-1.5 px-4 py-1.5 select-none">
                           <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
-                          <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>thinking ...</span>
+                          <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>working ...</span>
                         </div>
                       </div>
                     );

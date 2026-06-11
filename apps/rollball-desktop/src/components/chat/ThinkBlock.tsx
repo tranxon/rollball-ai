@@ -41,14 +41,21 @@ const THINK_HEADER_FONT_SIZE = "calc(var(--ui-font-size, 0.875rem) * 0.9)";
 const THINK_DURATION_FONT_SIZE = "calc(var(--ui-font-size, 0.875rem) * 0.8)";
 
 /**
- * Simple collapsible think block with timer.
- * Shows "Thinking (Xs)" header, click to expand/collapse content.
- * Content is capped at 5 visible lines with auto-scroll to bottom,
- * so only the latest output is visible during long thinking phases.
+ * Collapsible think block with timer and auto-expand/collapse.
+ *
+ * - "Thinking" phase (streaming, no endTime): auto-expanded so the user
+ *   can watch the thinking process in real time.
+ * - "Thought" phase (completed): auto-collapsed to reduce visual clutter.
+ * - User can manually toggle at any time; manual collapse during thinking
+ *   is respected until the next thinking phase.
+ * - Content is capped at 5 visible lines with auto-scroll to bottom,
+ *   so only the latest output is visible during long thinking phases.
  */
 export function ThinkBlock({ content, isStreaming, startTime, endTime, defaultExpanded }: ThinkBlockProps) {
-  const [expanded, setExpanded] = useState(defaultExpanded ?? false);
+  const isThinking = !!(isStreaming && endTime == null);
+  const [expanded, setExpanded] = useState(defaultExpanded ?? isThinking);
   const contentRef = useRef<HTMLDivElement>(null);
+  const manuallyCollapsed = useRef(false);
 
   // Auto-scroll to bottom when content updates
   useEffect(() => {
@@ -56,6 +63,21 @@ export function ThinkBlock({ content, isStreaming, startTime, endTime, defaultEx
       contentRef.current.scrollTop = contentRef.current.scrollHeight;
     }
   }, [content, expanded]);
+
+  // Auto-expand when thinking starts (respect user manual collapse)
+  useEffect(() => {
+    if (isThinking && !manuallyCollapsed.current) {
+      setExpanded(true);
+    }
+  }, [isThinking]);
+
+  // Auto-collapse when thinking completes (transition from Thinking → Thought)
+  useEffect(() => {
+    if (!isThinking) {
+      setExpanded(false);
+      manuallyCollapsed.current = false;
+    }
+  }, [isThinking]);
 
   // Calculate duration: use fixed endTime if available, otherwise live timer
   const duration = startTime
@@ -65,7 +87,16 @@ export function ThinkBlock({ content, isStreaming, startTime, endTime, defaultEx
   return (
     <div className="my-1">
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          const next = !expanded;
+          setExpanded(next);
+          // Track manual collapse during thinking; reset on manual expand
+          if (!next && isThinking) {
+            manuallyCollapsed.current = true;
+          } else if (next) {
+            manuallyCollapsed.current = false;
+          }
+        }}
         className="flex items-center gap-2 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300 transition-colors"
         style={{ fontSize: THINK_HEADER_FONT_SIZE }}
       >

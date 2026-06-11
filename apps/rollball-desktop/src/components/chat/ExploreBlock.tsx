@@ -220,7 +220,7 @@ function PairedExploreItem({ item, isStreaming, pendingApproval, currentSessionI
         hasReplyStarted={false}
         startTime={item.msg.startTime}
         endTime={item.msg.endTime}
-        defaultExpanded={false}
+        defaultExpanded={isStreaming && !item.msg.endTime}
       />
     );
   }
