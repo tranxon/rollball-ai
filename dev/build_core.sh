@@ -101,8 +101,15 @@ fi
 echo ""
 
 # Step 3.5: Build Embedding Runtime
-echo -e "${YELLOW}[3.5/5] Building Embedding Runtime (release mode)...${NC}"
-if cargo build --release -p rollball-embed 2>&1 | tee /tmp/embed_build.log; then
+# If ORT_LIB_LOCATION is set, assume manual ORT install and skip download-binaries.
+if [ -n "$ORT_LIB_LOCATION" ]; then
+    EMBED_FEATURES=""
+    echo -e "${YELLOW}[3.5/5] Building Embedding Runtime (system ORT from $ORT_LIB_LOCATION)...${NC}"
+else
+    EMBED_FEATURES="--features download-ort"
+    echo -e "${YELLOW}[3.5/5] Building Embedding Runtime (release mode, download-ort)...${NC}"
+fi
+if cargo build --release -p rollball-embed $EMBED_FEATURES 2>&1 | tee /tmp/embed_build.log; then
     if grep -q "error" /tmp/embed_build.log 2>/dev/null; then
         echo -e "${RED}  Embedding Runtime build failed with errors.${NC}"
         exit 1

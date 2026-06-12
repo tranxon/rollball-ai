@@ -141,14 +141,22 @@ prost = "0.13"
 tonic-build = "0.12"
 protoc-bin-vendored = "3"
 
-# ONNX Runtime — use download-binaries to statically link ORT.
-# Platform notes:
-#   Windows: Requires MSVC v144+ (14.40+) for the prebuilt ORT 1.24.2 libraries.
-#   Linux:   Requires glibc 2.27+ (Ubuntu 18.04+), gcc/g++ toolchain.
-#   macOS:   Requires macOS 12+ (Monterey), Xcode command-line tools.
-# For GPU acceleration, enable per-platform features in rollball-embed:
+# ONNX Runtime — static or dynamic linking.
+#
+# The `download-binaries` feature downloads and statically links prebuilt ORT.
+#   Windows: Requires MSVC v144+ (14.40+).
+#   Linux:   Requires glibc 2.38+ (Ubuntu 23.10+, Fedora 39+).
+#   macOS:   Requires macOS 12+ (Monterey).
+#
+# For older Linux (e.g. Ubuntu 22.04, glibc < 2.38), disable `download-binaries`
+# and install ONNX Runtime manually:
+#   export ORT_LIB_LOCATION=/path/to/onnxruntime/lib
+#   export ORT_DYLIB_PATH=/path/to/onnxruntime/lib/libonnxruntime.so
+#   cargo build --release -p rollball-embed
+#
+# GPU acceleration (opt-in per platform):
 #   --features directml (Windows) | cuda (Linux) | coreml (macOS)
-ort = { version = "2.0.0-rc.10", features = ["download-binaries"] }
+ort = { version = "2.0.0-rc.10" }
 
 # Tokenizer (HuggingFace)
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }

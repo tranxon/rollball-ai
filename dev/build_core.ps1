@@ -87,7 +87,7 @@ Write-Host ""
 $step++
 Write-Host "[$step/$totalSteps] Building Embedding Runtime (release mode)..." -ForegroundColor Yellow
 try {
-    cargo build --release -p rollball-embed 2>&1 | ForEach-Object {
+    cargo build --release -p rollball-embed --features download-ort 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {
             Write-Host "  $_" -ForegroundColor Gray
         }
