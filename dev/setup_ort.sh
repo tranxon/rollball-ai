@@ -224,6 +224,7 @@ if [ -f "$ORT_EXTRACTED_DIR/lib/$ORT_LIB_NAME" ] && [ "$FORCE_REINSTALL" = "fals
     # Still export env vars and generate env file
     export ORT_LIB_LOCATION="$ORT_EXTRACTED_DIR/lib"
     export ORT_DYLIB_PATH="$ORT_EXTRACTED_DIR/lib/$ORT_LIB_NAME"
+    export ORT_PREFER_DYNAMIC_LINK=1
 else
     # ── Download (with mirror fallback) ──────────────────────────────────────
     echo -e "${YELLOW}[1/4] Downloading ONNX Runtime $ORT_VERSION...${NC}"
@@ -379,6 +380,7 @@ else
     # ── Set environment variables ────────────────────────────────────────────
     export ORT_LIB_LOCATION="$ORT_EXTRACTED_DIR/lib"
     export ORT_DYLIB_PATH="$ORT_EXTRACTED_DIR/lib/$ORT_LIB_NAME"
+    export ORT_PREFER_DYNAMIC_LINK=1
 
     # ── Clean cached downloads ───────────────────────────────────────────────
     echo -e "${YELLOW}[4/4] Cleaning cached ORT downloads...${NC}"
@@ -405,6 +407,7 @@ cat > "$ENV_FILE" << ENVEOF
 
 export ORT_LIB_LOCATION="$ORT_LIB_LOCATION"
 export ORT_DYLIB_PATH="$ORT_DYLIB_PATH"
+export ORT_PREFER_DYNAMIC_LINK=1
 
 # Add to LD_LIBRARY_PATH so the runtime linker can find libonnxruntime.so
 if [ -d "$ORT_LIB_LOCATION" ]; then
