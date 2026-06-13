@@ -115,14 +115,28 @@ export async function resetGateway(
   return resp.json();
 }
 
-/** Reset onboarding and trigger Gateway models cache reload */
+/** Reset onboarding and trigger Gateway models cache reload.
+ *
+ *  The frontend onboarding flag is always cleared first — the user's
+ *  intent is to reset the local wizard. The Gateway-side reset is
+ *  best-effort: if the remote Gateway is unreachable (e.g. WSL IP drift,
+ *  firewall, Gateway process not running), the wizard still reappears
+ *  on reload. A previous version put `removeItem` after `await`, which
+ *  silently failed to reset the UI whenever the Gateway call threw.
+ */
 export async function resetOnboarding(
   gatewayUrl = getGatewayUrl(),
 ): Promise<{ status: string; source: string }> {
-  const result = await resetGateway(gatewayUrl);
-  // Clear frontend onboarding state
   localStorage.removeItem("rollball_onboarding");
-  return result;
+  try {
+    return await resetGateway(gatewayUrl);
+  } catch (e) {
+    console.warn(
+      "Gateway reset failed (frontend onboarding state cleared anyway):",
+      e,
+    );
+    return { status: "frontend_only", source: "local" };
+  }
 }
 
 // ── Embedding Model API ──────────────────────────────────────────────────
