@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useGatewayStore } from "../../stores/gatewayStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { getGatewayUrl } from "../../lib/config";
@@ -9,6 +10,44 @@ const POLL_INTERVAL = 500;
 const MIN_SPLASH_MS = 1500;
 const MAX_WAIT_MS = 20_000;
 const SYSTEM_AGENT_ID = "com.rollball.system";
+
+/**
+ * Push the persisted settings into Rust and (for local mode) spawn the
+ * Gateway child process. Returns the URL the frontend should poll.
+ *
+ * This replaces the previous architecture where Rust unconditionally
+ * spawned the local Gateway in its setup hook, hardcoding the URL and
+ * ignoring the frontend's "remote gateway" setting.
+ */
+async function bootGateway(): Promise<void> {
+    const settings = useSettingsStore.getState();
+    const mode = settings.gatewayMode;
+    const url = settings.gatewayUrl;
+
+    // 1) Sync config into Rust. Rust will:
+    //    - local: force base_url = defaults::GATEWAY_HTTP_URL (ignores `url`)
+    //    - remote: store the user-configured URL; if a local process is
+    //      already running it will be stopped to free the port.
+    await invoke("set_gateway_config", {
+        config: { mode, url },
+    });
+
+    // 2) Boot the gateway itself
+    if (mode === "local") {
+        // Spawns child Gateway + waits up to 10s for /health
+        await invoke("init_local_gateway");
+    }
+    // Remote mode: the Gateway is presumed already running on `url`.
+
+    // 3) Ensure System Agent is installed on whichever Gateway we ended
+    //    up with. Rust uses its internal base_url (already configured).
+    try {
+        await invoke("ensure_system_agent");
+    } catch (err) {
+        // Non-fatal: user can install agents manually
+        console.warn("ensure_system_agent failed:", err);
+    }
+}
 
 interface SplashScreenProps {
     onReady: () => void;
@@ -112,11 +151,23 @@ export function SplashScreen({ onReady }: SplashScreenProps) {
 
         const init = async () => {
             if (gatewayMode === "local") {
-                // Gateway is already spawned by Rust at exe startup — just poll for readiness
-                setStatusText("Waiting for Gateway...");
+                setStatusText("Starting local Gateway...");
             } else {
                 setStatusText("Connecting to Gateway...");
             }
+
+            // Push persisted settings into Rust and (for local mode)
+            // spawn the child Gateway. The previous architecture did
+            // this in Rust's setup hook, which ignored the user's
+            // remote-gateway setting.
+            try {
+                await bootGateway();
+            } catch (err) {
+                console.error("bootGateway failed:", err);
+                // Fall through to health polling — Gateway may still be
+                // reachable from a previous run.
+            }
+
             const gDone = await doCheck();
             if (gDone) {
                 pollAgentReady();

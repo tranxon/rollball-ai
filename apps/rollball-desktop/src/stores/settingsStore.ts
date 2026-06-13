@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import type { Theme, GatewayMode } from "../lib/types";
 import {
   DEFAULT_GATEWAY_URL,
@@ -12,6 +13,27 @@ import {
   DEFAULT_LOG_FILE_SIZE_MB,
   DEFAULT_LOG_FILE_COUNT,
 } from "../lib/config";
+
+/**
+ * Push the current gateway config to the Rust backend so that:
+ *   - All Tauri HTTP commands use the correct base URL (previously they
+ *     were hardcoded to 127.0.0.1:19876 in Rust)
+ *   - The Rust side knows whether to skip spawning a local Gateway on
+ *     the next boot (remote mode)
+ *
+ * Best-effort: errors are logged but never thrown, because settings
+ * persistence must not be blocked by transient Tauri command failures
+ * (e.g. during page reload while the Rust side is still booting).
+ */
+async function pushGatewayConfigToRust(mode: GatewayMode, url: string): Promise<void> {
+  try {
+    await invoke("set_gateway_config", {
+      config: { mode, url },
+    });
+  } catch (err) {
+    console.warn("Failed to push gateway config to Rust:", err);
+  }
+}
 
 const STORAGE_KEY_THEME = "rollball-theme";
 const STORAGE_KEY_FONT_SIZE = "rollball-font-size";
@@ -188,7 +210,7 @@ interface SettingsStore {
   setLogFileCount: (count: number) => void;
 }
 
-export const useSettingsStore = create<SettingsStore>((set) => {
+export const useSettingsStore = create<SettingsStore>((set, get) => {
   // Initialize from persisted values and apply theme to DOM immediately
   const initialTheme = getPersistedTheme();
   const initialFontSize = getPersistedFontSize();
@@ -247,10 +269,16 @@ export const useSettingsStore = create<SettingsStore>((set) => {
     setGatewayUrl: (gatewayUrl) => {
       try { localStorage.setItem(STORAGE_KEY_GATEWAY_URL, gatewayUrl); } catch { }
       set({ gatewayUrl });
+      // Sync to Rust so subsequent Tauri commands use the new URL
+      pushGatewayConfigToRust(get().gatewayMode, gatewayUrl);
     },
     setGatewayMode: (gatewayMode) => {
       try { localStorage.setItem(STORAGE_KEY_GATEWAY_MODE, gatewayMode); } catch { }
       set({ gatewayMode });
+      // Sync to Rust. For local→remote this also stops any locally-
+      // spawned Gateway. For remote→local the user must press Start
+      // (or reload) — we don't auto-spawn here.
+      pushGatewayConfigToRust(gatewayMode, get().gatewayUrl);
     },
     setLogLevel: (logLevel) => {
       try { localStorage.setItem(STORAGE_KEY_LOG_LEVEL, logLevel); } catch { }

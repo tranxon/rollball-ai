@@ -5,6 +5,7 @@ import { cn } from "../../lib/utils";
 import { StyledInput } from "../common/StyledInput";
 import { SEARCH_PROVIDERS, lookupSearchProvider, searchKeyPlaceholder } from "../../lib/search-providers";
 import { useTranslation } from "../../i18n/useTranslation";
+import { getGatewayUrl } from "../../lib/config";
 
 /** Search Provider configuration tab — mirrors ProvidersTab layout */
 export function SearchTab() {
@@ -59,7 +60,7 @@ export function SearchTab() {
         });
 
         // Test search to verify the key works
-        const resp = await fetch(`${import.meta.env.VITE_GATEWAY_URL || "http://127.0.0.1:19876"}/api/search/test?provider=${newProvider}`);
+        const resp = await fetch(`${getGatewayUrl()}/api/search/test?provider=${newProvider}`);
         if (!resp.ok) {
           const err = await resp.text();
           throw new Error(err || `Test failed with status ${resp.status}`);
