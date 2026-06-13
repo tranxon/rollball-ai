@@ -1,0 +1,15 @@
+# Enforce LF line endings for shell scripts (required on Linux/macOS)
+*.sh text eol=lf
+
+# Rust source and config
+*.rs text eol=lf
+*.toml text eol=lf
+
+# Protobuf
+*.proto text eol=lf
+
+# PowerShell (cross-platform)
+*.ps1 text eol=lf
+
+# Build/dev scripts
+*.bat text eol=crlf
