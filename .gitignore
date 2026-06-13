@@ -32,6 +32,10 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.ort_env
+.ort_env.ps1
+.ort_env.bat
+.ort/
 .tmp/
 nul
 
