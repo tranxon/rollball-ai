@@ -380,6 +380,7 @@ impl Gateway {
         // fall back to remote providers (Ollama / OpenAI-compatible API).
         // The embed process state is stored in GatewayState for the
         // HTTP embedding API to reference.
+        let mut embed_child = None;
         {
             let data_dir = std::path::PathBuf::from(&self.config.data_dir);
             let models_dir = data_dir.join("models");
@@ -394,13 +395,14 @@ impl Gateway {
                 &hf_mirrors,
                 onnx_variant,
             ).await {
-                Ok(embed_state) => {
+                Ok((embed_state, child)) => {
                     tracing::info!(
                         pid = embed_state.pid,
                         port = embed_state.port,
                         "Embedding service process spawned"
                     );
                     self.state.embed_process = Some(embed_state);
+                    embed_child = Some(child);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -422,6 +424,24 @@ impl Gateway {
         // This is safe because run() is the terminal daemon method that blocks forever.
         let shared_state: SharedState =
             Arc::new(RwLock::new(std::mem::take(&mut self.state)));
+
+        // Spawn embed process reaper — clears state when the child exits.
+        // This is the single source of truth for embed process lifecycle:
+        // when the child process exits (normally or by crash), the shared
+        // state is updated atomically. HTTP handlers see embed_process=None
+        // on the very next request, with no defensive PID polling needed.
+        if let Some(mut child) = embed_child {
+            let state_for_reaper = shared_state.clone();
+            tokio::spawn(async move {
+                let exit_status = child.wait().await;
+                tracing::warn!(
+                    exit_status = ?exit_status,
+                    "Embedding service process exited, clearing state"
+                );
+                let mut gw = state_for_reaper.write().await;
+                gw.embed_process = None;
+            });
+        }
 
         // S3.2: Open CronStore and load persisted cron entries
         {

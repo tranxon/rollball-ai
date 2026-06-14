@@ -187,7 +187,7 @@ pub fn find_available_debug_port(base_port: u16) -> u16 {
     }
 }
 
-/// Check if a process with the given PID is still running
+/// Check if a process with the given PID is still running (async version).
 ///
 /// On Linux: checks if `/proc/{pid}` exists
 /// On Windows: uses `tasklist` to check for the process
@@ -224,6 +224,23 @@ pub async fn check_health(pid: u32) -> bool {
             Err(_) => false,
         }
     }
+}
+
+/// Synchronous process liveness check (no await, safe inside locks).
+///
+/// On Linux: checks if `/proc/{pid}` exists (instant).
+/// On other platforms: returns `true` (assumes alive — self-corrects on next call).
+///
+/// Use this instead of `check_health` when you need to call inside a
+/// write-lock scope (e.g. to clear stale process state on death).
+#[cfg(target_os = "linux")]
+pub fn is_process_alive(pid: u32) -> bool {
+    std::path::Path::new(&format!("/proc/{}", pid)).exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn is_process_alive(_pid: u32) -> bool {
+    true // fallback: assume alive if we have a PID record
 }
 
 #[cfg(test)]

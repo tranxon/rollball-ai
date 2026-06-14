@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::GatewayError;
 use crate::http::agent_config::{self, AgentConfigResponse, UpdateAgentConfigRequest};
 use crate::http::routes::{ApiError, AppState};
+use crate::lifecycle::process::is_process_alive;
 use rollball_core::protocol::GatewayResponse;
 use rollball_core::protocol::{AgentSearchConfig, McpServerConfigDef};
 use rollball_core::AgentManifest;
@@ -127,27 +128,6 @@ pub struct AgentModelResponse {
     pub model: String,
     /// All available models for this provider
     pub available_models: Vec<String>,
-}
-
-// ── Process liveness check ────────────────────────────────────────────
-
-/// Check if a process with the given PID is still alive.
-///
-/// Uses `/proc/{pid}` on Linux (always available, no I/O cost since procfs
-/// is in-memory). On non-Linux platforms, always returns `true` as a fallback.
-///
-/// Note: There is an inherent TOCTOU race — the process may exit between
-/// this check and when the result is used. This is acceptable because the
-/// consequence is only a stale `running: true` that self-corrects on the
-/// next API call.
-#[cfg(target_os = "linux")]
-fn is_process_alive(pid: u32) -> bool {
-    std::path::Path::new(&format!("/proc/{}", pid)).exists()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn is_process_alive(_pid: u32) -> bool {
-    true // fallback: assume alive if we have a PID record
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────

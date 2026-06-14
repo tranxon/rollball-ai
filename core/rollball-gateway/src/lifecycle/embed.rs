@@ -33,13 +33,17 @@ pub struct EmbedProcessState {
 /// The embedding service runs as a sibling process to the Gateway,
 /// listening on `127.0.0.1:{port}`. It downloads and loads the
 /// recommended model on first startup.
+///
+/// Returns `(EmbedProcessState, Child)` — the caller is responsible for
+/// reaping the child process (e.g. spawning a task that awaits `child.wait()`
+/// and clears state on exit).
 pub async fn spawn_embed_process(
     data_dir: &Path,
     models_dir: &Path,
     port: u16,
     hf_mirrors: &[String],
     onnx_variant: &str,
-) -> Result<EmbedProcessState, GatewayError> {
+) -> Result<(EmbedProcessState, tokio::process::Child), GatewayError> {
     // Locate the rollball-embed binary (sibling of current executable)
     let embed_bin = std::env::current_exe()
         .map_err(|e| GatewayError::Lifecycle(format!("Cannot find current executable: {}", e)))?
@@ -112,7 +116,7 @@ pub async fn spawn_embed_process(
         cmd.process_group(0);
     }
 
-    let mut child = cmd.spawn().map_err(|e| {
+    let child = cmd.spawn().map_err(|e| {
         GatewayError::Lifecycle(format!(
             "Failed to spawn rollball-embed (binary: {:?}): {}",
             embed_bin, e
@@ -125,20 +129,18 @@ pub async fn spawn_embed_process(
         )
     })?;
 
-    // Spawn a background task to reap the child's exit status
-    tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
-
     tracing::info!("Spawned rollball-embed process (PID: {}, port: {})", pid, port);
 
-    Ok(EmbedProcessState {
-        pid,
-        port,
-        active_model_id: None,
-        active_dimension: None,
-        ready: false,
-    })
+    Ok((
+        EmbedProcessState {
+            pid,
+            port,
+            active_model_id: None,
+            active_dimension: None,
+            ready: false,
+        },
+        child,
+    ))
 }
 
 /// Kill the embedding service process.
