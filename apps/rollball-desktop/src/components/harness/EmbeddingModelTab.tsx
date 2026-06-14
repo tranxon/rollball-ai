@@ -72,44 +72,79 @@ export function EmbeddingModelTab() {
             return;
         }
 
+        let needsRefresh = false;
+
         const poll = async () => {
             // Snapshot current downloading ids to avoid stale closure
             const ids = Array.from(downloadingIds);
-            for (const id of ids) {
-                try {
-                    const resp = await fetchEmbeddingModelStatus(id);
 
-                    if (resp.status === "downloading") {
-                        setDownloadProgress((prev) => ({ ...prev, [id]: resp.progress ?? 0 }));
-                    } else if (resp.status === "downloaded" || resp.status === "loaded") {
-                        setDownloadingIds((prev) => {
-                            const next = new Set(prev);
-                            next.delete(id);
-                            return next;
-                        });
-                        setDownloadProgress((prev) => {
-                            const next = { ...prev };
-                            delete next[id];
-                            return next;
-                        });
-                        await loadModels();
-                    } else if (resp.status === "failed") {
-                        setError(`Download failed: ${resp.error ?? "unknown error"}`);
-                        setDownloadingIds((prev) => {
-                            const next = new Set(prev);
-                            next.delete(id);
-                            return next;
-                        });
-                        setDownloadProgress((prev) => {
-                            const next = { ...prev };
-                            delete next[id];
-                            return next;
-                        });
-                        await loadModels();
-                    }
-                } catch {
-                    // Polling error — just retry on next interval
+            // Query ALL model statuses in parallel to avoid serial round-trips
+            const results = await Promise.allSettled(
+                ids.map((id) => fetchEmbeddingModelStatus(id)),
+            );
+
+            const completedIds: string[] = [];
+            const failedIds: string[] = [];
+
+            results.forEach((result, i) => {
+                if (result.status !== "fulfilled") return;
+                const resp = result.value;
+                const id = ids[i];
+
+                if (resp.status === "downloading") {
+                    // Update progress without deleting — avoid flicker
+                    setDownloadProgress((prev) => ({ ...prev, [id]: resp.progress ?? 0 }));
+                } else if (resp.status === "downloaded" || resp.status === "loaded") {
+                    completedIds.push(id);
+                } else if (resp.status === "failed") {
+                    failedIds.push(id);
                 }
+            });
+
+            // Report errors for any failed downloads
+            for (const id of failedIds) {
+                const idx = ids.indexOf(id);
+                const result = results[idx];
+                if (result.status === "fulfilled" && result.value.status === "failed") {
+                    setError(`Download failed: ${result.value.error ?? "unknown error"}`);
+                }
+            }
+
+            // Remove completed/failed IDs in a single batch to avoid
+            // intermediate renders that wipe other models' progress
+            if (completedIds.length > 0 || failedIds.length > 0) {
+                const removeSet = new Set([...completedIds, ...failedIds]);
+
+                setDownloadingIds((prev) => {
+                    const next = new Set(prev);
+                    for (const id of removeSet) next.delete(id);
+                    return next;
+                });
+
+                // Set completed models to 100% before removing so user sees
+                // the bar reach the end instead of jumping back to 0
+                setDownloadProgress((prev) => {
+                    const next = { ...prev };
+                    for (const id of completedIds) next[id] = 100;
+                    return next;
+                });
+
+                // Clean up progress after a short delay so the 100% bar renders
+                setTimeout(() => {
+                    setDownloadProgress((prev) => {
+                        const next = { ...prev };
+                        for (const id of removeSet) delete next[id];
+                        return next;
+                    });
+                }, 400);
+
+                needsRefresh = true;
+            }
+
+            // Refresh model list ONCE after all statuses are processed
+            if (needsRefresh) {
+                needsRefresh = false;
+                await loadModels();
             }
         };
 
@@ -391,7 +426,10 @@ function ModelCard({
                             </span>
                         )}
                         {isActive && (
-                            <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                            <span
+                                className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+                                style={{ backgroundColor: "color-mix(in srgb, var(--color-accent) 15%, transparent)", color: "var(--color-accent)" }}
+                            >
                                 {t("embedding.active")}
                             </span>
                         )}
@@ -456,13 +494,16 @@ function ModelCard({
                         <button
                             onClick={onDelete}
                             disabled={isBusy}
-                            className="inline-flex items-center gap-1 rounded-md border border-zinc-300 px-2 py-1 text-[11px] font-medium text-zinc-500 hover:border-red-300 hover:text-red-600 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-400 dark:hover:border-red-700 dark:hover:text-red-400"
+                            className="group/del inline-flex items-center gap-1 rounded-md border border-zinc-300 px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
                         >
                             {isDeleting ? (
                                 <Loader2 className="h-3 w-3 animate-spin" />
                             ) : (
-                                <Trash2 className="h-3 w-3" />
+                                <Trash2 className="h-3 w-3 transition-colors group-hover/del:text-[var(--color-accent)]" />
                             )}
+                            <span className="transition-colors group-hover/del:text-[var(--color-accent)]">
+                                {isDeleting ? t("embedding.deleting") : t("embedding.delete")}
+                            </span>
                         </button>
                     )}
                 </div>

@@ -134,7 +134,7 @@ async fn main() {
         models_dir: models_dir.clone(),
         onnx_variant: cli.onnx_variant.clone(),
         default_model: Some(default_model_id),
-        download_cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        download_cancel_flags: tokio::sync::RwLock::new(std::collections::HashMap::new()),
     });
 
     // Build router

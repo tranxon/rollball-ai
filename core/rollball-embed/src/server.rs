@@ -48,9 +48,9 @@ pub struct AppState {
     pub onnx_variant: String,
     /// Default model ID to load at startup.
     pub default_model: Option<String>,
-    /// Shared cancel flag for ongoing downloads. Set by the cancel-download
-    /// endpoint; cleared before each new download starts.
-    pub download_cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+    /// Per-model cancel flags for ongoing downloads. Each download gets its
+    /// own AtomicBool so cancelling one model does not affect others.
+    pub download_cancel_flags: RwLock<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 // ── OpenAI API types ────────────────────────────────────────────────────
@@ -544,14 +544,17 @@ pub async fn download_model(
         status.insert(model_id.clone(), ModelStatus::Downloading(0));
     }
 
-    // Clear cancel flag for a fresh download
-    state.download_cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+    // Create per-model cancel flag (isolated from other concurrent downloads)
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut flags = state.download_cancel_flags.write().await;
+        flags.insert(model_id.clone(), cancel.clone());
+    }
 
     // Fire-and-forget: spawn download in background
     let state2 = state.clone();
     let mid = model_id.clone();
     tokio::spawn(async move {
-        let cancel = &state2.download_cancel_flag;
         let result = state2
             .downloader
             .download_model(
@@ -560,14 +563,18 @@ pub async fn download_model(
                 &onnx_file,
                 &entry.tokenizer_file,
                 &progress,
-                cancel,
+                &cancel,
             )
             .await;
 
-        // Remove from active progress map
+        // Remove from active progress map and cancel flags
         {
             let mut pm = state2.download_progress.write().await;
             pm.remove(&mid);
+        }
+        {
+            let mut flags = state2.download_cancel_flags.write().await;
+            flags.remove(&mid);
         }
 
         match result {
@@ -617,8 +624,13 @@ pub async fn cancel_download(
             .into_response();
     }
 
-    // Set cancel flag
-    state.download_cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    // Set per-model cancel flag
+    {
+        let flags = state.download_cancel_flags.read().await;
+        if let Some(flag) = flags.get(&model_id) {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     tracing::info!(model_id = %model_id, "Download cancel requested");
 
     // Update download status
