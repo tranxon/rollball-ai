@@ -1,14 +1,14 @@
-# System Agent — com.rollball.system
-# The "system app" of RollBall, analogous to Android's Settings/Contacts.
+# System Agent — com.acowork.system
+# The "system app" of AgentCowork, analogous to Android's Settings/Contacts.
 # Always started with Gateway, cannot be uninstalled.
 
-agent_id = "com.rollball.system"
+agent_id = "com.acowork.system"
 version = "1.0.0"
-name = "RollBall"
-display_name = "RollBall"
+name = "AgentCowork"
+display_name = "AgentCowork"
 role = "System Agent"
-description = "RollBall system agent: manages user identity, preferences, and system-level services"
-author = "Rollball Team"
+description = "AgentCowork system agent: manages user identity, preferences, and system-level services"
+author = "AgentCowork Team"
 runtime_version = "0.1.0"
 system = true
 dev = false

@@ -10,13 +10,13 @@
 
 当前 Gateway 与 Agent Runtime 的 IPC 通信采用**自定义二进制帧协议**：5 字节定长头（`[body_len: u32 BE][msg_type: u8]`）+ JSON body。该协议在实现上存在以下结构性问题：
 
-| 问题 | 根因 | 后果 |
-|------|------|------|
+| 问题                             | 根因                                                                                                                              | 后果                                                                                                                    |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | **帧交错（Frame Interleaving）** | 单条连接上混用请求-响应、Server Push、Streaming 三种模式，且共用一个 `msg_type` 命名空间（0=request, 1=response, 2=stream_chunk） | Gateway 的 `tokio::select!` 可能在响应帧之前发送推送帧，Runtime 的 `send_and_recv()` 收到错误消息类型，导致协议握手失败 |
-| **缺乏 Multiplexing** | 无 `request_id` 字段，请求与响应仅靠发送顺序关联 | 无法支持并发请求；任何乱序都会导致响应错配 |
-| **单帧类型复用** | `TYPE_RESPONSE`（msg_type=1）同时承载正常响应和 Server Push | 需要 `is_push_message()` 硬编码判别，易遗漏新变体 |
-| **跨平台维护成本** | 每新增一种消息，需同步修改帧编解码、枚举判别、推送缓冲逻辑 | 协议扩展成本高，容易引入回归 bug |
-| **无内建流量控制** | 自定义协议缺少背压机制 | 高频率 Stream Chunk 可能压垮接收方 |
+| **缺乏 Multiplexing**            | 无 `request_id` 字段，请求与响应仅靠发送顺序关联                                                                                  | 无法支持并发请求；任何乱序都会导致响应错配                                                                              |
+| **单帧类型复用**                 | `TYPE_RESPONSE`（msg_type=1）同时承载正常响应和 Server Push                                                                       | 需要 `is_push_message()` 硬编码判别，易遗漏新变体                                                                       |
+| **跨平台维护成本**               | 每新增一种消息，需同步修改帧编解码、枚举判别、推送缓冲逻辑                                                                        | 协议扩展成本高，容易引入回归 bug                                                                                        |
+| **无内建流量控制**               | 自定义协议缺少背压机制                                                                                                            | 高频率 Stream Chunk 可能压垮接收方                                                                                      |
 
 **为什么选择 gRPC：**
 
@@ -64,53 +64,53 @@
 
 #### GatewayRequest（17 个变体）
 
-| # | 变体 | 通信模式 | 说明 |
-|---|------|----------|------|
-| 1 | `KeyRelease { provider }` | req-resp | 请求 API Key |
-| 2 | `IntentSend { target, action, params, async_ }` | req-resp / stream | 发送 Intent；stream 模式下使用 TYPE_STREAM_CHUNK |
-| 3 | `BudgetQuery { provider }` | req-resp | 查询剩余预算 |
-| 4 | `UsageReport(UsageReport)` | req-resp | 上报 token 用量 |
-| 5 | `RateAcquire { provider }` | req-resp | 申请速率令牌 |
-| 6 | `PermissionRequest { request_id, permission, reason, timeout_ms }` | req-resp | 运行时权限请求 |
-| 7 | `IdentityQuery { fields }` | req-resp | 查询身份字段 |
-| 8 | `CapabilityQuery { agent_id }` | req-resp | 查询能力列表 |
-| 9 | `CronRegister { agent_id, schedule, action, params }` | req-resp | 注册定时任务 |
-| 10 | `CronUnregister { cron_id }` | req-resp | 注销定时任务 |
-| 11 | `CronList {}` | req-resp | 列出定时任务 |
-| 12 | `ContextUsageReport { agent_id, context }` | req-resp | 上报上下文用量 |
-| 13 | `AgentHello { agent_id, version, connection_role }` | req-resp | 注册连接 |
-| 14 | `ListSessions` | req-resp | 列出会话 |
-| 15 | `GetSessionMessages { session_id, cursor, limit, direction }` | req-resp | 获取会话消息 |
-| 16 | `CreateSession` | req-resp | 创建会话 |
-| 17 | `GetCurrentSessionId` | req-resp | 获取当前会话 ID |
+| #   | 变体                                                               | 通信模式          | 说明                                             |
+| --- | ------------------------------------------------------------------ | ----------------- | ------------------------------------------------ |
+| 1   | `KeyRelease { provider }`                                          | req-resp          | 请求 API Key                                     |
+| 2   | `IntentSend { target, action, params, async_ }`                    | req-resp / stream | 发送 Intent；stream 模式下使用 TYPE_STREAM_CHUNK |
+| 3   | `BudgetQuery { provider }`                                         | req-resp          | 查询剩余预算                                     |
+| 4   | `UsageReport(UsageReport)`                                         | req-resp          | 上报 token 用量                                  |
+| 5   | `RateAcquire { provider }`                                         | req-resp          | 申请速率令牌                                     |
+| 6   | `PermissionRequest { request_id, permission, reason, timeout_ms }` | req-resp          | 运行时权限请求                                   |
+| 7   | `IdentityQuery { fields }`                                         | req-resp          | 查询身份字段                                     |
+| 8   | `CapabilityQuery { agent_id }`                                     | req-resp          | 查询能力列表                                     |
+| 9   | `CronRegister { agent_id, schedule, action, params }`              | req-resp          | 注册定时任务                                     |
+| 10  | `CronUnregister { cron_id }`                                       | req-resp          | 注销定时任务                                     |
+| 11  | `CronList {}`                                                      | req-resp          | 列出定时任务                                     |
+| 12  | `ContextUsageReport { agent_id, context }`                         | req-resp          | 上报上下文用量                                   |
+| 13  | `AgentHello { agent_id, version, connection_role }`                | req-resp          | 注册连接                                         |
+| 14  | `ListSessions`                                                     | req-resp          | 列出会话                                         |
+| 15  | `GetSessionMessages { session_id, cursor, limit, direction }`      | req-resp          | 获取会话消息                                     |
+| 16  | `CreateSession`                                                    | req-resp          | 创建会话                                         |
+| 17  | `GetCurrentSessionId`                                              | req-resp          | 获取当前会话 ID                                  |
 
 #### GatewayResponse（23 个变体）
 
-| # | 变体 | 通信模式 | 说明 |
-|---|------|----------|------|
-| 1 | `AgentHelloResult { success, error }` | req-resp | 注册确认 |
-| 2 | `KeyReleaseResult { api_key, error }` | req-resp | API Key 返回 |
-| 3 | `IntentDelivered { message_id }` | req-resp | Intent 投递确认 |
-| 4 | `IntentReceived { from, action, params }` | **push** | 收到外部 Intent |
-| 5 | `BudgetInfo { remaining_tokens, remaining_cost_usd }` | req-resp | 预算信息 |
-| 6 | `UsageReportAck {}` | req-resp | 用量上报确认 |
-| 7 | `ContextUsageAck {}` | req-resp | 上下文用量确认 |
-| 8 | `RateToken { granted, retry_after_ms }` | req-resp | 速率令牌 |
-| 9 | `PermissionResult { request_id, granted, reason }` | req-resp | 权限结果 |
-| 10 | `IdentityDelivery { entries }` | **push** | 身份数据推送 |
-| 11 | `LLMConfigDelivery { provider, model, api_key, base_url, models, model_capabilities, max_output_tokens_limit }` | **push** | LLM 配置推送 |
-| 12 | `IdentityQueryResult { values, confidence }` | req-resp | 身份查询结果 |
-| 13 | `CapabilityOverview { capabilities }` | req-resp | 能力概览 |
-| 14 | `CapabilityUpdate { agent_id, actions, removed }` | **push** | 能力增量更新 |
-| 15 | `CronRegisterResult { cron_id, error }` | req-resp | 注册结果 |
-| 16 | `CronUnregisterResult { removed }` | req-resp | 注销结果 |
-| 17 | `CronListResult { entries }` | req-resp | 任务列表 |
-| 18 | `WorkspaceContextUpdate { context_text, current_workspace_id, current_workspace_path }` | **push** | 工作区上下文推送 |
-| 19 | `IterationLimitPaused { iteration, max_iterations, message }` | **push** | 迭代上限暂停通知 |
-| 20 | `SessionList { sessions }` | req-resp | 会话列表 |
-| 21 | `SessionMessages { messages, cursor, has_more }` | req-resp | 会话消息页 |
-| 22 | `SessionCreated { session_id }` | req-resp | 会话创建确认 |
-| 23 | `CurrentSessionId { session_id }` | req-resp | 当前会话 ID |
+| #   | 变体                                                                                                            | 通信模式 | 说明             |
+| --- | --------------------------------------------------------------------------------------------------------------- | -------- | ---------------- |
+| 1   | `AgentHelloResult { success, error }`                                                                           | req-resp | 注册确认         |
+| 2   | `KeyReleaseResult { api_key, error }`                                                                           | req-resp | API Key 返回     |
+| 3   | `IntentDelivered { message_id }`                                                                                | req-resp | Intent 投递确认  |
+| 4   | `IntentReceived { from, action, params }`                                                                       | **push** | 收到外部 Intent  |
+| 5   | `BudgetInfo { remaining_tokens, remaining_cost_usd }`                                                           | req-resp | 预算信息         |
+| 6   | `UsageReportAck {}`                                                                                             | req-resp | 用量上报确认     |
+| 7   | `ContextUsageAck {}`                                                                                            | req-resp | 上下文用量确认   |
+| 8   | `RateToken { granted, retry_after_ms }`                                                                         | req-resp | 速率令牌         |
+| 9   | `PermissionResult { request_id, granted, reason }`                                                              | req-resp | 权限结果         |
+| 10  | `IdentityDelivery { entries }`                                                                                  | **push** | 身份数据推送     |
+| 11  | `LLMConfigDelivery { provider, model, api_key, base_url, models, model_capabilities, max_output_tokens_limit }` | **push** | LLM 配置推送     |
+| 12  | `IdentityQueryResult { values, confidence }`                                                                    | req-resp | 身份查询结果     |
+| 13  | `CapabilityOverview { capabilities }`                                                                           | req-resp | 能力概览         |
+| 14  | `CapabilityUpdate { agent_id, actions, removed }`                                                               | **push** | 能力增量更新     |
+| 15  | `CronRegisterResult { cron_id, error }`                                                                         | req-resp | 注册结果         |
+| 16  | `CronUnregisterResult { removed }`                                                                              | req-resp | 注销结果         |
+| 17  | `CronListResult { entries }`                                                                                    | req-resp | 任务列表         |
+| 18  | `WorkspaceContextUpdate { context_text, current_workspace_id, current_workspace_path }`                         | **push** | 工作区上下文推送 |
+| 19  | `IterationLimitPaused { iteration, max_iterations, message }`                                                   | **push** | 迭代上限暂停通知 |
+| 20  | `SessionList { sessions }`                                                                                      | req-resp | 会话列表         |
+| 21  | `SessionMessages { messages, cursor, has_more }`                                                                | req-resp | 会话消息页       |
+| 22  | `SessionCreated { session_id }`                                                                                 | req-resp | 会话创建确认     |
+| 23  | `CurrentSessionId { session_id }`                                                                               | req-resp | 当前会话 ID      |
 
 ### 2.3 已知缺陷
 
@@ -151,7 +151,7 @@
 ```protobuf
 syntax = "proto3";
 
-package rollball.ipc.v1;
+package acowork.ipc.v1;
 
 // ============================================================================
 // Service Definition
@@ -539,32 +539,32 @@ message ConversationEntryDto {
 
 ### 3.2 消息分类与流向
 
-| 消息 | 方向 | 模式 | 说明 |
-|------|------|------|------|
-| `KeyReleaseRequest` / `KeyReleaseResult` | Runtime → Gateway → Runtime | req-resp | API Key 获取 |
-| `IntentSendRequest` / `IntentDelivered` | Runtime → Gateway → Runtime | req-resp | Intent 同步发送 |
-| `IntentReceived` | Gateway → Runtime | **push** | 外部 Agent 发来的 Intent |
-| `BudgetQueryRequest` / `BudgetInfo` | Runtime → Gateway → Runtime | req-resp | 预算查询 |
-| `UsageReportRequest` / `UsageReportAck` | Runtime → Gateway → Runtime | req-resp | 用量上报 |
-| `ContextUsageReportRequest` / `ContextUsageAck` | Runtime → Gateway → Runtime | req-resp | 上下文用量上报 |
-| `RateAcquireRequest` / `RateToken` | Runtime → Gateway → Runtime | req-resp | 速率令牌申请 |
-| `PermissionRequest` / `PermissionResult` | Runtime → Gateway → Runtime | req-resp | 权限申请 |
-| `IdentityQueryRequest` / `IdentityQueryResult` | Runtime → Gateway → Runtime | req-resp | 身份查询 |
-| `IdentityDelivery` | Gateway → Runtime | **push** | 冷启动身份注入 |
-| `CapabilityQueryRequest` / `CapabilityOverview` | Runtime → Gateway → Runtime | req-resp | 能力查询 |
-| `CapabilityUpdate` | Gateway → Runtime | **push** | 安装/卸载导致的增量更新 |
-| `CronRegisterRequest` / `CronRegisterResult` | Runtime → Gateway → Runtime | req-resp | 定时任务注册 |
-| `CronUnregisterRequest` / `CronUnregisterResult` | Runtime → Gateway → Runtime | req-resp | 定时任务注销 |
-| `CronListRequest` / `CronListResult` | Runtime → Gateway → Runtime | req-resp | 定时任务列表 |
-| `AgentHelloRequest` / `AgentHelloResult` | Runtime → Gateway → Runtime | req-resp | 连接注册 |
-| `LLMConfigDelivery` | Gateway → Runtime | **push** | 握手时推送 LLM 配置 |
-| `WorkspaceContextUpdate` | Gateway → Runtime | **push** | 工作区上下文推送 |
-| `IterationLimitPaused` | Gateway → Runtime | **push** | 迭代上限暂停通知 |
-| `ListSessionsRequest` / `SessionList` | Runtime → Gateway → Runtime | req-resp | 会话列表 |
-| `GetSessionMessagesRequest` / `SessionMessages` | Runtime → Gateway → Runtime | req-resp | 分页消息查询 |
-| `CreateSessionRequest` / `SessionCreated` | Runtime → Gateway → Runtime | req-resp | 会话创建 |
-| `GetCurrentSessionIdRequest` / `CurrentSessionId` | Runtime → Gateway → Runtime | req-resp | 当前会话 ID |
-| `StreamChunk` | Runtime → Gateway | **stream** | LLM 输出 chunk，无响应 |
+| 消息                                              | 方向                        | 模式       | 说明                     |
+| ------------------------------------------------- | --------------------------- | ---------- | ------------------------ |
+| `KeyReleaseRequest` / `KeyReleaseResult`          | Runtime → Gateway → Runtime | req-resp   | API Key 获取             |
+| `IntentSendRequest` / `IntentDelivered`           | Runtime → Gateway → Runtime | req-resp   | Intent 同步发送          |
+| `IntentReceived`                                  | Gateway → Runtime           | **push**   | 外部 Agent 发来的 Intent |
+| `BudgetQueryRequest` / `BudgetInfo`               | Runtime → Gateway → Runtime | req-resp   | 预算查询                 |
+| `UsageReportRequest` / `UsageReportAck`           | Runtime → Gateway → Runtime | req-resp   | 用量上报                 |
+| `ContextUsageReportRequest` / `ContextUsageAck`   | Runtime → Gateway → Runtime | req-resp   | 上下文用量上报           |
+| `RateAcquireRequest` / `RateToken`                | Runtime → Gateway → Runtime | req-resp   | 速率令牌申请             |
+| `PermissionRequest` / `PermissionResult`          | Runtime → Gateway → Runtime | req-resp   | 权限申请                 |
+| `IdentityQueryRequest` / `IdentityQueryResult`    | Runtime → Gateway → Runtime | req-resp   | 身份查询                 |
+| `IdentityDelivery`                                | Gateway → Runtime           | **push**   | 冷启动身份注入           |
+| `CapabilityQueryRequest` / `CapabilityOverview`   | Runtime → Gateway → Runtime | req-resp   | 能力查询                 |
+| `CapabilityUpdate`                                | Gateway → Runtime           | **push**   | 安装/卸载导致的增量更新  |
+| `CronRegisterRequest` / `CronRegisterResult`      | Runtime → Gateway → Runtime | req-resp   | 定时任务注册             |
+| `CronUnregisterRequest` / `CronUnregisterResult`  | Runtime → Gateway → Runtime | req-resp   | 定时任务注销             |
+| `CronListRequest` / `CronListResult`              | Runtime → Gateway → Runtime | req-resp   | 定时任务列表             |
+| `AgentHelloRequest` / `AgentHelloResult`          | Runtime → Gateway → Runtime | req-resp   | 连接注册                 |
+| `LLMConfigDelivery`                               | Gateway → Runtime           | **push**   | 握手时推送 LLM 配置      |
+| `WorkspaceContextUpdate`                          | Gateway → Runtime           | **push**   | 工作区上下文推送         |
+| `IterationLimitPaused`                            | Gateway → Runtime           | **push**   | 迭代上限暂停通知         |
+| `ListSessionsRequest` / `SessionList`             | Runtime → Gateway → Runtime | req-resp   | 会话列表                 |
+| `GetSessionMessagesRequest` / `SessionMessages`   | Runtime → Gateway → Runtime | req-resp   | 分页消息查询             |
+| `CreateSessionRequest` / `SessionCreated`         | Runtime → Gateway → Runtime | req-resp   | 会话创建                 |
+| `GetCurrentSessionIdRequest` / `CurrentSessionId` | Runtime → Gateway → Runtime | req-resp   | 当前会话 ID              |
+| `StreamChunk`                                     | Runtime → Gateway           | **stream** | LLM 输出 chunk，无响应   |
 
 ### 3.3 request_id 关联机制
 
@@ -630,13 +630,13 @@ let channel = Endpoint::from_static("http://127.0.0.1:19877")
 
 当前 Desktop App 通过 Axum HTTP API（端口 19876）连接 Gateway。评估是否可用 gRPC-Web 统一：
 
-| 维度 | gRPC-Web | Axum HTTP API | 结论 |
-|------|----------|---------------|------|
-| **Tauri 前端调用** | 需通过 `@protobuf-ts/grpcweb-transport` 或 `grpc-web-client`，在 WebView 中可行但增加依赖 | 原生 `fetch` / `axios` 直接调用，零额外依赖 | HTTP 更优 |
-| **SSE / WebSocket 支持** | gRPC-Web 支持 server streaming，但客户端库较 HTTP SSE 复杂 | Axum 原生支持 WebSocket + SSE，前端生态成熟 | HTTP 更优 |
-| **浏览器兼容性** | 需 grpc-web proxy（envoy 或 grpcweb wrapper） | 无中间层，直接访问 | HTTP 更优 |
-| **API 一致性** | 与 IPC 共用 proto 定义，schema 统一 | 需手动维护 HTTP handler 与 proto 的对应 | gRPC 更优 |
-| **调试工具** | grpcurl / grpcui 专业工具 | 浏览器 DevTools / curl 随手可用 | HTTP 更优 |
+| 维度                     | gRPC-Web                                                                                  | Axum HTTP API                               | 结论      |
+| ------------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------- | --------- |
+| **Tauri 前端调用**       | 需通过 `@protobuf-ts/grpcweb-transport` 或 `grpc-web-client`，在 WebView 中可行但增加依赖 | 原生 `fetch` / `axios` 直接调用，零额外依赖 | HTTP 更优 |
+| **SSE / WebSocket 支持** | gRPC-Web 支持 server streaming，但客户端库较 HTTP SSE 复杂                                | Axum 原生支持 WebSocket + SSE，前端生态成熟 | HTTP 更优 |
+| **浏览器兼容性**         | 需 grpc-web proxy（envoy 或 grpcweb wrapper）                                             | 无中间层，直接访问                          | HTTP 更优 |
+| **API 一致性**           | 与 IPC 共用 proto 定义，schema 统一                                                       | 需手动维护 HTTP handler 与 proto 的对应     | gRPC 更优 |
+| **调试工具**             | grpcurl / grpcui 专业工具                                                                 | 浏览器 DevTools / curl 随手可用             | HTTP 更优 |
 
 **结论**：**保留 Axum HTTP API**。
 
@@ -647,10 +647,10 @@ let channel = Endpoint::from_static("http://127.0.0.1:19877")
 
 ### 4.3 TLS 策略
 
-| 场景 | TLS | 理由 |
-|------|-----|------|
-| 本地 IPC（127.0.0.1） | **禁用** | 本地进程间通信，无网络暴露风险；TLS 增加握手开销和证书管理复杂度 |
-| 远程 Gateway（未来场景） | **可选 mTLS** | 若 Gateway 与 Runtime 跨主机部署，启用双向 TLS 认证 |
+| 场景                     | TLS           | 理由                                                             |
+| ------------------------ | ------------- | ---------------------------------------------------------------- |
+| 本地 IPC（127.0.0.1）    | **禁用**      | 本地进程间通信，无网络暴露风险；TLS 增加握手开销和证书管理复杂度 |
+| 远程 Gateway（未来场景） | **可选 mTLS** | 若 Gateway 与 Runtime 跨主机部署，启用双向 TLS 认证              |
 
 ---
 
@@ -873,7 +873,7 @@ pub struct GatewayGrpcClient {
 
 ```rust
 impl GatewayGrpcClient {
-    pub async fn connect(endpoint: &str) -> Result<Self, RollballError> {
+    pub async fn connect(endpoint: &str) -> Result<Self, AcoworkError> {
         let channel = create_channel(endpoint).await?;
         let mut client = GatewayServiceClient::new(channel);
 
@@ -922,7 +922,7 @@ impl GatewayGrpcClient {
 ### 6.2 请求-响应模式
 
 ```rust
-pub async fn send_request<R>(&self, payload: client_message::Payload) -> Result<R, RollballError>
+pub async fn send_request<R>(&self, payload: client_message::Payload) -> Result<R, AcoworkError>
 where
     R: From<server_message::Payload>,
 {
@@ -939,15 +939,15 @@ where
         payload: Some(payload),
     };
     self.outbound_tx.send(msg).await
-        .map_err(|e| RollballError::Ipc(format!("Failed to send request: {}", e)))?;
+        .map_err(|e| AcoworkError::Ipc(format!("Failed to send request: {}", e)))?;
 
     let response = tokio::time::timeout(
         Duration::from_secs(30),
         rx
-    ).await.map_err(|_| RollballError::Ipc("Request timeout".to_string()))?
-        .map_err(|_| RollballError::Ipc("Response channel closed".to_string()))?;
+    ).await.map_err(|_| AcoworkError::Ipc("Request timeout".to_string()))?
+        .map_err(|_| AcoworkError::Ipc("Response channel closed".to_string()))?;
 
-    R::from(response.payload.ok_or(RollballError::Ipc("Empty response payload".to_string()))?)
+    R::from(response.payload.ok_or(AcoworkError::Ipc("Empty response payload".to_string()))?)
 }
 ```
 
@@ -997,7 +997,7 @@ pub async fn send_stream_chunk(
     target: &str,
     action: &str,
     params: serde_json::Value,
-) -> Result<(), RollballError> {
+) -> Result<(), AcoworkError> {
     let msg = ClientMessage {
         request_id: 0,  // stream chunks don't need correlation
         payload: Some(ClientPayload::StreamChunk(StreamChunk {
@@ -1007,7 +1007,7 @@ pub async fn send_stream_chunk(
         })),
     };
     self.outbound_tx.send(msg).await
-        .map_err(|e| RollballError::Ipc(format!("Failed to send stream chunk: {}", e)))?;
+        .map_err(|e| AcoworkError::Ipc(format!("Failed to send stream chunk: {}", e)))?;
     Ok(())
 }
 ```
@@ -1020,7 +1020,7 @@ pub async fn send_stream_chunk(
 
 ```rust
 impl GatewayGrpcClient {
-    pub async fn connect_with_retry(endpoint: &str) -> Result<Self, RollballError> {
+    pub async fn connect_with_retry(endpoint: &str) -> Result<Self, AcoworkError> {
         let mut backoff = ExponentialBackoff {
             initial_interval: Duration::from_millis(100),
             max_interval: Duration::from_secs(30),
@@ -1050,7 +1050,7 @@ impl GatewayGrpcClient {
         &mut self,
         agent_id: &str,
         version: &str,
-    ) -> Result<(), RollballError> {
+    ) -> Result<(), AcoworkError> {
         // Re-establish connection
         *self = Self::connect_with_retry(&self.endpoint).await?;
 
@@ -1080,10 +1080,10 @@ impl GatewayGrpcClient {
 
 ```
 Step 1: 新建 gRPC 实现
-    └── core/rollball-core/proto/gateway_ipc.proto
+    └── core/acowork-core/proto/gateway_ipc.proto
     └── tonic-build 代码生成（build.rs）
-    └── rollball-gateway/src/grpc/server.rs — GatewayService 实现
-    └── rollball-runtime/src/grpc/client.rs — GatewayGrpcClient 实现
+    └── acowork-gateway/src/grpc/server.rs — GatewayService 实现
+    └── acowork-runtime/src/grpc/client.rs — GatewayGrpcClient 实现
 
 Step 2: 替换所有引用
     └── 将 Runtime 中所有 GatewayClient 调用改为 GatewayGrpcClient
@@ -1100,48 +1100,48 @@ Step 3: 删除旧代码
 
 ### 7.2 不保留的配置项
 
-| 不保留项 | 理由 |
-|----------|------|
-| `--ipc-mode` 切换开关 | 直接替换，不需要兼容旧协议 |
+| 不保留项               | 理由                           |
+| ---------------------- | ------------------------------ |
+| `--ipc-mode` 切换开关  | 直接替换，不需要兼容旧协议     |
 | 旧 Socket API endpoint | Gateway 仅监听 gRPC 端口 19877 |
-| 新旧协议并存代码 | 减少维护负担，代码更干净 |
+| 新旧协议并存代码       | 减少维护负担，代码更干净       |
 
 ### 7.3 测试策略
 
-| 测试类型 | 内容 | 目标 |
-|----------|------|------|
-| **单元测试** | 每个 RPC payload 的序列化/反序列化、request_id 生成与匹配 | 100% proto message 覆盖 |
-| **集成测试** | Runtime <-> Gateway 端到端：AgentHello 握手、KeyRelease、IntentSend、BudgetQuery | 所有 17 个 request / 23 个 response 变体 |
-| **并发测试** | 10 个并发请求 + 5 个并发推送混合发送 | 验证 request_id 无错配 |
-| **帧交错回归测试** | 故意在 Gateway handler 中插入延迟，模拟 push 先于 response | 确认客户端正确分流，无旧 bug |
-| **断开重连测试** | 强制断开 TCP，验证指数退避重连和自动重注册 | 确认恢复机制 |
-| **压力测试** | 1000 个 StreamChunk 连续发送 | 验证背压和内存稳定 |
+| 测试类型           | 内容                                                                             | 目标                                     |
+| ------------------ | -------------------------------------------------------------------------------- | ---------------------------------------- |
+| **单元测试**       | 每个 RPC payload 的序列化/反序列化、request_id 生成与匹配                        | 100% proto message 覆盖                  |
+| **集成测试**       | Runtime <-> Gateway 端到端：AgentHello 握手、KeyRelease、IntentSend、BudgetQuery | 所有 17 个 request / 23 个 response 变体 |
+| **并发测试**       | 10 个并发请求 + 5 个并发推送混合发送                                             | 验证 request_id 无错配                   |
+| **帧交错回归测试** | 故意在 Gateway handler 中插入延迟，模拟 push 先于 response                       | 确认客户端正确分流，无旧 bug             |
+| **断开重连测试**   | 强制断开 TCP，验证指数退避重连和自动重注册                                       | 确认恢复机制                             |
+| **压力测试**       | 1000 个 StreamChunk 连续发送                                                     | 验证背压和内存稳定                       |
 
 ### 7.4 清理旧代码清单
 
 迁移完成后，以下代码/文件应全部删除：
 
-| 文件/模块 | 删除内容 | 说明 |
-|-----------|----------|------|
-| `core/rollball-core/src/protocol.rs` | `Frame` 结构体及 `FrameError` | 5 字节头帧格式 |
-| `core/rollball-core/src/protocol.rs` | `GatewayRequest` 枚举（JSON 版本） | 17 个 JSON 变体 |
-| `core/rollball-core/src/protocol.rs` | `GatewayResponse` 枚举（JSON 版本） | 23 个 JSON 变体 |
-| `core/rollball-core/src/transport.rs` | `AsyncTransportConnection` trait | 自定义 transport 连接 trait |
-| `core/rollball-core/src/transport.rs` | `AsyncTransportServer` trait | 自定义 transport 服务器 trait |
-| `core/rollball-core/src/transport.rs` | `TransportKind` / `classify_endpoint` | 平台 transport 分类 |
-| `core/rollball-core/src/transport.rs` | `default_endpoint()` | 旧 endpoint 生成逻辑 |
-| `rollball-gateway/src/ipc/transport.rs` | 全部内容 | Unix Socket / Named Pipe server 实现 |
-| `rollball-gateway/src/ipc/server.rs` | `handle_connection` 函数 | 旧连接处理循环（含 `tokio::select!`） |
-| `rollball-gateway/src/ipc/server.rs` | `dispatch_stream_chunk` 中 `Frame::TYPE_STREAM_CHUNK` 处理 | 旧 streaming 帧处理 |
-| `rollball-runtime/src/ipc/transport.rs` | 全部内容 | Unix Socket / Named Pipe client 实现 |
-| `rollball-runtime/src/ipc/client.rs` | `GatewayClient` 结构体 | 旧 IPC 客户端 |
-| `rollball-runtime/src/ipc/client.rs` | `pending_push: VecDeque` | 推送消息缓冲 |
-| `rollball-runtime/src/ipc/client.rs` | `is_push_message()` | 硬编码推送判别函数 |
-| `rollball-runtime/src/ipc/client.rs` | `send_and_recv()` | 阻塞式请求-响应循环 |
-| `rollball-runtime/src/ipc/client.rs` | `send_stream_chunk()` 中 `Frame::TYPE_STREAM_CHUNK` | 旧 streaming 帧发送 |
-| `rollball-gateway/src/ipc/session.rs` | `PushSender = mpsc::Sender<GatewayResponse>` | 旧推送通道类型（如有） |
-| 各 crate 测试文件 | 所有 `Frame::from_bytes` / `to_bytes` 测试 | 旧帧格式测试 |
-| 各 crate 测试文件 | 所有 `test_ipc_server_*` 使用旧 transport 的测试 | 旧 transport 集成测试 |
+| 文件/模块                              | 删除内容                                                   | 说明                                  |
+| -------------------------------------- | ---------------------------------------------------------- | ------------------------------------- |
+| `core/acowork-core/src/protocol.rs`    | `Frame` 结构体及 `FrameError`                              | 5 字节头帧格式                        |
+| `core/acowork-core/src/protocol.rs`    | `GatewayRequest` 枚举（JSON 版本）                         | 17 个 JSON 变体                       |
+| `core/acowork-core/src/protocol.rs`    | `GatewayResponse` 枚举（JSON 版本）                        | 23 个 JSON 变体                       |
+| `core/acowork-core/src/transport.rs`   | `AsyncTransportConnection` trait                           | 自定义 transport 连接 trait           |
+| `core/acowork-core/src/transport.rs`   | `AsyncTransportServer` trait                               | 自定义 transport 服务器 trait         |
+| `core/acowork-core/src/transport.rs`   | `TransportKind` / `classify_endpoint`                      | 平台 transport 分类                   |
+| `core/acowork-core/src/transport.rs`   | `default_endpoint()`                                       | 旧 endpoint 生成逻辑                  |
+| `acowork-gateway/src/ipc/transport.rs` | 全部内容                                                   | Unix Socket / Named Pipe server 实现  |
+| `acowork-gateway/src/ipc/server.rs`    | `handle_connection` 函数                                   | 旧连接处理循环（含 `tokio::select!`） |
+| `acowork-gateway/src/ipc/server.rs`    | `dispatch_stream_chunk` 中 `Frame::TYPE_STREAM_CHUNK` 处理 | 旧 streaming 帧处理                   |
+| `acowork-runtime/src/ipc/transport.rs` | 全部内容                                                   | Unix Socket / Named Pipe client 实现  |
+| `acowork-runtime/src/ipc/client.rs`    | `GatewayClient` 结构体                                     | 旧 IPC 客户端                         |
+| `acowork-runtime/src/ipc/client.rs`    | `pending_push: VecDeque`                                   | 推送消息缓冲                          |
+| `acowork-runtime/src/ipc/client.rs`    | `is_push_message()`                                        | 硬编码推送判别函数                    |
+| `acowork-runtime/src/ipc/client.rs`    | `send_and_recv()`                                          | 阻塞式请求-响应循环                   |
+| `acowork-runtime/src/ipc/client.rs`    | `send_stream_chunk()` 中 `Frame::TYPE_STREAM_CHUNK`        | 旧 streaming 帧发送                   |
+| `acowork-gateway/src/ipc/session.rs`   | `PushSender = mpsc::Sender<GatewayResponse>`               | 旧推送通道类型（如有）                |
+| 各 crate 测试文件                      | 所有 `Frame::from_bytes` / `to_bytes` 测试                 | 旧帧格式测试                          |
+| 各 crate 测试文件                      | 所有 `test_ipc_server_*` 使用旧 transport 的测试           | 旧 transport 集成测试                 |
 
 ---
 
@@ -1149,13 +1149,13 @@ Step 3: 删除旧代码
 
 ### 8.1 新增依赖
 
-| Crate | 版本 | 用途 | 添加到 |
-|-------|------|------|--------|
-| `tonic` | 0.12+ | gRPC 服务端/客户端框架 | `rollball-gateway`, `rollball-runtime` |
-| `prost` | 0.13+ | protobuf 编解码 | `rollball-core`（共享生成的类型） |
-| `tonic-build` | 0.12+ | 编译期 .proto -> Rust 代码生成 | `rollball-core` (build-dependencies) |
-| `prost-types` | 0.13+ | protobuf Well-Known Types | `rollball-core`（如需要） |
-| `hyper-util` | 0.1+ | hyper 工具类型（TokioIo 等） | `rollball-gateway`, `rollball-runtime` |
+| Crate         | 版本  | 用途                           | 添加到                               |
+| ------------- | ----- | ------------------------------ | ------------------------------------ |
+| `tonic`       | 0.12+ | gRPC 服务端/客户端框架         | `acowork-gateway`, `acowork-runtime` |
+| `prost`       | 0.13+ | protobuf 编解码                | `acowork-core`（共享生成的类型）     |
+| `tonic-build` | 0.12+ | 编译期 .proto -> Rust 代码生成 | `acowork-core` (build-dependencies)  |
+| `prost-types` | 0.13+ | protobuf Well-Known Types      | `acowork-core`（如需要）             |
+| `hyper-util`  | 0.1+  | hyper 工具类型（TokioIo 等）   | `acowork-gateway`, `acowork-runtime` |
 
 Workspace `Cargo.toml` 更新：
 
@@ -1167,7 +1167,7 @@ tonice-build = "0.12"
 hyper-util = "0.1"
 ```
 
-`rollball-core/Cargo.toml`:
+`acowork-core/Cargo.toml`:
 ```toml
 [dependencies]
 prost = { workspace = true }
@@ -1176,14 +1176,14 @@ prost = { workspace = true }
 tonice-build = { workspace = true }
 ```
 
-`rollball-gateway/Cargo.toml`:
+`acowork-gateway/Cargo.toml`:
 ```toml
 [dependencies]
 tonic = { workspace = true }
 hyper-util = { workspace = true }
 ```
 
-`rollball-runtime/Cargo.toml`:
+`acowork-runtime/Cargo.toml`:
 ```toml
 [dependencies]
 tonic = { workspace = true }
@@ -1194,29 +1194,29 @@ hyper-util = { workspace = true }
 
 迁移完成后立即删除：
 
-| 文件/模块 | 说明 |
-|-----------|------|
-| `rollball_core::protocol::Frame` | 5 字节头帧格式 |
-| `rollball_core::protocol::GatewayRequest` / `GatewayResponse`（JSON 版本） | 旧 JSON 序列化枚举 |
-| `rollball_core::transport::AsyncTransportConnection` | 自定义 transport trait |
-| `rollball_core::transport::AsyncTransportServer` | 自定义 server trait |
-| `rollball-core/src/transport.rs` | 整个 transport 模块（含 `TransportKind`、`classify_endpoint`） |
-| `rollball-gateway/src/ipc/transport.rs` | Unix Socket / Named Pipe server 实现 |
-| `rollball-runtime/src/ipc/transport.rs` | Unix Socket / Named Pipe client 实现 |
-| `rollball-runtime/src/ipc/client.rs::GatewayClient` | 旧 IPC 客户端 |
-| `rollball-runtime/src/ipc/client.rs::pending_push` | 推送消息缓冲 VecDeque |
-| `rollball-runtime/src/ipc/client.rs::is_push_message` | 硬编码推送判别函数 |
+| 文件/模块                                                                 | 说明                                                           |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `acowork_core::protocol::Frame`                                           | 5 字节头帧格式                                                 |
+| `acowork_core::protocol::GatewayRequest` / `GatewayResponse`（JSON 版本） | 旧 JSON 序列化枚举                                             |
+| `acowork_core::transport::AsyncTransportConnection`                       | 自定义 transport trait                                         |
+| `acowork_core::transport::AsyncTransportServer`                           | 自定义 server trait                                            |
+| `acowork-core/src/transport.rs`                                           | 整个 transport 模块（含 `TransportKind`、`classify_endpoint`） |
+| `acowork-gateway/src/ipc/transport.rs`                                    | Unix Socket / Named Pipe server 实现                           |
+| `acowork-runtime/src/ipc/transport.rs`                                    | Unix Socket / Named Pipe client 实现                           |
+| `acowork-runtime/src/ipc/client.rs::GatewayClient`                        | 旧 IPC 客户端                                                  |
+| `acowork-runtime/src/ipc/client.rs::pending_push`                         | 推送消息缓冲 VecDeque                                          |
+| `acowork-runtime/src/ipc/client.rs::is_push_message`                      | 硬编码推送判别函数                                             |
 
 ### 8.3 二进制大小影响
 
-| 项目 | 估算 |
-|------|------|
-| tonic + prost 新增 | ~1.5 MB |
-| hyper-util（可能已存在，via reqwest/axum） | ~0.3 MB（增量） |
-| 生成的 proto 代码 | ~0.2 MB |
-| **净增合计** | **~1.5 - 2.0 MB** |
-| 可移除的自定义帧代码 | ~0.1 MB |
-| **实际净增** | **~1.4 - 1.9 MB** |
+| 项目                                       | 估算              |
+| ------------------------------------------ | ----------------- |
+| tonic + prost 新增                         | ~1.5 MB           |
+| hyper-util（可能已存在，via reqwest/axum） | ~0.3 MB（增量）   |
+| 生成的 proto 代码                          | ~0.2 MB           |
+| **净增合计**                               | **~1.5 - 2.0 MB** |
+| 可移除的自定义帧代码                       | ~0.1 MB           |
+| **实际净增**                               | **~1.4 - 1.9 MB** |
 
 注：Gateway 已依赖 `axum` + `tower` + `hyper`，Runtime 已依赖 `reqwest` + `hyper`，tonic 复用现有 hyper/tokio 基础设施，增量低于独立引入。
 
@@ -1224,15 +1224,15 @@ hyper-util = { workspace = true }
 
 ## 9. 风险与缓解
 
-| 风险 | 影响 | 缓解措施 |
-|------|------|----------|
-| **一次性替换导致功能回退** | 高 | 编写覆盖全部 17 个 request / 23 个 response 的集成测试套件；在合并到主分支前必须通过全部测试 |
-| **protobuf 与现有 JSON 类型映射遗漏** | 中 | 对照附录 10.2 映射表逐项核对；所有字段保持语义一致；提供 `From`/`TryFrom` 桥接 trait |
-| **gRPC 依赖增加编译时间** | 低 | tonic/prost 为成熟 crate，编译缓存后可接受；Workspace 统一版本减少重复编译 |
-| **生成的 proto 代码与手写类型不一致** | 中 | 在 `rollball-core` 中提供 `From`/`TryFrom` 转换 trait，将 prost 类型与现有业务类型桥接 |
-| **连接断开检测延迟** | 中 | 启用 HTTP/2 keep-alive + TCP keepalive；设置合理的超时阈值 |
-| **调试复杂度增加** | 低 | gRPC 支持反射（grpc-reflection）；使用 grpcurl 调试；保留详细 tracing log |
-| **团队学习成本** | 低 | tonic API 与 axum/tower 风格一致；提供示例代码和 migration guide |
+| 风险                                  | 影响 | 缓解措施                                                                                     |
+| ------------------------------------- | ---- | -------------------------------------------------------------------------------------------- |
+| **一次性替换导致功能回退**            | 高   | 编写覆盖全部 17 个 request / 23 个 response 的集成测试套件；在合并到主分支前必须通过全部测试 |
+| **protobuf 与现有 JSON 类型映射遗漏** | 中   | 对照附录 10.2 映射表逐项核对；所有字段保持语义一致；提供 `From`/`TryFrom` 桥接 trait         |
+| **gRPC 依赖增加编译时间**             | 低   | tonic/prost 为成熟 crate，编译缓存后可接受；Workspace 统一版本减少重复编译                   |
+| **生成的 proto 代码与手写类型不一致** | 中   | 在 `acowork-core` 中提供 `From`/`TryFrom` 转换 trait，将 prost 类型与现有业务类型桥接        |
+| **连接断开检测延迟**                  | 中   | 启用 HTTP/2 keep-alive + TCP keepalive；设置合理的超时阈值                                   |
+| **调试复杂度增加**                    | 低   | gRPC 支持反射（grpc-reflection）；使用 grpcurl 调试；保留详细 tracing log                    |
+| **团队学习成本**                      | 低   | tonic API 与 axum/tower 风格一致；提供示例代码和 migration guide                             |
 
 ---
 
@@ -1240,12 +1240,12 @@ hyper-util = { workspace = true }
 
 ### 10.1 完整 .proto 文件
 
-文件路径建议：`core/rollball-core/proto/gateway_ipc.proto`
+文件路径建议：`core/acowork-core/proto/gateway_ipc.proto`
 
 ```protobuf
 syntax = "proto3";
 
-package rollball.ipc.v1;
+package acowork.ipc.v1;
 
 service GatewayService {
   rpc Connect(stream ClientMessage) returns (stream ServerMessage);
@@ -1366,56 +1366,56 @@ message ConversationEntryDto    { string id = 1; string ts = 2; string role = 3;
 
 #### GatewayRequest 映射
 
-| # | Rust 变体 | gRPC Request Message | 字段映射 |
-|---|-----------|---------------------|----------|
-| 1 | `KeyRelease { provider }` | `KeyReleaseRequest` | `provider` |
-| 2 | `IntentSend { target, action, params, async_ }` | `IntentSendRequest` | `target`, `action`, `params_json` (JSON string), `async_` |
-| 3 | `BudgetQuery { provider }` | `BudgetQueryRequest` | `provider` |
-| 4 | `UsageReport(UsageReport)` | `UsageReportRequest` | `agent_id`, `provider`, `tokens_used`, `cost_usd`, `timestamp`, `error` |
-| 5 | `RateAcquire { provider }` | `RateAcquireRequest` | `provider` |
-| 6 | `PermissionRequest { request_id, permission, reason, timeout_ms }` | `PermissionRequest` | `request_id`, `permission`, `reason`, `timeout_ms` |
-| 7 | `IdentityQuery { fields }` | `IdentityQueryRequest` | `fields` (repeated) |
-| 8 | `CapabilityQuery { agent_id }` | `CapabilityQueryRequest` | `agent_id` |
-| 9 | `CronRegister { agent_id, schedule, action, params }` | `CronRegisterRequest` | `agent_id`, `schedule`, `action`, `params_json` |
-| 10 | `CronUnregister { cron_id }` | `CronUnregisterRequest` | `cron_id` |
-| 11 | `CronList {}` | `CronListRequest` | 空消息 |
-| 12 | `ContextUsageReport { agent_id, context }` | `ContextUsageReportRequest` | `agent_id`, `context` (ContextUsageInfo) |
-| 13 | `AgentHello { agent_id, version, connection_role }` | `AgentHelloRequest` | `agent_id`, `version`, `connection_role` |
-| 14 | `ListSessions` | `ListSessionsRequest` | 空消息 |
-| 15 | `GetSessionMessages { session_id, cursor, limit, direction }` | `GetSessionMessagesRequest` | `session_id`, `cursor`, `limit`, `direction` |
-| 16 | `CreateSession` | `CreateSessionRequest` | 空消息 |
-| 17 | `GetCurrentSessionId` | `GetCurrentSessionIdRequest` | 空消息 |
+| #   | Rust 变体                                                          | gRPC Request Message         | 字段映射                                                                |
+| --- | ------------------------------------------------------------------ | ---------------------------- | ----------------------------------------------------------------------- |
+| 1   | `KeyRelease { provider }`                                          | `KeyReleaseRequest`          | `provider`                                                              |
+| 2   | `IntentSend { target, action, params, async_ }`                    | `IntentSendRequest`          | `target`, `action`, `params_json` (JSON string), `async_`               |
+| 3   | `BudgetQuery { provider }`                                         | `BudgetQueryRequest`         | `provider`                                                              |
+| 4   | `UsageReport(UsageReport)`                                         | `UsageReportRequest`         | `agent_id`, `provider`, `tokens_used`, `cost_usd`, `timestamp`, `error` |
+| 5   | `RateAcquire { provider }`                                         | `RateAcquireRequest`         | `provider`                                                              |
+| 6   | `PermissionRequest { request_id, permission, reason, timeout_ms }` | `PermissionRequest`          | `request_id`, `permission`, `reason`, `timeout_ms`                      |
+| 7   | `IdentityQuery { fields }`                                         | `IdentityQueryRequest`       | `fields` (repeated)                                                     |
+| 8   | `CapabilityQuery { agent_id }`                                     | `CapabilityQueryRequest`     | `agent_id`                                                              |
+| 9   | `CronRegister { agent_id, schedule, action, params }`              | `CronRegisterRequest`        | `agent_id`, `schedule`, `action`, `params_json`                         |
+| 10  | `CronUnregister { cron_id }`                                       | `CronUnregisterRequest`      | `cron_id`                                                               |
+| 11  | `CronList {}`                                                      | `CronListRequest`            | 空消息                                                                  |
+| 12  | `ContextUsageReport { agent_id, context }`                         | `ContextUsageReportRequest`  | `agent_id`, `context` (ContextUsageInfo)                                |
+| 13  | `AgentHello { agent_id, version, connection_role }`                | `AgentHelloRequest`          | `agent_id`, `version`, `connection_role`                                |
+| 14  | `ListSessions`                                                     | `ListSessionsRequest`        | 空消息                                                                  |
+| 15  | `GetSessionMessages { session_id, cursor, limit, direction }`      | `GetSessionMessagesRequest`  | `session_id`, `cursor`, `limit`, `direction`                            |
+| 16  | `CreateSession`                                                    | `CreateSessionRequest`       | 空消息                                                                  |
+| 17  | `GetCurrentSessionId`                                              | `GetCurrentSessionIdRequest` | 空消息                                                                  |
 
 #### GatewayResponse 映射
 
-| # | Rust 变体 | gRPC Response/Push Message | 字段映射 |
-|---|-----------|---------------------------|----------|
-| 1 | `AgentHelloResult { success, error }` | `AgentHelloResult` | `success`, `error` |
-| 2 | `KeyReleaseResult { api_key, error }` | `KeyReleaseResult` | `api_key`, `error` |
-| 3 | `IntentDelivered { message_id }` | `IntentDelivered` | `message_id` |
-| 4 | `IntentReceived { from, action, params }` | `IntentReceived` (push) | `from`, `action`, `params_json` |
-| 5 | `BudgetInfo { remaining_tokens, remaining_cost_usd }` | `BudgetInfo` | `remaining_tokens`, `remaining_cost_usd` |
-| 6 | `UsageReportAck {}` | `UsageReportAck` | 空消息 |
-| 7 | `ContextUsageAck {}` | `ContextUsageAck` | 空消息 |
-| 8 | `RateToken { granted, retry_after_ms }` | `RateToken` | `granted`, `retry_after_ms` |
-| 9 | `PermissionResult { request_id, granted, reason }` | `PermissionResult` | `request_id`, `granted`, `reason` |
-| 10 | `IdentityDelivery { entries }` | `IdentityDelivery` (push) | `entries` (repeated IdentityEntry) |
-| 11 | `LLMConfigDelivery { provider, model, api_key, base_url, models, model_capabilities, max_output_tokens_limit }` | `LLMConfigDelivery` (push) | 全字段一一对应 |
-| 12 | `IdentityQueryResult { values, confidence }` | `IdentityQueryResult` | `values` (map), `confidence` (map) |
-| 13 | `CapabilityOverview { capabilities }` | `CapabilityOverview` | `capabilities` (map<string, StringList>) |
-| 14 | `CapabilityUpdate { agent_id, actions, removed }` | `CapabilityUpdate` (push) | `agent_id`, `actions`, `removed` |
-| 15 | `CronRegisterResult { cron_id, error }` | `CronRegisterResult` | `cron_id`, `error` |
-| 16 | `CronUnregisterResult { removed }` | `CronUnregisterResult` | `removed` |
-| 17 | `CronListResult { entries }` | `CronListResult` | `entries` (repeated CronEntryInfo) |
-| 18 | `WorkspaceContextUpdate { context_text, current_workspace_id, current_workspace_path }` | `WorkspaceContextUpdate` (push) | `context_text`, `current_workspace_id`, `current_workspace_path` |
-| 19 | `IterationLimitPaused { iteration, max_iterations, message }` | `IterationLimitPaused` (push) | `iteration`, `max_iterations`, `message` |
-| 20 | `SessionList { sessions }` | `SessionList` | `sessions` (repeated SessionInfoDto) |
-| 21 | `SessionMessages { messages, cursor, has_more }` | `SessionMessages` | `messages`, `cursor`, `has_more` |
-| 22 | `SessionCreated { session_id }` | `SessionCreated` | `session_id` |
-| 23 | `CurrentSessionId { session_id }` | `CurrentSessionId` | `session_id` |
+| #   | Rust 变体                                                                                                       | gRPC Response/Push Message      | 字段映射                                                         |
+| --- | --------------------------------------------------------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------- |
+| 1   | `AgentHelloResult { success, error }`                                                                           | `AgentHelloResult`              | `success`, `error`                                               |
+| 2   | `KeyReleaseResult { api_key, error }`                                                                           | `KeyReleaseResult`              | `api_key`, `error`                                               |
+| 3   | `IntentDelivered { message_id }`                                                                                | `IntentDelivered`               | `message_id`                                                     |
+| 4   | `IntentReceived { from, action, params }`                                                                       | `IntentReceived` (push)         | `from`, `action`, `params_json`                                  |
+| 5   | `BudgetInfo { remaining_tokens, remaining_cost_usd }`                                                           | `BudgetInfo`                    | `remaining_tokens`, `remaining_cost_usd`                         |
+| 6   | `UsageReportAck {}`                                                                                             | `UsageReportAck`                | 空消息                                                           |
+| 7   | `ContextUsageAck {}`                                                                                            | `ContextUsageAck`               | 空消息                                                           |
+| 8   | `RateToken { granted, retry_after_ms }`                                                                         | `RateToken`                     | `granted`, `retry_after_ms`                                      |
+| 9   | `PermissionResult { request_id, granted, reason }`                                                              | `PermissionResult`              | `request_id`, `granted`, `reason`                                |
+| 10  | `IdentityDelivery { entries }`                                                                                  | `IdentityDelivery` (push)       | `entries` (repeated IdentityEntry)                               |
+| 11  | `LLMConfigDelivery { provider, model, api_key, base_url, models, model_capabilities, max_output_tokens_limit }` | `LLMConfigDelivery` (push)      | 全字段一一对应                                                   |
+| 12  | `IdentityQueryResult { values, confidence }`                                                                    | `IdentityQueryResult`           | `values` (map), `confidence` (map)                               |
+| 13  | `CapabilityOverview { capabilities }`                                                                           | `CapabilityOverview`            | `capabilities` (map<string, StringList>)                         |
+| 14  | `CapabilityUpdate { agent_id, actions, removed }`                                                               | `CapabilityUpdate` (push)       | `agent_id`, `actions`, `removed`                                 |
+| 15  | `CronRegisterResult { cron_id, error }`                                                                         | `CronRegisterResult`            | `cron_id`, `error`                                               |
+| 16  | `CronUnregisterResult { removed }`                                                                              | `CronUnregisterResult`          | `removed`                                                        |
+| 17  | `CronListResult { entries }`                                                                                    | `CronListResult`                | `entries` (repeated CronEntryInfo)                               |
+| 18  | `WorkspaceContextUpdate { context_text, current_workspace_id, current_workspace_path }`                         | `WorkspaceContextUpdate` (push) | `context_text`, `current_workspace_id`, `current_workspace_path` |
+| 19  | `IterationLimitPaused { iteration, max_iterations, message }`                                                   | `IterationLimitPaused` (push)   | `iteration`, `max_iterations`, `message`                         |
+| 20  | `SessionList { sessions }`                                                                                      | `SessionList`                   | `sessions` (repeated SessionInfoDto)                             |
+| 21  | `SessionMessages { messages, cursor, has_more }`                                                                | `SessionMessages`               | `messages`, `cursor`, `has_more`                                 |
+| 22  | `SessionCreated { session_id }`                                                                                 | `SessionCreated`                | `session_id`                                                     |
+| 23  | `CurrentSessionId { session_id }`                                                                               | `CurrentSessionId`              | `session_id`                                                     |
 
 #### Streaming 映射
 
-| 旧协议 | gRPC 映射 | 说明 |
-|--------|-----------|------|
+| 旧协议                                                         | gRPC 映射                                                                               | 说明                      |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------- |
 | `Frame { msg_type: TYPE_STREAM_CHUNK, body: IntentSend JSON }` | `ClientMessage { request_id: 0, payload: StreamChunk { target, action, params_json } }` | 独立 payload 类型，无响应 |

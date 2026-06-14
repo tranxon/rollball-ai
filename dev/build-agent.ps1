@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    RollBall Agent Package Builder and Signer (PowerShell)
+    AgentCowork Agent Package Builder and Signer (PowerShell)
 .DESCRIPTION
     Builds and signs .agent packages for one or all example agents.
     Equivalent to dev/build-agent.sh for Windows.
@@ -158,7 +158,7 @@ function Build-Agent {
 
         Push-Location (Join-Path $ProjectRoot "core")
         try {
-            cargo run --release --bin rollball-keygen -- --type developer --output-dir $KeyDir 2>&1 |
+            cargo run --release --bin acowork-keygen -- --type developer --output-dir $KeyDir 2>&1 |
                 Where-Object { $_ -notmatch "Compiling|Finished|Running|warning" } |
                 ForEach-Object { Write-Subtle "  $_" }
         } finally {
@@ -176,7 +176,7 @@ function Build-Agent {
 
     Push-Location (Join-Path $ProjectRoot "core")
     try {
-        cargo run --release --bin rollball-sign -- `
+        cargo run --release --bin acowork-sign -- `
             --input $unsignedPkg `
             --key $KeyDir `
             --output $signedPkg `
@@ -195,7 +195,7 @@ function Build-Agent {
 
     Push-Location (Join-Path $ProjectRoot "core")
     try {
-        $verifyResult = cargo run --release --bin rollball-verify -- $signedPkg 2>&1 |
+        $verifyResult = cargo run --release --bin acowork-verify -- $signedPkg 2>&1 |
             Where-Object { $_ -notmatch "Compiling|Finished|Running|warning" }
         $verifyResult | ForEach-Object { Write-Subtle "  $_" }
     } finally {
@@ -244,7 +244,7 @@ function Build-Agent {
 
 # ── Main ────────────────────────────────────────────────────────────
 
-Write-Info "RollBall Agent Package Builder (PowerShell)"
+Write-Info "AgentCowork Agent Package Builder (PowerShell)"
 Write-Info ""
 
 $successCount = 0

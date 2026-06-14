@@ -1,0 +1,16 @@
+[package]
+name = "acowork-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+description = "MemoryStore trait and shared memory types (Phase 2: Grafeo implementation)"
+
+[dependencies]
+acowork-core.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true

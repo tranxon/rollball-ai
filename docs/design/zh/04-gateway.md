@@ -157,7 +157,7 @@ bwrap \
 
 ## 9. HTTP API（Desktop App / CLI 接入层）
 
-> **当前实现状态**：HTTP API 已基于 Axum 完整实现，提供 REST 接口和 WebSocket 流式支持。以下接口定义反映实际实现，但为保持文档简洁仅列出核心路由。完整路由列表参见代码 `crates/rollball-gateway/src/http/routes.rs`。
+> **当前实现状态**：HTTP API 已基于 Axum 完整实现，提供 REST 接口和 WebSocket 流式支持。以下接口定义反映实际实现，但为保持文档简洁仅列出核心路由。完整路由列表参见代码 `crates/acowork-gateway/src/http/routes.rs`。
 
 gRPC 是面向 Agent Runtime 进程间通信设计的 Protocol Buffers 双向流协议。HTTP API 作为 Desktop App 和 CLI 的统一接入层，在 gRPC 之上提供 REST 接口和 WebSocket 流式封装。
 
@@ -423,32 +423,32 @@ Desktop App 需要自动发现 Gateway 的 HTTP API 端口：
 
 ## 10. Gateway CLI
 
-Gateway CLI 是一个独立的二进制（`rollball`），为无 GUI 场景提供命令行管理入口。CLI 通过 Gateway HTTP API 与 Gateway 通信，不直接操作 Gateway 内部状态。
+Gateway CLI 是一个独立的二进制（`acowork`），为无 GUI 场景提供命令行管理入口。CLI 通过 Gateway HTTP API 与 Gateway 通信，不直接操作 Gateway 内部状态。
 
 ### 10.1 命令接口
 
 ```bash
 # Agent 管理
-rollball install <path>          # 安装 .agent 包（含签名验证）
-rollball uninstall <agent_id>    # 卸载 Agent
-rollball list                    # 列出已安装 Agent 及状态
-rollball start <agent_id>       # 启动 Agent
-rollball stop <agent_id>        # 停止 Agent
-rollball info <agent_id>        # 查看 Agent 详细信息（版本、权限、运行状态）
+acowork install <path>          # 安装 .agent 包（含签名验证）
+acowork uninstall <agent_id>    # 卸载 Agent
+acowork list                    # 列出已安装 Agent 及状态
+acowork start <agent_id>       # 启动 Agent
+acowork stop <agent_id>        # 停止 Agent
+acowork info <agent_id>        # 查看 Agent 详细信息（版本、权限、运行状态）
 
 # 对话
-rollball chat <agent_id>        # 进入交互式对话模式
-rollball send <agent_id> <msg>  # 发送单条消息并输出响应
+acowork chat <agent_id>        # 进入交互式对话模式
+acowork send <agent_id> <msg>  # 发送单条消息并输出响应
 
 # Vault 管理
-rollball vault list              # 列出已配置的 Key（脱敏显示）
-rollball vault add <provider>    # 添加 API Key（交互式输入，不回显）
-rollball vault remove <provider> # 移除 API Key
+acowork vault list              # 列出已配置的 Key（脱敏显示）
+acowork vault add <provider>    # 添加 API Key（交互式输入，不回显）
+acowork vault remove <provider> # 移除 API Key
 
 # 系统管理
-rollball status                  # Gateway 状态（版本、运行 Agent 数、内存占用）
-rollball config get [key]        # 查看 Gateway 配置
-rollball config set <key> <val>  # 修改 Gateway 配置
+acowork status                  # Gateway 状态（版本、运行 Agent 数、内存占用）
+acowork config get [key]        # 查看 Gateway 配置
+acowork config set <key> <val>  # 修改 Gateway 配置
 ```
 
 ### 10.2 与 Gateway 的通信
@@ -456,7 +456,7 @@ rollball config set <key> <val>  # 修改 Gateway 配置
 CLI 通过 Gateway HTTP API（`http://127.0.0.1:19876`）通信，与 Desktop App 共享同一套 REST 接口（见 §9）。发现机制也与 Desktop App 一致：pidfile → 默认端口 → 手动配置。
 
 ```
-rollball CLI → HTTP API → Gateway
+acowork CLI → HTTP API → Gateway
                     ↑
 Desktop App 也走这条路径
 ```
@@ -468,7 +468,7 @@ Desktop App 也走这条路径
 | CLI 与 Gateway 独立 | 独立二进制 | Gateway 可无 CLI 运行（Desktop App 足够），CLI 可安装在不同机器远程管理（未来） |
 | 通信方式 | HTTP API（非 Socket API） | Socket API 是二进制帧协议，面向 Agent Runtime；HTTP API 是标准 REST，CLI 天然适配 |
 | API Key 输入 | 交互式不回显 | 防止 shell history 泄露 Key |
-| CLI 框架 | clap | Rust 生态标准选择，与 rollball-sign 工具链保持一致 |
+| CLI 框架 | clap | Rust 生态标准选择，与 acowork-sign 工具链保持一致 |
 
 ## 11. 设计决策记录
 

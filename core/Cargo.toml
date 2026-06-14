@@ -1,15 +1,15 @@
 [workspace]
 members = [
-    "rollball-core",
-    "rollball-mcp",
-    "rollball-memory",
-    "rollball-runtime",
-    "rollball-gateway",
-    "rollball-grafeo",
-    "rollball-vault",
-    "rollball-sign",
-    "rollball-tool-sdk",
-    "rollball-embed",
+    "acowork-core",
+    "acowork-mcp",
+    "acowork-memory",
+    "acowork-runtime",
+    "acowork-gateway",
+    "acowork-grafeo",
+    "acowork-vault",
+    "acowork-sign",
+    "acowork-tool-sdk",
+    "acowork-embed",
 ]
 resolver = "2"
 
@@ -152,7 +152,7 @@ protoc-bin-vendored = "3"
 # and install ONNX Runtime manually:
 #   export ORT_LIB_LOCATION=/path/to/onnxruntime/lib
 #   export ORT_DYLIB_PATH=/path/to/onnxruntime/lib/libonnxruntime.so
-#   cargo build --release -p rollball-embed
+#   cargo build --release -p acowork-embed
 #
 # GPU acceleration (opt-in per platform):
 #   --features directml (Windows) | cuda (Linux) | coreml (macOS)
@@ -168,12 +168,12 @@ signal-hook = "0.3"
 ndarray = "0.17"
 
 # Internal crate references
-rollball-core = { path = "rollball-core" }
-rollball-mcp = { path = "rollball-mcp" }
-rollball-memory = { path = "rollball-memory" }
-rollball-grafeo = { path = "rollball-grafeo" }
-rollball-runtime = { path = "rollball-runtime" }
-rollball-gateway = { path = "rollball-gateway" }
-rollball-vault = { path = "rollball-vault" }
-rollball-sign = { path = "rollball-sign" }
-rollball-embed = { path = "rollball-embed" }
+acowork-core = { path = "acowork-core" }
+acowork-mcp = { path = "acowork-mcp" }
+acowork-memory = { path = "acowork-memory" }
+acowork-grafeo = { path = "acowork-grafeo" }
+acowork-runtime = { path = "acowork-runtime" }
+acowork-gateway = { path = "acowork-gateway" }
+acowork-vault = { path = "acowork-vault" }
+acowork-sign = { path = "acowork-sign" }
+acowork-embed = { path = "acowork-embed" }

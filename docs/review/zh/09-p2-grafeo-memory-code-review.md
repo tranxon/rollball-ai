@@ -1,7 +1,7 @@
 # P2 Grafeo/Memory 代码审查报告
 
 **审查日期**：2026-04-24
-**审查范围**：`rollball-grafeo/`（32 文件，~290KB）、`rollball-core/src/memory/`、`rollball-runtime/src/memory/`
+**审查范围**：`acowork-grafeo/`（32 文件，~290KB）、`acowork-core/src/memory/`、`acowork-runtime/src/memory/`
 **对比基线**：设计文档 `docs/05-memory.md`、`docs/module-design/04-grafeo.md`
 **前置审查**：`06-grafeo-design-review.md`（方向决策已确认：引入 grafeo-engine）
 
@@ -31,7 +31,7 @@
 
 ### P0-1：MemoryStore trait 与 GrafeoStore 严重脱节
 
-`rollball-core/src/memory/traits.rs` 定义了 `MemoryStore` trait：
+`acowork-core/src/memory/traits.rs` 定义了 `MemoryStore` trait：
 
 ```rust
 pub struct MemoryNode {
@@ -162,17 +162,17 @@ if results.len() >= config.max_total_nodes {
 
 **建议**：至少为 `GrafeoStore` 添加 `process_instant_extraction` 和 `run_offline_consolidation` 方法，封装完整的巩固流程。
 
-### P1-4：rollball-memory crate 的公共 API 过于简陋
+### P1-4：acowork-memory crate 的公共 API 过于简陋
 
-`rollball-memory` crate 暴露了 `ConflictSignal`、`ConflictType`、`RetrievalMetrics`、`MemoryQuery` 等类型，但没有文档说明这些类型之间的关系和使用场景。
+`acowork-memory` crate 暴露了 `ConflictSignal`、`ConflictType`、`RetrievalMetrics`、`MemoryQuery` 等类型，但没有文档说明这些类型之间的关系和使用场景。
 
 ```rust
 // lib.rs 的 pub use
-pub use rollball_memory::{ConflictSignal, ConflictType};
-pub use rollball_memory::{MemoryQuery, RetrievalMetrics};
+pub use acowork_memory::{ConflictSignal, ConflictType};
+pub use acowork_memory::{MemoryQuery, RetrievalMetrics};
 ```
 
-**建议**：为 `rollball-memory` 添加 `lib.rs` 的模块级文档，说明各类型在记忆生命周期中的角色。
+**建议**：为 `acowork-memory` 添加 `lib.rs` 的模块级文档，说明各类型在记忆生命周期中的角色。
 
 ### P1-5：Episodic search 的 GQL 查询可能返回大量结果
 
@@ -267,9 +267,9 @@ impl MemoryStore for GrafeoMemoryAdapter {
 }
 ```
 
-### 5.3 rollball-grafeo 对 grafeo-engine 的依赖范围过大
+### 5.3 acowork-grafeo 对 grafeo-engine 的依赖范围过大
 
-`Cargo.toml` 同时依赖 `grafeo-engine` 和 `grafeo-core` 和 `grafeo-common`。如果 Grafeo 团队升级了 `grafeo-core` 的内部 API，Rollball 可能意外破坏。
+`Cargo.toml` 同时依赖 `grafeo-engine` 和 `grafeo-core` 和 `grafeo-common`。如果 Grafeo 团队升级了 `grafeo-core` 的内部 API，AgentCowork 可能意外破坏。
 
 **建议**：只依赖 `grafeo-engine`（公共 API），避免直接使用 `grafeo_core::graph::*`。如果必须用，添加版本锁定注释。
 
@@ -277,35 +277,35 @@ impl MemoryStore for GrafeoMemoryAdapter {
 
 ## 6. 与设计文档的一致性
 
-| 设计规格 | 代码实现状态 | 备注 |
-|---------|------------|------|
-| 三层五类型 | ✅ 完整 | Episode/Knowledge/Procedural/Autobiographical/ArtifactRef |
-| 遗忘机制 | ✅ 完整 | 指数衰减 + 访问提升 + 休眠转换 |
-| 冲突检测 | ✅ 完整 | 三层检测 + 自动解决 + 模糊升级 |
-| 即时巩固 | ⚠️ 部分 | 数据结构和逻辑有了，但缺少 GrafeoStore 集成 |
-| 离线巩固 | ⚠️ 部分 | 同上 |
-| Abstention | ✅ 完整 | 分级阈值 + prompt 注入 |
-| Purge 日志 | ✅ 完整 | 30 天恢复窗口 + 三条清理路径 |
-| graph_expand | ✅ 超出 | BFS + 评分 + 早期终止 + PageRank + 社区检测 |
-| hybrid_search | ⚠️ 有缺陷 | 权重调整逻辑不正确 |
-| PrivacyLevel | ❌ 缺失 | GrafeoStore 不支持 zone/PrivacyLevel 过滤 |
-| memory_store tool | ❌ 缺失 | LLM 工具层的 memory_store 尚未实现 |
+| 设计规格          | 代码实现状态 | 备注                                                      |
+| ----------------- | ------------ | --------------------------------------------------------- |
+| 三层五类型        | ✅ 完整       | Episode/Knowledge/Procedural/Autobiographical/ArtifactRef |
+| 遗忘机制          | ✅ 完整       | 指数衰减 + 访问提升 + 休眠转换                            |
+| 冲突检测          | ✅ 完整       | 三层检测 + 自动解决 + 模糊升级                            |
+| 即时巩固          | ⚠️ 部分       | 数据结构和逻辑有了，但缺少 GrafeoStore 集成               |
+| 离线巩固          | ⚠️ 部分       | 同上                                                      |
+| Abstention        | ✅ 完整       | 分级阈值 + prompt 注入                                    |
+| Purge 日志        | ✅ 完整       | 30 天恢复窗口 + 三条清理路径                              |
+| graph_expand      | ✅ 超出       | BFS + 评分 + 早期终止 + PageRank + 社区检测               |
+| hybrid_search     | ⚠️ 有缺陷     | 权重调整逻辑不正确                                        |
+| PrivacyLevel      | ❌ 缺失       | GrafeoStore 不支持 zone/PrivacyLevel 过滤                 |
+| memory_store tool | ❌ 缺失       | LLM 工具层的 memory_store 尚未实现                        |
 
 ---
 
 ## 7. 修复优先级建议
 
-| 优先级 | 编号 | 工作量 | 说明 |
-|-------|------|-------|------|
-| 紧急 | P0-1 | 3d | 重做 MemoryStore trait 或建适配器 |
-| 紧急 | P0-2 | 0.5d | 参数化 GQL 查询或加固转义 |
-| 紧急 | P0-3 | 1d | 验证 GrafeoDB Sync 安全性 |
-| 高 | P1-1 | 1d | 修正 hybrid search 权重逻辑 |
-| 高 | P1-2 | 0.5d | 修正 graph_expand 容量检查位置 |
-| 高 | P1-3 | 2d | 为 consolidation 添加 GrafeoStore 集成 |
-| 高 | P1-4 | 0.5d | 为 rollball-memory 添加文档 |
-| 高 | P1-5 | 1d | 确保搜索走索引 |
-| 中 | P2-1~6 | 2d | 代码质量改进 |
+| 优先级 | 编号   | 工作量 | 说明                                   |
+| ------ | ------ | ------ | -------------------------------------- |
+| 紧急   | P0-1   | 3d     | 重做 MemoryStore trait 或建适配器      |
+| 紧急   | P0-2   | 0.5d   | 参数化 GQL 查询或加固转义              |
+| 紧急   | P0-3   | 1d     | 验证 GrafeoDB Sync 安全性              |
+| 高     | P1-1   | 1d     | 修正 hybrid search 权重逻辑            |
+| 高     | P1-2   | 0.5d   | 修正 graph_expand 容量检查位置         |
+| 高     | P1-3   | 2d     | 为 consolidation 添加 GrafeoStore 集成 |
+| 高     | P1-4   | 0.5d   | 为 acowork-memory 添加文档             |
+| 高     | P1-5   | 1d     | 确保搜索走索引                         |
+| 中     | P2-1~6 | 2d     | 代码质量改进                           |
 
 **总工作量估计**：约 12 人天
 

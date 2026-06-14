@@ -1,0 +1,21 @@
+[package]
+name = "acowork-vault"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+description = "Encrypted API key storage for AgentCowork.AI Gateway"
+
+[dependencies]
+acowork-core.workspace = true
+chacha20poly1305.workspace = true
+rand.workspace = true
+secrecy.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+directories.workspace = true
+argon2 = "0.5"
+zeroize = "1.8"

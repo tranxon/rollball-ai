@@ -9,7 +9,7 @@
 ### Phase 1: 基础框架 + LLM 交互（MVP）
 
 - 定义 manifest v1 规范，实现 ZIP 解析。
-- 实现 .agent 包签名机制：密钥对生成（`rollball-keygen`）、签名（`rollball-sign`）、验证（`rollball-verify`）。
+- 实现 .agent 包签名机制：密钥对生成（`acowork-keygen`）、签名（`acowork-sign`）、验证（`acowork-verify`）。
 - 实现 Agent Runtime 核心：加载 .agent 包、组装 prompt、LLM 主循环（含 Preemptive Trim、Streaming + tool_calls 状态机）、内置工具（memory, http, shell）。
 - History Manager：对话历史 FIFO 裁剪、动态 N 计算、Tool Result 折叠（规则引擎版 HistoryPruner，保留最近 4 轮完整 tool result）。
 - Loop Controller：循环检测三种模式（Exact Repeat / Ping-Pong / No Progress）+ 三级渐进响应（Warning → Block → Break）。
@@ -84,21 +84,21 @@ Desktop App 和开发调试能力在同一阶段交付，因为它们共享 Debu
 > 以下 P2 问题从 Phase 4 Code Review 和 P2 Grafeo/Memory Review 中延后，纳入 Phase 5 S5 处理。
 > 来源：`docs/review/05-p4-code-review.md`（P2-3~P2-14）、`docs/review/09-p2-grafeo-memory-code-review.md`（P2-3g~P2-4g）。
 
-| 编号 | 模块 | 内容 | 来源 | Phase 5 任务 |
-|------|------|------|------|-------------|
-| P2-3 | Gateway | API 错误响应格式统一 | P4 S1 review | S5.1 |
-| P2-4 | Gateway | HTTP API 请求限流（rate limiting） | P4 S1 review | S5.2 |
-| P2-5 | Gateway | API 版本控制 `/api/v1/` | P4 S1 review | S5.3 |
-| P2-8 | Gateway | PermissionGrant 序列化压缩 | P4 S2 review | S5.5 |
-| P2-9 | Gateway | PermissionPolicy 运行时可配置 | P4 S2 review | S5.6 |
-| P2-10 | Runtime | PermissionChecker 监控指标（缓存命中率、请求延迟） | P4 S2 review | S5.7 |
-| P2-11 | Gateway | Cron 时区支持 | P4 S3 review | S5.8 |
-| P2-12 | Gateway | Cron 重试机制 | P4 S3 review | S5.8 |
-| P2-13 | Gateway | Cron 批量操作 | P4 S3 review | S5.8 |
-| P2-14 | Gateway | Cron 最大执行次数（max_runs / expires_at） | P4 S3 review | S5.8 |
-| P2-3g | Grafeo | 冲突检测 Negation/Evolution keywords 可配置（当前硬编码中英双语） | P2 Grafeo review | S5.9 |
-| P2-4g | Grafeo | PageRank O(V²) 增量优化或采样策略 | P2 Grafeo review | S5.9 |
-| P2-5g | Memory | MEM-04 遗忘机制实现方式冲突（PRD: 按需计算 vs 代码: 后台扫描） | PRD §1.4 vs plan-p2.md S2.7 | S5.4 |
+| 编号  | 模块    | 内容                                                              | 来源                        | Phase 5 任务 |
+| ----- | ------- | ----------------------------------------------------------------- | --------------------------- | ------------ |
+| P2-3  | Gateway | API 错误响应格式统一                                              | P4 S1 review                | S5.1         |
+| P2-4  | Gateway | HTTP API 请求限流（rate limiting）                                | P4 S1 review                | S5.2         |
+| P2-5  | Gateway | API 版本控制 `/api/v1/`                                           | P4 S1 review                | S5.3         |
+| P2-8  | Gateway | PermissionGrant 序列化压缩                                        | P4 S2 review                | S5.5         |
+| P2-9  | Gateway | PermissionPolicy 运行时可配置                                     | P4 S2 review                | S5.6         |
+| P2-10 | Runtime | PermissionChecker 监控指标（缓存命中率、请求延迟）                | P4 S2 review                | S5.7         |
+| P2-11 | Gateway | Cron 时区支持                                                     | P4 S3 review                | S5.8         |
+| P2-12 | Gateway | Cron 重试机制                                                     | P4 S3 review                | S5.8         |
+| P2-13 | Gateway | Cron 批量操作                                                     | P4 S3 review                | S5.8         |
+| P2-14 | Gateway | Cron 最大执行次数（max_runs / expires_at）                        | P4 S3 review                | S5.8         |
+| P2-3g | Grafeo  | 冲突检测 Negation/Evolution keywords 可配置（当前硬编码中英双语） | P2 Grafeo review            | S5.9         |
+| P2-4g | Grafeo  | PageRank O(V²) 增量优化或采样策略                                 | P2 Grafeo review            | S5.9         |
+| P2-5g | Memory  | MEM-04 遗忘机制实现方式冲突（PRD: 按需计算 vs 代码: 后台扫描）    | PRD §1.4 vs plan-p2.md S2.7 | S5.4         |
 
 > **待讨论议题（P2-5g，S5.4）**：遗忘机制实现方式——PRD MEM-04 描述为"按需计算模型（查询时实时计算），无后台定时扫描"，但 plan-p2.md S2.7 和代码实现为后台扫描。需要讨论：更新 PRD 描述（承认后台扫描）或回改代码实现为按需计算。
 
@@ -138,7 +138,7 @@ Desktop App 和开发调试能力在同一阶段交付，因为它们共享 Debu
 
 - Agent 克隆 API（Gateway `POST /api/agents/:id/clone`）：骨架克隆 + 完整克隆。
 - 发布检查与清理 API（`POST /api/agents/:id/publish/prepare`）：manifest/SKILL.md 校验、清理。
-- 打包与签名 API（`POST /api/agents/:id/publish/build`）：ZIP 打包 + rollball-sign 签名。
+- 打包与签名 API（`POST /api/agents/:id/publish/build`）：ZIP 打包 + acowork-sign 签名。
 - 分发 API：本地安装 + 导出文件。
 - Desktop 发布向导 + 克隆对话框 + 创建向导。
 
@@ -171,7 +171,7 @@ Desktop App 和开发调试能力在同一阶段交付，因为它们共享 Debu
 > **备忘：企业知识生命周期平台**
 >
 > 基于 Phase 6 的企业级记忆基础设施，构建企业知识的本地训练调优→云端发布平台。
-> 核心价值：RollBall 不仅是 Agent 运行时，更是企业知识的本地化训练调优发布平台。
+> 核心价值：AgentCowork 不仅是 Agent 运行时，更是企业知识的本地化训练调优发布平台。
 > 功能维度：
 > 1. 本地训练调优：Agent 开发者/训练师在工作区中对话式写入事实、关系、程序知识，离线巩固提炼语义沉淀
 > 2. 知识打包发布：选定知识子图（按 Zone/NodeType/PrivacyLevel 过滤），个人/敏感数据自动剥离，质量门禁（importance > 0.7, 无冲突标记），导出为 .grafeo 快照

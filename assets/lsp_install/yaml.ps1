@@ -1,4 +1,4 @@
-# RollBall LSP install script: yaml-language-server
+# AgentCowork LSP install script: yaml-language-server
 # Phases: Install -> Verify -> Health Check
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== RollBall LSP Setup: yaml-language-server ==="
+Write-Host "=== AgentCowork LSP Setup: yaml-language-server ==="
 Install-Server
 Verify-Server
 Health-Check

@@ -68,7 +68,7 @@
   <rect x="42" y="372" width="211" height="26" rx="6" fill="#0ea5e9" />
   <rect x="42" y="392" width="211" height="6" fill="#0ea5e9" />
   <text x="147" y="390" text-anchor="middle" fill="white" font-family="system-ui, sans-serif" font-size="12" font-weight="600">System Agent</text>
-  <text x="147" y="415" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="11">(com.rollball.system)</text>
+  <text x="147" y="415" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="11">(com.acowork.system)</text>
   <text x="147" y="435" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="10">config + prompt + skills</text>
 
   <g transform="translate(45, 472)">
@@ -100,7 +100,7 @@
   <rect x="294" y="372" width="211" height="26" rx="6" fill="#8b5cf6" />
   <rect x="294" y="392" width="211" height="6" fill="#8b5cf6" />
   <text x="400" y="390" text-anchor="middle" fill="white" font-family="system-ui, sans-serif" font-size="12" font-weight="600">Senior Engineer</text>
-  <text x="400" y="415" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="11">(com.rollball.senior-engineer)</text>
+  <text x="400" y="415" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="11">(com.acowork.senior-engineer)</text>
   <text x="400" y="435" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="10">config + prompt + skills</text>
 
   <g transform="translate(297, 472)">
@@ -128,7 +128,7 @@
   <rect x="547" y="372" width="211" height="26" rx="6" fill="#f59e0b" />
   <rect x="547" y="392" width="211" height="6" fill="#f59e0b" />
   <text x="652" y="390" text-anchor="middle" fill="white" font-family="system-ui, sans-serif" font-size="12" font-weight="600">Project Manager</text>
-  <text x="652" y="415" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="11">(com.rollball.project-manager)</text>
+  <text x="652" y="415" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="11">(com.acowork.project-manager)</text>
   <text x="652" y="435" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="10">config + prompt + skills</text>
 
   <g transform="translate(550, 472)">

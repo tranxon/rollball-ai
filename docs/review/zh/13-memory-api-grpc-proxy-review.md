@@ -15,7 +15,7 @@
 | 改进领域 | 描述 | 影响范围 |
 |----------|------|----------|
 | **Memory API gRPC 代理** | Gateway HTTP Memory API 不再直接访问 `MemoryStore`，改为通过 gRPC 转发查询到 Runtime，由 Runtime 直接操作 GrafeoStore | Gateway `http/memory_api.rs`, `grpc/server.rs`, `grpc/dispatch.rs`; Runtime `grpc/client.rs`, `cli.rs`, `agent/loop_.rs`, `agent/agent_core.rs`, `agent/context.rs`, `agent/session_state.rs` |
-| **Grafeo WAL 恢复** | 在 `GrafeoStore::open_with_config()` 中调用 `db.wal_checkpoint()` 恢复崩溃后未提交的 WAL 数据 | `rollball-grafeo/src/grafeo.rs` |
+| **Grafeo WAL 恢复** | 在 `GrafeoStore::open_with_config()` 中调用 `db.wal_checkpoint()` 恢复崩溃后未提交的 WAL 数据 | `acowork-grafeo/src/grafeo.rs` |
 | **诊断日志 + Windows CRLF** | 在关键路径添加 `tracing::info!` 诊断日志；为 Windows 终端添加 CrlfWriter | Gateway `cli.rs`, `http/memory_api.rs`; Runtime `cli.rs` |
 
 ### 1.1 架构变更：从 Gateway 直连到 gRPC 代理
@@ -40,7 +40,7 @@ Desktop App → Gateway HTTP API → gRPC MemoryNodesQuery → Runtime GrafeoSto
 
 ## 2. 逐模块详细 Review
 
-### 2.1 Proto 定义 (`core/rollball-core/proto/gateway_ipc.proto`)
+### 2.1 Proto 定义 (`core/acowork-core/proto/gateway_ipc.proto`)
 
 **变更内容**：新增 4 组 request/response 消息对
 
@@ -77,7 +77,7 @@ ClientMessage (Runtime → Gateway):
 
 3. **`MemoryConsolidateQuery.retention_days` 是 `uint32`**，但 0 值语义不清（"不限制" 还是 "保留0天即全部清理"？）。当前 Runtime 实现中 `retention_days == 0` 被当作 "不限制" 处理，但 proto 层面缺少文档说明。
 
-### 2.2 Gateway gRPC Session Manager (`core/rollball-gateway/src/grpc/server.rs`)
+### 2.2 Gateway gRPC Session Manager (`core/acowork-gateway/src/grpc/server.rs`)
 
 **核心新增**：`GrpcSessionManager` 增加了 request-response 协调能力
 
@@ -120,7 +120,7 @@ Inbound handler:
 
 5. **`cleanup_pending()` 只在超时路径调用**。如果 Runtime 崩溃导致 gRPC 断开，pending_requests 中的条目会泄漏。虽然 gRPC 断开时 session 会被移除，但 pending_requests 不会被清理。建议在 session 移除时也清理该 session 关联的所有 pending requests。
 
-### 2.3 Gateway HTTP Memory API (`core/rollball-gateway/src/http/memory_api.rs`)
+### 2.3 Gateway HTTP Memory API (`core/acowork-gateway/src/http/memory_api.rs`)
 
 **核心变更**：所有 4 个 HTTP handler（list_memory_nodes, get_memory_stats, delete_memory_node, trigger_consolidate）从直接访问 `GatewayState.memory_store` 改为 gRPC 代理。
 
@@ -164,7 +164,7 @@ Inbound handler:
 
 8. **`delete_memory_node` 在没有 gRPC 连接时返回 503**，而 `list_memory_nodes` 和 `get_memory_stats` 返回空数据。行为不一致。建议统一为：列表/统计类操作返回空（幂等），修改类操作返回 503（正确）。
 
-### 2.4 Runtime gRPC Client (`core/rollball-runtime/src/grpc/client.rs`)
+### 2.4 Runtime gRPC Client (`core/acowork-runtime/src/grpc/client.rs`)
 
 **核心变更**：在 inbound loop 中拦截 Memory API query，转发到 `memory_query_tx` channel。
 
@@ -193,7 +193,7 @@ if is_memory_query_payload(&msg) {
 
 10. **`is_memory_query_payload()` 使用 `matches!` 宏枚举 4 种类型**。如果 proto 新增 memory query 类型但忘记更新这个函数，消息会被静默丢弃到 `push_rx`。建议添加注释提醒保持同步，或使用 oneof + descriptor 检查。
 
-### 2.5 Runtime Gateway Loop 重构 (`core/rollball-runtime/src/cli.rs`)
+### 2.5 Runtime Gateway Loop 重构 (`core/acowork-runtime/src/cli.rs`)
 
 **核心变更**：
 
@@ -248,7 +248,7 @@ fn handle_memory_nodes_query(
 
 15. **`handle_memory_stats_query` 中 `storage_bytes` 和 `avg_decay_score` 硬编码为 0**。proto 中定义了这些字段但无法获取，应该至少在注释中标注 TODO。
 
-### 2.6 Agent Loop 记忆链路 (`core/rollball-runtime/src/agent/loop_.rs`)
+### 2.6 Agent Loop 记忆链路 (`core/acowork-runtime/src/agent/loop_.rs`)
 
 **核心新增**：3 个方法 + 1 个辅助函数
 
@@ -303,7 +303,7 @@ pub async fn run(&mut self, user_message: &str, context_builder: &mut ContextBui
 
 18. **`retrieved_memory_ids` 使用 `Vec<String>`**，但 Grafeo 的 NodeId 是 `u64`。转换为 String 有开销且丢失类型信息。建议改为 `Vec<u64>` 并在 proto 层面也使用 `repeated uint64`。
 
-### 2.7 AgentCore 记忆存储 (`core/rollball-runtime/src/agent/agent_core.rs`)
+### 2.7 AgentCore 记忆存储 (`core/acowork-runtime/src/agent/agent_core.rs`)
 
 **核心变更**：
 
@@ -335,7 +335,7 @@ pub struct AgentCore {
     
     两次调用的时机不同，但都通过 `AgentCore` 的可变引用执行。没有防重入检查（第二次调用会覆盖第一次的 store）。建议添加 `if self.memory_store.is_some() { return; }` 防护。
 
-### 2.8 ContextBuilder (`core/rollball-runtime/src/agent/context.rs`)
+### 2.8 ContextBuilder (`core/acowork-runtime/src/agent/context.rs`)
 
 **核心变更**：
 
@@ -374,7 +374,7 @@ if let Some(ref memory) = self.retrieved_memory {
 
 21. **`build()` 中注释 `// 2.5 Autobiographical context` 被替换为 `// 2.5 Retrieved memory context`**。之前的 "Autobiographical context (Phase 1: skip, Phase 2: from Grafeo)" 注释暗示这是一个分阶段实现。现在直接替换为 Retrieved memory，丢失了 Phase 2 的原始规划注释。影响较小，但建议在新注释中说明 Grafeo 的 Retrieved memory 包含了 Autobiographical 类型。
 
-### 2.9 Grafeo WAL Recovery (`core/rollball-grafeo/src/grafeo.rs`)
+### 2.9 Grafeo WAL Recovery (`core/acowork-grafeo/src/grafeo.rs`)
 
 **变更**：3 行代码
 
@@ -397,13 +397,13 @@ let _ = store.db.wal_checkpoint();
 
 23. **只在 `open_with_config()` 中 checkpoint，`new_in_memory()` 没有**。对于 in-memory 数据库不需要 WAL recovery，所以这是正确的。但如果未来有人添加了其他 open 路径，可能遗漏。
 
-### 2.10 Gateway 依赖清理 (`core/rollball-gateway/Cargo.toml`)
+### 2.10 Gateway 依赖清理 (`core/acowork-gateway/Cargo.toml`)
 
-**变更**：从 `[dev-dependencies]` 中移除了 `rollball-grafeo`。
+**变更**：从 `[dev-dependencies]` 中移除了 `acowork-grafeo`。
 
 **评价**：✅ 正确。Gateway 不再直接访问 GrafeoStore，依赖移除是架构正确性的体现。
 
-### 2.11 Windows CRLF (`core/rollball-gateway/src/cli.rs`, `core/rollball-runtime/src/cli.rs`)
+### 2.11 Windows CRLF (`core/acowork-gateway/src/cli.rs`, `core/acowork-runtime/src/cli.rs`)
 
 **变更**：`CrlfWriter<W>` 包装器 + `CrlfStderr` MakeWriter 实现。
 
@@ -420,9 +420,9 @@ let _ = store.db.wal_checkpoint();
 
 24. **CrlfWriter 的 `write()` 返回 `Ok(buf.len())`，但实际写入可能多于 `buf.len()` 个字节（因为插入了 `\r`）**。这在大多数 tracing 使用场景下没问题（tracing 不检查写入字节数），但严格来说不符合 `Write::write` 的语义约定。如果其他代码依赖写入字节数做 offset 计算，可能出问题。
 
-25. **Runtime 和 Gateway 都有 CrlfWriter 实现，但代码重复**。两个 `cli.rs` 文件中各自实现了一遍相同的 `CrlfWriter` 和 `CrlfStderr`。建议提取到 `rollball-core` 的 shared utility 中。
+25. **Runtime 和 Gateway 都有 CrlfWriter 实现，但代码重复**。两个 `cli.rs` 文件中各自实现了一遍相同的 `CrlfWriter` 和 `CrlfStderr`。建议提取到 `acowork-core` 的 shared utility 中。
 
-### 2.12 Legacy 代码清理 (`core/rollball-gateway/src/http/chat.rs`)
+### 2.12 Legacy 代码清理 (`core/acowork-gateway/src/http/chat.rs`)
 
 **变更**：删除了 `get_conversations_legacy()` 和 `get_latest_conversation_legacy()` 两个函数（~230 行）。
 
@@ -524,7 +524,7 @@ let _ = store.db.wal_checkpoint();
 | 3 | 🟡 P1 | 提取 gRPC proxy 重复模式为泛型辅助函数 | 1-2 天 |
 | 4 | 🟡 P1 | 添加 Gateway→Runtime Memory API 端到端集成测试 | 2-3 天 |
 | 5 | 🟡 P1 | `time_range` 过滤要么实现要么移除/标注 reserved | 1 天 |
-| 6 | 🟡 P2 | CrlfWriter 提取到 rollball-core shared utility | 0.5 天 |
+| 6 | 🟡 P2 | CrlfWriter 提取到 acowork-core shared utility | 0.5 天 |
 | 7 | 🟡 P2 | `init_memory_store()` 添加防重入检查 | 0.5 天 |
 | 8 | 🟢 P3 | WAL checkpoint 错误添加 `tracing::warn!` | 0.5 天 |
 | 9 | 🟢 P3 | `retrieved_memory_ids` 改为 `Vec<u64>` 保持类型一致性 | 1 天 |

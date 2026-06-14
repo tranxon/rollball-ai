@@ -4,11 +4,11 @@
 
 ---
 
-Rollball Desktop App 是基于 Tauri 的桌面客户端，作为用户与 Agent 交互的主界面。Desktop App 与 Gateway 是**独立进程**，通过 Gateway Service API 通信。
+AgentCowork Desktop App 是基于 Tauri 的桌面客户端，作为用户与 Agent 交互的主界面。Desktop App 与 Gateway 是**独立进程**，通过 Gateway Service API 通信。
 
 ## 1. 定位与职责
 
-Desktop App 是 Rollball 平台的**用户界面层**，不承载任何平台核心逻辑。它的职责是：
+Desktop App 是 AgentCowork 平台的**用户界面层**，不承载任何平台核心逻辑。它的职责是：
 
 | 职责 | 说明 |
 |------|------|
@@ -28,7 +28,7 @@ Desktop App 是 Rollball 平台的**用户界面层**，不承载任何平台核
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Rollball Desktop App (Tauri v2)                │
+│                    AgentCowork Desktop App (Tauri v2)                │
 │                                                                  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  WebView Frontend (React)                                 │  │
@@ -113,7 +113,7 @@ Desktop App 采用**左中右四栏布局**，根据当前模式（用户模式 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Rollball                            [Developer Mode ○]  [— □ ✕] │
+│  AgentCowork                            [Developer Mode ○]  [— □ ✕] │
 ├────┬──────────────┬────────────────────────┬────────────────────────┤
 │    │              │                        │                        │
 │ 📱 │   Agent      │     Chat Panel         │   Execution            │
@@ -219,7 +219,7 @@ Desktop App 采用**左中右四栏布局**，根据当前模式（用户模式 
 
 ```
 Step 1: 欢迎
-  "欢迎使用 Rollball，让我们快速配置你的环境"
+  "欢迎使用 AgentCowork，让我们快速配置你的环境"
 
 Step 2: Gateway 连接
   ├─ 自动检测本地 Gateway（尝试连接默认地址）
@@ -369,7 +369,7 @@ Step 5: 生成 → 调用 Gateway API 创建工作区 → 新 Agent 标记 dev: 
 Step 1: 检查 — manifest 完整性、SKILL.md 格式、prompts 存在性
 Step 2: 清理 — 移除 dev 标记、清空 recordings/、重置 config/
 Step 3: 打包 — 生成 .agent ZIP 文件
-Step 4: 签名 — 调用 rollball-sign 签名
+Step 4: 签名 — 调用 acowork-sign 签名
 Step 5: 分发 — 本地安装 / 导出到文件 / 上传仓库
 ```
 
@@ -381,11 +381,11 @@ Step 5: 分发 — 本地安装 / 导出到文件 / 上传仓库
 
 | 状态 | 图标样式 | Tooltip |
 |------|---------|---------|
-| Gateway 已连接 | 正常图标 | `Rollball — Connected` |
-| Gateway 未连接 | 灰色图标 | `Rollball — Disconnected` |
-| Agent 正在运行 | 蓝色脉冲 | `Rollball — 2 Agents Running` |
-| Agent 执行中 | 绿色脉冲 | `Rollball — Working` |
-| 错误 | 红色图标 | `Rollball — Error` |
+| Gateway 已连接 | 正常图标 | `AgentCowork — Connected` |
+| Gateway 未连接 | 灰色图标 | `AgentCowork — Disconnected` |
+| Agent 正在运行 | 蓝色脉冲 | `AgentCowork — 2 Agents Running` |
+| Agent 执行中 | 绿色脉冲 | `AgentCowork — Working` |
+| 错误 | 红色图标 | `AgentCowork — Error` |
 
 ### 6.2 托盘右键菜单
 
@@ -399,7 +399,7 @@ Step 5: 分发 — 本地安装 / 导出到文件 / 上传仓库
 │ Start Gateway    │  (未连接时显示)
 │ Stop Gateway     │  (已连接时显示)
 │──────────────────│
-│ Quit Rollball    │
+│ Quit AgentCowork    │
 └──────────────────┘
 ```
 
@@ -436,7 +436,7 @@ Desktop App 后台定期（每 5s）调用 Gateway `/health` 端点：
 
 | Plugin | 用途 |
 |--------|------|
-| `tauri-plugin-shell` | 调用外部命令（rollball-sign 等 CLI 工具） |
+| `tauri-plugin-shell` | 调用外部命令（acowork-sign 等 CLI 工具） |
 | `tauri-plugin-store` | 持久化 Desktop App 自身配置（Gateway 地址、窗口状态等） |
 | `tauri-plugin-single-instance` | 防止多实例 |
 | `tauri-plugin-dialog` | 文件选择对话框（安装 .agent 包） |
@@ -445,7 +445,7 @@ Desktop App 后台定期（每 5s）调用 Gateway `/health` 端点：
 ### 7.3 前端目录结构
 
 ```
-apps/rollball-desktop/
+apps/acowork-desktop/
 ├── src-tauri/                  # Rust 后端
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
@@ -497,7 +497,7 @@ apps/rollball-desktop/
 
 ```toml
 [package]
-name = "rollball-desktop"
+name = "acowork-desktop"
 version = "0.1.0"
 edition = "2024"
 
@@ -518,7 +518,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tokio-tungstenite = "0.26"    # WebSocket (Debug Protocol)
 anyhow = "1"
 directories = "6"
-# Desktop App 不依赖 rollball 内部 crate —— 通过 Gateway HTTP API / Debug WebSocket 与平台通信，
+# Desktop App 不依赖 acowork 内部 crate —— 通过 Gateway HTTP API / Debug WebSocket 与平台通信，
 # 所有数据结构按 API 契约独立定义，保持 UI 层与平台核心的解耦。
 
 [features]

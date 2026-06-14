@@ -51,7 +51,7 @@
 
 ### 4. 代码注释更新
 
-在 `rollball-core/src/memory/traits.rs` 中添加了明确的注释：
+在 `acowork-core/src/memory/traits.rs` 中添加了明确的注释：
 
 ```rust
 /// Memory node with metadata
@@ -106,5 +106,5 @@ pub struct MemoryNode {
 
 - [docs/05-memory.md](../../design/zh/05-memory.md) - Memory 仿生分层架构
 - [docs/module-design/04-grafeo.md](../../module-design/zh/04-grafeo.md) - Grafeo 存储引擎设计
-- [core/rollball-core/src/memory/traits.rs](../../../core/rollball-core/src/memory/traits.rs) - MemoryStore trait 定义
-- [core/rollball-grafeo/src/types.rs](../../../core/rollball-grafeo/src/types.rs) - LPG 节点类型定义
+- [core/acowork-core/src/memory/traits.rs](../../../core/acowork-core/src/memory/traits.rs) - MemoryStore trait 定义
+- [core/acowork-grafeo/src/types.rs](../../../core/acowork-grafeo/src/types.rs) - LPG 节点类型定义

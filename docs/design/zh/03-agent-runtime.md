@@ -24,7 +24,7 @@ Agent Runtime 是平台提供的唯一二进制可执行文件，类似 Android 
 > **验证方式**：Phase 3 将通过 `MemoryMetrics` 结构在 Debug 模式下实时报告内存占用，并提供 `/metrics` 端点供 Desktop App 展示。Phase 2 通过 Rust 标准库 `alloc::alloc::GlobalStats`（nightly）或外部 `jemalloc` 统计进行开发阶段验证。目标约束的验证不在 Phase 2 功能范围内。
 
 ```bash
-rollball-runtime \
+acowork-runtime \
     --agent-id com.example.weather \
     --package-path /path/to/agent-package \
     --work-dir /home/user/.local/share/agent-gateway/agents/com.example.weather/workspace \

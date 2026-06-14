@@ -9,7 +9,7 @@
 
 ## 背景
 
-RollBall Runtime 的 Debug（DevMode）功能在实现过程中逐步渗透到了非 debug 模块中，导致 debug 代码和生产代码边界模糊。具体问题如下：
+AgentCowork Runtime 的 Debug（DevMode）功能在实现过程中逐步渗透到了非 debug 模块中，导致 debug 代码和生产代码边界模糊。具体问题如下：
 
 ### 问题 1：主循环侵入严重
 
@@ -358,21 +358,21 @@ self.core.debug_observer.apply_rewind_and_patches(
 
 ## 文件变更清单
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
-| `debug/mod.rs` | 修改 | 新增 `observer` 和 `observer_impl` 子模块导出 |
-| `debug/observer.rs` | **新增** | `DebugObserver` trait + `DebugObserverSlot` 枚举 |
-| `debug/observer_impl.rs` | **新增** | `DebugObserverImpl` — 当前散落各处的 debug 逻辑收敛于此 |
-| `debug/controller.rs` | 不变 | 内部状态管理，不受重构影响 |
-| `debug/protocol.rs` | 不变 | 协议类型定义，不受重构影响 |
-| `debug/server.rs` | 小改 | RPC handler 调用路径调整（从直接操作 ctrl 改为通过 observer） |
-| `agent_core.rs` | **大改** | 6 个 Option 字段 → 1 个 `DebugObserverSlot`；删除 6 个 debug 方法 |
-| `loop_.rs` | **大改** | 删除 5 个 debug 方法；15+ 处调用点替换为 observer 钩子 |
-| `context.rs` | 小改 | 删除 "for debug patching" 注释；`environment_override` → `environment_patch` |
-| `session_task.rs` | **大改** | 删除 `EnableDebugMode` 消息处理；3 个 rewind 函数移入 observer；debug 字段移除 |
-| `session_manager.rs` | 中改 | `enable_debug_mode()` 创建 `DebugObserverImpl` 而非 `DebugHandles` |
-| `session_handle.rs` | 小改 | `pending_debug_handles` → `DebugInjectionChannel` |
-| `session_state.rs` | 不变 | 仅注释引用，无实质代码 |
+| 文件                     | 变更     | 说明                                                                           |
+| ------------------------ | -------- | ------------------------------------------------------------------------------ |
+| `debug/mod.rs`           | 修改     | 新增 `observer` 和 `observer_impl` 子模块导出                                  |
+| `debug/observer.rs`      | **新增** | `DebugObserver` trait + `DebugObserverSlot` 枚举                               |
+| `debug/observer_impl.rs` | **新增** | `DebugObserverImpl` — 当前散落各处的 debug 逻辑收敛于此                        |
+| `debug/controller.rs`    | 不变     | 内部状态管理，不受重构影响                                                     |
+| `debug/protocol.rs`      | 不变     | 协议类型定义，不受重构影响                                                     |
+| `debug/server.rs`        | 小改     | RPC handler 调用路径调整（从直接操作 ctrl 改为通过 observer）                  |
+| `agent_core.rs`          | **大改** | 6 个 Option 字段 → 1 个 `DebugObserverSlot`；删除 6 个 debug 方法              |
+| `loop_.rs`               | **大改** | 删除 5 个 debug 方法；15+ 处调用点替换为 observer 钩子                         |
+| `context.rs`             | 小改     | 删除 "for debug patching" 注释；`environment_override` → `environment_patch`   |
+| `session_task.rs`        | **大改** | 删除 `EnableDebugMode` 消息处理；3 个 rewind 函数移入 observer；debug 字段移除 |
+| `session_manager.rs`     | 中改     | `enable_debug_mode()` 创建 `DebugObserverImpl` 而非 `DebugHandles`             |
+| `session_handle.rs`      | 小改     | `pending_debug_handles` → `DebugInjectionChannel`                              |
+| `session_state.rs`       | 不变     | 仅注释引用，无实质代码                                                         |
 
 ---
 
@@ -440,22 +440,22 @@ self.core.debug_observer.apply_rewind_and_patches(
 
 ### 变得更好的
 
-| 维度 | 改善 |
-|------|------|
-| **主循环可读性** | 15+ 处 `if let Some(ctrl)` 守卫消失，替换为语义明确的 `observer.on_xxx()` 调用 |
-| **AgentCore 职责** | 从 6+6 个 debug 关注点缩减为 1 个字段，回归"运行时核心"定位 |
+| 维度                 | 改善                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| **主循环可读性**     | 15+ 处 `if let Some(ctrl)` 守卫消失，替换为语义明确的 `observer.on_xxx()` 调用       |
+| **AgentCore 职责**   | 从 6+6 个 debug 关注点缩减为 1 个字段，回归"运行时核心"定位                          |
 | **Debug 模块内聚性** | 所有 debug 逻辑（阶段追踪、快照、暂停/恢复、rewind、补丁）收敛到 `DebugObserverImpl` |
-| **可测试性** | 可以 mock `DebugObserver` 来测试主循环的各种 debug 场景，无需启动 WebSocket 服务器 |
-| **零成本抽象** | Production 变体在编译时消除，运行时无额外开销 |
-| **未来扩展** | 新增 debug 钩子只需在 trait 上加方法 + impl，不需要修改业务代码的守卫条件 |
+| **可测试性**         | 可以 mock `DebugObserver` 来测试主循环的各种 debug 场景，无需启动 WebSocket 服务器   |
+| **零成本抽象**       | Production 变体在编译时消除，运行时无额外开销                                        |
+| **未来扩展**         | 新增 debug 钩子只需在 trait 上加方法 + impl，不需要修改业务代码的守卫条件            |
 
 ### 变得更差的（代价）
 
-| 维度 | 代价 |
-|------|------|
-| **间接层** | 主循环通过 observer 间接调用，无法内联到具体实现（但枚举分派的开销可忽略） |
-| **Observer 方法签名** | trait 方法需要满足所有调用场景，可能比当前散落代码更"宽"；某些方法需要 `&mut self` 或 async，trait 设计需谨慎 |
-| **迁移风险** | 4 步迁移中每步都需要完整的集成测试覆盖，特别是 rewind 和 pause/resume 的边界场景 |
+| 维度                      | 代价                                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **间接层**                | 主循环通过 observer 间接调用，无法内联到具体实现（但枚举分派的开销可忽略）                                                      |
+| **Observer 方法签名**     | trait 方法需要满足所有调用场景，可能比当前散落代码更"宽"；某些方法需要 `&mut self` 或 async，trait 设计需谨慎                   |
+| **迁移风险**              | 4 步迁移中每步都需要完整的集成测试覆盖，特别是 rewind 和 pause/resume 的边界场景                                                |
 | **DebugInjectionChannel** | 绕过注入机制仍然存在，只是换了包装——`Arc<Mutex<Option<DebugHandles>>>` 变成了 `DebugInjectionChannel`，本质未变（但至少封装了） |
 
 ### 不变的
@@ -479,7 +479,7 @@ self.core.debug_observer.apply_rewind_and_patches(
 ```
 
 **否决原因**：
-- 生产构建无法包含 debug 功能，但 RollBall 的 DevMode 是运行时开关（Gateway 推送 `EnableDebugMode`），不是编译时选择
+- 生产构建无法包含 debug 功能，但 AgentCowork 的 DevMode 是运行时开关（Gateway 推送 `EnableDebugMode`），不是编译时选择
 - Feature flag 不支持"运行时注入"场景
 - `cfg` 条件编译会让两种模式的代码永远无法同时测试
 
@@ -514,6 +514,6 @@ debug_hook!(self, on_phase_enter, DebugPhase::BudgetCheck);
 
 ## 参考
 
-- 当前代码：`core/rollball-runtime/src/agent/loop_.rs` (4189 行), `agent_core.rs`, `context.rs`, `session_task.rs`
+- 当前代码：`core/acowork-runtime/src/agent/loop_.rs` (4189 行), `agent_core.rs`, `context.rs`, `session_task.rs`
 - 设计文档：`docs/design/zh/10-debug-protocol.md`
 - 灵感来源：Chrome DevTools Protocol 的 CDP Session 模型、LLDB 的 Observer 模式

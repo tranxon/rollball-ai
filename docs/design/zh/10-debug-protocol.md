@@ -528,7 +528,7 @@ Gateway:
 
 ### 7.3 克隆限制
 
-- 系统 Agent（`com.rollball.system`）不可克隆——无 Platform 签名，无法获得系统特权
+- 系统 Agent（`com.acowork.system`）不可克隆——无 Platform 签名，无法获得系统特权
 - 克隆体与源 Agent 独立，后续源 Agent 更新不会同步
 - 完整克隆的 Grafeo 快照是克隆时刻的副本，之后双方各自演化
 
@@ -558,7 +558,7 @@ Step 3: 打包
   └─ 输出到 build/<agent_id>-<version>.unsigned.agent
 
 Step 4: 签名
-  ├─ 调用 rollball-sign 签名
+  ├─ 调用 acowork-sign 签名
   ├─ 可选：选择密钥（已有 / 新生成）
   └─ 输出 build/<agent_id>-<version>.agent
 

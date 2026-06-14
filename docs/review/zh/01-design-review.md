@@ -61,7 +61,7 @@
 
 #### 问题 4：~~06-communication.md 的 Capability Registry 实现细节缺失~~ ✅ 已修复
 
-**解决方案**：Rollball 不支持隐式 Intent，所有 Intent 调用必须显式指定 `target`（Agent ID）。Capability Registry 简化为单 HashMap，`"{agent_id}:{action}"` 作为 Key，无需 priority 机制。详见 06-communication.md §2.2。
+**解决方案**：AgentCowork 不支持隐式 Intent，所有 Intent 调用必须显式指定 `target`（Agent ID）。Capability Registry 简化为单 HashMap，`"{agent_id}:{action}"` 作为 Key，无需 priority 机制。详见 06-communication.md §2.2。
 
 **设计要点**：
 - 单 HashMap：`capabilities: HashMap<String, CapabilityDef>`
@@ -78,12 +78,12 @@
 
 **问题描述**：
 ```toml
-rollball-core = { path = "../../crates/rollball-core" }
+acowork-core = { path = "../../crates/acowork-core" }
 ```
 
-根据 docs/module-design/00-overview.md 的 workspace 结构，主要 crate 包括 rollball-core、rollball-memory、rollball-runtime、rollball-gateway、rollball-grafeo、rollball-vault、rollball-sign。Desktop App 如果需要复用 Memory 相关代码，应该依赖 `rollball-memory` 或 `rollball-grafeo`，而非 `rollball-core`。
+根据 docs/module-design/00-overview.md 的 workspace 结构，主要 crate 包括 acowork-core、acowork-memory、acowork-runtime、acowork-gateway、acowork-grafeo、acowork-vault、acowork-sign。Desktop App 如果需要复用 Memory 相关代码，应该依赖 `acowork-memory` 或 `acowork-grafeo`，而非 `acowork-core`。
 
-**建议**：确认 Desktop App 实际需要的 crate 依赖，按需改为 `rollball-memory` 或其他。
+**建议**：确认 Desktop App 实际需要的 crate 依赖，按需改为 `acowork-memory` 或其他。
 
 ---
 

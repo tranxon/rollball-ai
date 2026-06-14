@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RollBall LSP install script: vscode-html-language-server
+# AgentCowork LSP install script: vscode-html-language-server
 # Phases: Install -> Verify -> Health Check
 #
 # vscode-html-languageserver npm package was DEPRECATED.
@@ -157,7 +157,7 @@ health_check() {
 }
 
 # ── Main ────────────────────────────────────────────────────────────
-echo "=== RollBall LSP Setup: vscode-html-language-server ==="
+echo "=== AgentCowork LSP Setup: vscode-html-language-server ==="
 install
 verify
 health_check

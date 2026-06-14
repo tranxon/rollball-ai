@@ -3,7 +3,7 @@
 > 编号：21-memory-design-vs-impl-gap-analysis
 > 分析时间：2026-05-30
 > 对照基准：`docs/design/05-memory.md` (v3.9)、`docs/module-design/04-grafeo.md` (v3.6)
-> 实现代码：`core/rollball-memory/`、`core/rollball-grafeo/`、`core/rollball-runtime/src/memory/`
+> 实现代码：`core/acowork-memory/`、`core/acowork-grafeo/`、`core/acowork-runtime/src/memory/`
 
 ---
 
@@ -25,42 +25,42 @@
 
 | 设计项 | 设计文档位置 | 实现位置 | 状态 |
 |--------|------------|---------|------|
-| 三层仿生分层架构（瞬态/经历/沉淀） | §0 | `rollball-memory/src/types.rs` | 完成 |
-| Grafeo 4 种 LPG Label（Episodic/Knowledge/Procedural/Autobiographical） | §8.1 / 04-grafeo.md §8.1 | `rollball-memory/src/types.rs` labels 模块 | 完成 |
-| MemoryStore trait 抽象 | §10.3 | `rollball-memory/src/store.rs` | 完成 |
-| MemoryQuery / MemoryFilters / SearchResult / MemoryContext 等查询类型 | §10.3 | `rollball-memory/src/types.rs` | 完成 |
-| DecayConfig 参数化遗忘配置 | §10.3 | `rollball-memory/src/types.rs` (L555-585) | 完成 |
-| HintType 检索权重类型（s/f/r/i） | §6.6 | `rollball-memory/src/types.rs` (L24-46) | 完成 |
-| 检索权重动态调整（get_hint_weights / config_from_hint） | §6.6 | `rollball-grafeo/src/spreading.rs` | 完成 |
-| GrafeoStore MemoryStore trait 完整实现 | 04-grafeo.md | `rollball-grafeo/src/grafeo.rs` (L164-547) | 完成 |
-| 4 Label 的 HNSW 向量索引 + BM25 文本索引自动初始化 | 04-grafeo.md | `rollball-grafeo/src/grafeo.rs` `init_schema()` (L104-144) | 完成 |
-| 乘法衰减模型（decay_score = importance × activity_signal） | §5.1 | `rollball-grafeo/src/forgetting/decay.rs` | 完成 |
-| 后台衰减扫描（run_decay_scan） | §5.2 | `rollball-grafeo/src/forgetting/scan.rs` | 完成 |
+| 三层仿生分层架构（瞬态/经历/沉淀） | §0 | `acowork-memory/src/types.rs` | 完成 |
+| Grafeo 4 种 LPG Label（Episodic/Knowledge/Procedural/Autobiographical） | §8.1 / 04-grafeo.md §8.1 | `acowork-memory/src/types.rs` labels 模块 | 完成 |
+| MemoryStore trait 抽象 | §10.3 | `acowork-memory/src/store.rs` | 完成 |
+| MemoryQuery / MemoryFilters / SearchResult / MemoryContext 等查询类型 | §10.3 | `acowork-memory/src/types.rs` | 完成 |
+| DecayConfig 参数化遗忘配置 | §10.3 | `acowork-memory/src/types.rs` (L555-585) | 完成 |
+| HintType 检索权重类型（s/f/r/i） | §6.6 | `acowork-memory/src/types.rs` (L24-46) | 完成 |
+| 检索权重动态调整（get_hint_weights / config_from_hint） | §6.6 | `acowork-grafeo/src/spreading.rs` | 完成 |
+| GrafeoStore MemoryStore trait 完整实现 | 04-grafeo.md | `acowork-grafeo/src/grafeo.rs` (L164-547) | 完成 |
+| 4 Label 的 HNSW 向量索引 + BM25 文本索引自动初始化 | 04-grafeo.md | `acowork-grafeo/src/grafeo.rs` `init_schema()` (L104-144) | 完成 |
+| 乘法衰减模型（decay_score = importance × activity_signal） | §5.1 | `acowork-grafeo/src/forgetting/decay.rs` | 完成 |
+| 后台衰减扫描（run_decay_scan） | §5.2 | `acowork-grafeo/src/forgetting/scan.rs` | 完成 |
 | Dormant 状态转换 + 90天 Purge | §5.2 | `forgetting/scan.rs` + `purge_log.rs` | 完成 |
 | Reactivate 节点（dormant_since 清零 + access_count 递增） | §5.2 | `forgetting/scan.rs` `reactivate_node()` (L208-236) | 完成 |
-| MemoryManager（Retrieve → Inject → Record）三阶段 | §10.4 | `rollball-runtime/src/memory/manager.rs` | 完成 |
+| MemoryManager（Retrieve → Inject → Record）三阶段 | §10.4 | `acowork-runtime/src/memory/manager.rs` | 完成 |
 | hybrid_search 多Label并行检索 | §6.1 | `manager.rs` `retrieve()` (L169-225) | 完成 |
 | graph_expand 关联扩散（含 hint_type 驱动早期终止阈值） | §6.2-6.3 | `manager.rs` `retrieve()` (L226-251) + `spreading.rs` | 完成 |
-| Abstention 拒答机制（min_score 过滤 + System Prompt 注入） | §6.5 | `rollball-grafeo/src/abstention.rs` | 完成 |
+| Abstention 拒答机制（min_score 过滤 + System Prompt 注入） | §6.5 | `acowork-grafeo/src/abstention.rs` | 完成 |
 | **memory_store 工具接口对齐设计** | §4.1 | `tools/builtin/memory_store.rs` | **完成（2026-05-30 修复）**：接口从旧版 `{key, content, category}` 改为设计要求的 `{content, category, confidence, keywords}`；对接 `GrafeoStore.process_memory_store()` 即时提取管道（去重→冲突检测→节点创建）；GrafeoStore 未初始化时优雅降级为 UUID fallback |
-| 两层冲突检测（语义相似度 + 时间冲突，统一 Ambiguous） | §6.4 | `rollball-grafeo/src/conflict.rs` | 完成（v3.8 简化） |
+| 两层冲突检测（语义相似度 + 时间冲突，统一 Ambiguous） | §6.4 | `acowork-grafeo/src/conflict.rs` | 完成（v3.8 简化） |
 | **PageRank 集成到检索排序** | §6.3 | `manager.rs` `retrieve()` | **完成（2026-05-30 接线）**：`apply_pagerank_boost()` 已接入检索管线，在去重后、最终排序前应用拓扑权威性加成。`MemoryManagerConfig` 新增 `pagerank_weight` 字段（默认 0.1，0.0 表示禁用） |
-| 即时提取冲突处理（统一 Ambiguous → Phase 3 LLM 仲裁） | §4.1 / §6.4 | `rollball-grafeo/src/consolidation/instant.rs` `process_memory_store()` | 完成（v3.8 简化） |
+| 即时提取冲突处理（统一 Ambiguous → Phase 3 LLM 仲裁） | §4.1 / §6.4 | `acowork-grafeo/src/consolidation/instant.rs` `process_memory_store()` | 完成（v3.8 简化） |
 | 防重复提取（embedding similarity > 0.95 跳过） | §4.1 | `instant.rs` `is_duplicate_knowledge()` (L247-265) | 完成 |
 | PendingKnowledgeNode 概念（confidence < 0.85 → Pending） | §4.1 | `instant.rs` `process_memory_store()` | 完成 |
-| Episode / KnowledgeNode / ProceduralNode / AutobiographicalNode 数据类型 | §2-3 | `rollball-memory/src/types.rs` | 完成 |
-| ContentType（Informational / Artifact / Structural） | §2 | `rollball-memory/src/types.rs` (L214-232) | ✅ 已废弃 |
-| ArtifactRef 工件引用 | §2 | `rollball-memory/src/types.rs` (L362-372) | ✅ 已废弃 |
-| PrivacyLevel（Public / Personal / Sensitive） | §7.1 | `rollball-core/src/memory/traits.rs` | 完成 |
+| Episode / KnowledgeNode / ProceduralNode / AutobiographicalNode 数据类型 | §2-3 | `acowork-memory/src/types.rs` | 完成 |
+| ContentType（Informational / Artifact / Structural） | §2 | `acowork-memory/src/types.rs` (L214-232) | ✅ 已废弃 |
+| ArtifactRef 工件引用 | §2 | `acowork-memory/src/types.rs` (L362-372) | ✅ 已废弃 |
+| PrivacyLevel（Public / Personal / Sensitive） | §7.1 | `acowork-core/src/memory/traits.rs` | 完成 |
 | Episode 写入 Grafeo（MemoryManager::record） | §10.2 | `manager.rs` `record()` (L398-439) | 完成 |
 | 蒸馏 Episode 写入（ADR-011：Compaction/Distillation 统一写入路径） | ADR-011 | `manager.rs` `record_distilled()` (L445-475) | 完成 |
-| EpisodeDistiller（compact_full_context / distill_on_session_end） | ADR-011 | `rollball-runtime/src/episode_distill.rs` | 完成 |
+| EpisodeDistiller（compact_full_context / distill_on_session_end） | ADR-011 | `acowork-runtime/src/episode_distill.rs` | 完成 |
 | 上下文压缩三阶段（70% 监控 / 80% LLM摘要 / 95% 紧急裁剪） | §1 | `agent/loop_.rs` `compact_history_if_needed()` | 完成 |
-| RetrievalMetrics 检索指标收集 | §11.1 | `rollball-memory/src/types.rs` (L161-178) | 完成 |
+| RetrievalMetrics 检索指标收集 | §11.1 | `acowork-memory/src/types.rs` (L161-178) | 完成 |
 | RAG 双通道检索（Grafeo + RAG 并行） | §10.6 | `manager.rs` `retrieve()` (L283-302) | 完成 |
 | 存储统计（stats/health_check） | §10.3 | `grafeo.rs` `stats()` / `health_check()` (L509-541) | 完成 |
-| **MemoryQuery 检索意图分化（auto_inject / deep_recall）** | §6.6 | `rollball-memory/src/types.rs` 工厂方法 | **完成（2026-05-30）**：`HintType::Identity`（auto_inject：limit=5, expand_hops=0, min_score=0.3）vs `HintType::Semantic`（deep_recall：limit=10, expand_hops=2, min_score=None），通过工厂方法而非新增字段实现，零测试破坏 |
-| **MemorySessionHandle 共享状态** | §10.4 | `rollball-runtime/src/memory/session_handle.rs` | **完成（2026-05-30）**：`Arc<RwLock<SharedState>>` 在 AgentCore 主循环和 memory 工具间共享 `current_session_id` 和 `store`，支持 exclude_session_id 过滤和延迟绑定 |
+| **MemoryQuery 检索意图分化（auto_inject / deep_recall）** | §6.6 | `acowork-memory/src/types.rs` 工厂方法 | **完成（2026-05-30）**：`HintType::Identity`（auto_inject：limit=5, expand_hops=0, min_score=0.3）vs `HintType::Semantic`（deep_recall：limit=10, expand_hops=2, min_score=None），通过工厂方法而非新增字段实现，零测试破坏 |
+| **MemorySessionHandle 共享状态** | §10.4 | `acowork-runtime/src/memory/session_handle.rs` | **完成（2026-05-30）**：`Arc<RwLock<SharedState>>` 在 AgentCore 主循环和 memory 工具间共享 `current_session_id` 和 `store`，支持 exclude_session_id 过滤和延迟绑定 |
 | **自动注入 session_id 跟踪** | §10.4 | `agent/loop_.rs` `retrieve_and_inject_memories()` | **完成（2026-05-30）**：每次检索前通过 `MemorySessionHandle.set_session_id()` 更新，防止当前 session 摘要重新注入 |
 | **Identity 标签扩展（Autobiographical + Episodic）** | §3.3 / §6.6 | `memory/manager.rs` `retrieve()` | **完成（2026-05-30）**：`HintType::Identity` 从仅 `AUTOBIOGRAPHICAL` 扩展为 `[AUTOBIOGRAPHICAL, EPISODIC]`，自动注入同时召回自我认知和经历摘要 |
 
@@ -97,11 +97,11 @@
 
 | 设计项 | 设计文档位置 | 实现位置 | 状态 |
 |--------|------------|---------|------|
-| ProceduralNode 数据结构 | §3.2 | `rollball-memory/src/types.rs` (L436-459) | 完成 |
+| ProceduralNode 数据结构 | §3.2 | `acowork-memory/src/types.rs` (L436-459) | 完成 |
 | ProceduralNode Grafeo 存储 | §3.2 | `grafeo.rs` `store_procedural()` | 完成 |
-| RetrievalMetrics 在线评估指标 | §11.1 | `rollball-memory/src/types.rs` | 完成 |
+| RetrievalMetrics 在线评估指标 | §11.1 | `acowork-memory/src/types.rs` | 完成 |
 | Abstention 可配置 min_score | §6.5 | `abstention.rs` `get_min_score_for_agent()` | 完成 |
-| Judge 轻量评估（LLM Judge 采样） | §11.1 | `rollball-grafeo/src/judge.rs` | 完成 |
+| Judge 轻量评估（LLM Judge 采样） | §11.1 | `acowork-grafeo/src/judge.rs` | 完成 |
 
 ### 3.2 部分实现
 
@@ -172,7 +172,7 @@
 | 组件 | 设计 | 实现 |
 |------|------|------|
 | **Lifecycle Handler Registry** | 每阶段可注册多个 handler | 未实现——当前直接硬编码调用链 |
-| **MemoryMiddleware Chain** | pre_record / post_record / post_retrieve 洋葱模型 | `MemoryMiddleware` trait 定义在 `rollball-memory` 但 `MemoryManager` 未使用 |
+| **MemoryMiddleware Chain** | pre_record / post_record / post_retrieve 洋葱模型 | `MemoryMiddleware` trait 定义在 `acowork-memory` 但 `MemoryManager` 未使用 |
 | **Config Provider** | 从 manifest + 系统默认读取配置 | 部分——MemoryManagerConfig 存在但未从 manifest 动态加载 |
 | **Event Bus** | 发布 MemoryEvent 供 Desktop App 订阅 | 未实现 |
 | **RAG Client** | `Option<Arc<RagClient>>` | 已实现，在 `retrieve()` 中并行查询 |
@@ -225,12 +225,12 @@ Phase 1 核心存储/检索/遗忘管线基本完整，即时提取管道已于 
 
 **2026-05-30 更新（4）— 检索意图分化 + MemorySessionHandle 共享状态**：
 
-1. **`MemoryQuery` 工厂方法**（`rollball-memory/src/types.rs`）：新增 `auto_inject()` 和 `deep_recall()` 两个工厂方法，用 `HintType` 区分两种检索意图：
+1. **`MemoryQuery` 工厂方法**（`acowork-memory/src/types.rs`）：新增 `auto_inject()` 和 `deep_recall()` 两个工厂方法，用 `HintType` 区分两种检索意图：
    - `auto_inject()`：背景注入场景（`loop_.rs` 每轮自动注入）。`HintType::Identity`、limit=5、expand_hops=0、min_score=0.3。
    - `deep_recall()`：LLM 工具调用场景（`memory_recall` 工具）。`HintType::Semantic`、limit=10、expand_hops=2、min_score=None。
    - 设计选择：不在 `MemoryQuery` 结构体上添加 `RetrievalIntent` 字段（避免破坏 10+ 处 struct literal 用法的测试代码），而是通过工厂方法 + 已有 `HintType` 传递意图。
 
-2. **`MemorySessionHandle` 共享状态**（`rollball-runtime/src/memory/session_handle.rs`）：`Arc<RwLock<SharedState>>` 在 AgentCore 主循环和 memory 工具之间共享两个关键状态：
+2. **`MemorySessionHandle` 共享状态**（`acowork-runtime/src/memory/session_handle.rs`）：`Arc<RwLock<SharedState>>` 在 AgentCore 主循环和 memory 工具之间共享两个关键状态：
    - `current_session_id: Option<String>`：主循环每次处理用户消息前更新，工具侧读取用于 `exclude_session_id` 过滤（防止把当前 session 的 compaction 摘要重新注入）。
    - `store: Option<Arc<GrafeoStore>>`：延迟绑定，支持 `all_builtin_tools()` 在 `GrafeoStore` 初始化前被调用（早于内存系统启动）。
 

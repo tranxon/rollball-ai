@@ -8,7 +8,7 @@
 
 ## 1. 问题
 
-当前 RollBall 只有**框架自动拦截**的用户交互（`ApprovalGate` 安全审批），缺少 **LLM 主动向用户提问**的机制。
+当前 AgentCowork 只有**框架自动拦截**的用户交互（`ApprovalGate` 安全审批），缺少 **LLM 主动向用户提问**的机制。
 
 Agent 在以下场景需要主动问用户：
 - "你想用 A 方案还是 B 方案？"
@@ -278,12 +278,12 @@ Other 场景：
 ### 5.1 AskUserQuestionTool
 
 ```rust
-// rollball-runtime/src/tools/ask_user_question.rs
+// acowork-runtime/src/tools/ask_user_question.rs
 
 use crate::agent::loop_::ChunkEvent;
 use crate::agent::session_state::SessionStatus;
 use async_trait::async_trait;
-use rollball_core::tool::{Tool, ToolSpec};
+use acowork_core::tool::{Tool, ToolSpec};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -653,15 +653,15 @@ case 'ask_answer':
 
 ## 8. 与现有系统的差异
 
-| 维度 | 现有 ApprovalGate | 新增 AskUserQuestion Tool |
-|------|-------------------|--------------------------|
-| **触发源** | 框架自动（风险检测） | LLM 主动（Tool 调用） |
-| **选项** | 固定 (Approve / Reject / Always) | 动态（LLM 生成的 options） |
-| **"Other"** | ❌ 无 | ✅ 最后一个选项 = Other + textarea |
-| **超时处理** | 默认 300s | 由 LLM 指定 |
-| **SessionStatus** | WaitingApproval | 复用 WaitingApproval |
-| **IPC 恢复** | approval_decision | 复用 approval_decision |
-| **ChunkEvent** | 无（status 变更隐含） | 新增 AskQuestion 变体 |
+| 维度              | 现有 ApprovalGate                | 新增 AskUserQuestion Tool         |
+| ----------------- | -------------------------------- | --------------------------------- |
+| **触发源**        | 框架自动（风险检测）             | LLM 主动（Tool 调用）             |
+| **选项**          | 固定 (Approve / Reject / Always) | 动态（LLM 生成的 options）        |
+| **"Other"**       | ❌ 无                             | ✅ 最后一个选项 = Other + textarea |
+| **超时处理**      | 默认 300s                        | 由 LLM 指定                       |
+| **SessionStatus** | WaitingApproval                  | 复用 WaitingApproval              |
+| **IPC 恢复**      | approval_decision                | 复用 approval_decision            |
+| **ChunkEvent**    | 无（status 变更隐含）            | 新增 AskQuestion 变体             |
 
 ---
 
@@ -669,28 +669,28 @@ case 'ask_answer':
 
 ### Phase 1: 核心 Tool
 
-| 文件 | 改动 |
-|------|------|
-| `core/rollball-runtime/src/tools/ask_user_question.rs` | **新建** — Tool 实现 |
-| `core/rollball-runtime/src/tools/mod.rs` | 注册 `ask_user_question` tool |
-| `core/rollball-runtime/src/agent/loop_.rs` | 新增 `ChunkEvent::AskQuestion` 变体 + `pending_questions` map |
-| `core/rollball-runtime/src/agent/session_state.rs` | 无需改动（已有 WaitingApproval） |
+| 文件                                                  | 改动                                                          |
+| ----------------------------------------------------- | ------------------------------------------------------------- |
+| `core/acowork-runtime/src/tools/ask_user_question.rs` | **新建** — Tool 实现                                          |
+| `core/acowork-runtime/src/tools/mod.rs`               | 注册 `ask_user_question` tool                                 |
+| `core/acowork-runtime/src/agent/loop_.rs`             | 新增 `ChunkEvent::AskQuestion` 变体 + `pending_questions` map |
+| `core/acowork-runtime/src/agent/session_state.rs`     | 无需改动（已有 WaitingApproval）                              |
 
 ### Phase 2: Gateway 路由
 
-| 文件 | 改动 |
-|------|------|
-| `core/rollball-gateway/src/grpc/dispatch.rs` | 新增 `AskQuestion` ChunkEvent 路由 + `ask_answer` WS 处理 |
-| `core/rollball-gateway/src/http/approval.rs` | 新增 `POST /agents/:id/ask-answer` 端点 |
-| `core/rollball-gateway/src/ws/types.rs` | 新增 WS event type 定义 |
+| 文件                                        | 改动                                                      |
+| ------------------------------------------- | --------------------------------------------------------- |
+| `core/acowork-gateway/src/grpc/dispatch.rs` | 新增 `AskQuestion` ChunkEvent 路由 + `ask_answer` WS 处理 |
+| `core/acowork-gateway/src/http/approval.rs` | 新增 `POST /agents/:id/ask-answer` 端点                   |
+| `core/acowork-gateway/src/ws/types.rs`      | 新增 WS event type 定义                                   |
 
 ### Phase 3: 前端渲染
 
-| 文件 | 改动 |
-|------|------|
-| `apps/desktop/src/components/AskQuestionCard.tsx` | **新建** — 问题卡片组件 |
-| `apps/desktop/src/components/ChatMessage.tsx` | 集成 AskQuestionCard 渲染 |
-| `apps/desktop/src/hooks/useWebSocket.ts` | 新增 `ask_question` / `ask_answer` event handler |
+| 文件                                              | 改动                                             |
+| ------------------------------------------------- | ------------------------------------------------ |
+| `apps/desktop/src/components/AskQuestionCard.tsx` | **新建** — 问题卡片组件                          |
+| `apps/desktop/src/components/ChatMessage.tsx`     | 集成 AskQuestionCard 渲染                        |
+| `apps/desktop/src/hooks/useWebSocket.ts`          | 新增 `ask_question` / `ask_answer` event handler |
 
 ---
 

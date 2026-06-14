@@ -127,19 +127,19 @@ Phase 3 计划结构清晰，任务拆分粒度合理，与设计文档（08-sec
 
 > **v2.0 处置**：**部分采纳**。plan-p3.md D6 保留 rusqlite 决策，理由已写入（权限数据不需要向量检索/图遍历，关系模型更简单）。如需正式 ADR，在 S1 实施时补充。
 
-### P1-5：缺少 `rollball-sandbox` crate 与 workspace 集成的说明
+### P1-5：缺少 `acowork-sandbox` crate 与 workspace 集成的说明
 
-**问题**：D1 决策新建 `rollball-sandbox` crate，但计划没有说明：
+**问题**：D1 决策新建 `acowork-sandbox` crate，但计划没有说明：
 
 1. 这个 crate 放在 `core/` 目录下吗？（按现有结构应该如此）
 2. `Cargo.toml` workspace members 需要更新
-3. 依赖关系：`rollball-sandbox` 依赖 `rollball-core`（SandboxConfig）和平台特定 crate，被 `rollball-gateway` 依赖
+3. 依赖关系：`acowork-sandbox` 依赖 `acowork-core`（SandboxConfig）和平台特定 crate，被 `acowork-gateway` 依赖
 
 **建议**：
-- 在 S2.1 任务中增加"创建 `rollball-sandbox` crate 骨架 + 更新 workspace Cargo.toml"
-- 明确依赖链：`rollball-core` → `rollball-sandbox` → `rollball-gateway`
+- 在 S2.1 任务中增加"创建 `acowork-sandbox` crate 骨架 + 更新 workspace Cargo.toml"
+- 明确依赖链：`acowork-core` → `acowork-sandbox` → `acowork-gateway`
 
-> **v2.0 处置**：**已解决——`rollball-sandbox` crate 随 S2 一起延后至 Phase 7**。Phase 3 不需要此 crate。
+> **v2.0 处置**：**已解决——`acowork-sandbox` crate 随 S2 一起延后至 Phase 7**。Phase 3 不需要此 crate。
 
 ---
 

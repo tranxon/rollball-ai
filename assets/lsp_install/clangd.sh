@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RollBall LSP install script: clangd (C/C++)
+# AgentCowork LSP install script: clangd (C/C++)
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -139,7 +139,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== RollBall LSP Setup: clangd (C/C++) ==="
+echo "=== AgentCowork LSP Setup: clangd (C/C++) ==="
 install
 verify
 health_check

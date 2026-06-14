@@ -16,32 +16,32 @@
 
 ### 删除的模块/文件
 
-| 模块 | 行数 | 说明 |
-|------|------|------|
-| `rollball-core/permission.rs` (Grant/Policy/Metrics) | -345 | PermissionGrant, PermissionPolicy, PermissionPolicyConfig, PermissionMetrics, bincode 序列化 |
-| `rollball-core/protocol.rs` | -136 | PermissionRequest/PermissionResult 枚举变体 |
-| `rollball-core/proto/gateway_ipc.proto` | -2 msgs | PermissionRequest, PermissionResult proto 消息 |
-| `rollball-core/proto_bridge.rs` | -34 | 上述两种消息的桥接代码 |
-| `rollball-runtime/tools/permission.rs` | -636 | `validate_permission` 逻辑 |
-| `rollball-runtime/tools/permission_checker.rs` | -454 | PermissionChecker IPC 版本 |
-| `rollball-runtime/tools/wrappers.rs` (PermissionCheckedTool) | -36 | wrapper 层 |
-| `rollball-gateway/permission_store.rs` | -439 | SQLite PermissionStore |
-| `rollball-gateway/http/permission_api.rs` | -493 | HTTP 权限 API |
-| `rollball-gateway/package_manager/permission_diff.rs` | -153 | 安装时权限 diff |
-| `rollball-gateway/package_manager/permission_review.rs` | -251 | 安装时权限 review |
-| `rollball-gateway/ipc/server.rs` | -299 | PermissionRequest handler, callback traits |
-| `rollball-gateway/gateway/state.rs` | -18 | permission_store/policy_config/metrics 字段 |
-| `rollball-gateway/gateway/mod.rs` | -93 | perm_store 初始化 + CLI handler |
-| **5 个测试文件** | -1096 | permission_e2e, permission_ipc, s5_bench, s5_e2e, permission_checker_ipc, rag_integration |
+| 模块                                                        | 行数    | 说明                                                                                         |
+| ----------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------- |
+| `acowork-core/permission.rs` (Grant/Policy/Metrics)         | -345    | PermissionGrant, PermissionPolicy, PermissionPolicyConfig, PermissionMetrics, bincode 序列化 |
+| `acowork-core/protocol.rs`                                  | -136    | PermissionRequest/PermissionResult 枚举变体                                                  |
+| `acowork-core/proto/gateway_ipc.proto`                      | -2 msgs | PermissionRequest, PermissionResult proto 消息                                               |
+| `acowork-core/proto_bridge.rs`                              | -34     | 上述两种消息的桥接代码                                                                       |
+| `acowork-runtime/tools/permission.rs`                       | -636    | `validate_permission` 逻辑                                                                   |
+| `acowork-runtime/tools/permission_checker.rs`               | -454    | PermissionChecker IPC 版本                                                                   |
+| `acowork-runtime/tools/wrappers.rs` (PermissionCheckedTool) | -36     | wrapper 层                                                                                   |
+| `acowork-gateway/permission_store.rs`                       | -439    | SQLite PermissionStore                                                                       |
+| `acowork-gateway/http/permission_api.rs`                    | -493    | HTTP 权限 API                                                                                |
+| `acowork-gateway/package_manager/permission_diff.rs`        | -153    | 安装时权限 diff                                                                              |
+| `acowork-gateway/package_manager/permission_review.rs`      | -251    | 安装时权限 review                                                                            |
+| `acowork-gateway/ipc/server.rs`                             | -299    | PermissionRequest handler, callback traits                                                   |
+| `acowork-gateway/gateway/state.rs`                          | -18     | permission_store/policy_config/metrics 字段                                                  |
+| `acowork-gateway/gateway/mod.rs`                            | -93     | perm_store 初始化 + CLI handler                                                              |
+| **5 个测试文件**                                            | -1096   | permission_e2e, permission_ipc, s5_bench, s5_e2e, permission_checker_ipc, rag_integration    |
 
 ### 新增的模块/文件
 
-| 模块 | 行数 | 说明 |
-|------|------|------|
-| `rollball-runtime/security/approval_gate.rs` (GatewayApprovalGate) | +157 | 基于 gRPC IntentSend 的远程审批 |
-| `rollball-gateway/http/approval.rs` | +234 | HTTP approval endpoint + oneshot channel 机制 |
-| `rollball-runtime/agent/loop_tools.rs` (check_shell_approval) | +103 | Shell 风险检查 + approval 请求 |
-| `rollball-gateway/grpc/dispatch.rs` (handle_tool_approval_needed_grpc) | +135 | gRPC dispatch 侧的审批拦截 |
+| 模块                                                                  | 行数 | 说明                                          |
+| --------------------------------------------------------------------- | ---- | --------------------------------------------- |
+| `acowork-runtime/security/approval_gate.rs` (GatewayApprovalGate)     | +157 | 基于 gRPC IntentSend 的远程审批               |
+| `acowork-gateway/http/approval.rs`                                    | +234 | HTTP approval endpoint + oneshot channel 机制 |
+| `acowork-runtime/agent/loop_tools.rs` (check_shell_approval)          | +103 | Shell 风险检查 + approval 请求                |
+| `acowork-gateway/grpc/dispatch.rs` (handle_tool_approval_needed_grpc) | +135 | gRPC dispatch 侧的审批拦截                    |
 
 ---
 
@@ -78,11 +78,11 @@
 
 **P0: `cargo test` 编译不过 — 46 个编译错误**
 
-`rollball-gateway/src/ipc/server.rs` 的 `#[cfg(test)] mod tests` 中仍然引用已删除的类型：
+`acowork-gateway/src/ipc/server.rs` 的 `#[cfg(test)] mod tests` 中仍然引用已删除的类型：
 - `crate::permission_store::PermissionStore` (9 处)
 - `SharedPermissionStore` (9 处)
-- `rollball_core::protocol::PERMISSION_REQUEST_TIMEOUT_MS` (5 处)
-- `rollball_core::permission::Permission` / `PermissionGrant` (8 处)
+- `acowork_core::protocol::PERMISSION_REQUEST_TIMEOUT_MS` (5 处)
+- `acowork_core::permission::Permission` / `PermissionGrant` (8 处)
 - `GatewayResponse::PermissionResult` (5 处)
 - `handle_permission_request` (5 处)
 - `ApiError` 缺 `Debug` derive (1 处)
@@ -239,40 +239,40 @@ approve: (requestId, action) => {
 
 已删除的模块确认无残留引用（非测试代码）：
 
-| 删除模块 | 编译引用残留 |
-|----------|-------------|
-| `permission_store.rs` | ✅ lib 编译通过，仅测试代码残留 |
-| `permission_api.rs` | ✅ 已从 routes.rs 移除 |
-| `permission_diff.rs` / `permission_review.rs` | ✅ 未发现引用 |
-| `tools/permission.rs` | ✅ 已从 tools/mod.rs 移除 |
-| `tools/permission_checker.rs` | ✅ 已从 tools/mod.rs 移除 |
-| `PermissionCheckedTool` | ✅ 已从 wrappers.rs 和 registry.rs 移除 |
+| 删除模块                                      | 编译引用残留                           |
+| --------------------------------------------- | -------------------------------------- |
+| `permission_store.rs`                         | ✅ lib 编译通过，仅测试代码残留         |
+| `permission_api.rs`                           | ✅ 已从 routes.rs 移除                  |
+| `permission_diff.rs` / `permission_review.rs` | ✅ 未发现引用                           |
+| `tools/permission.rs`                         | ✅ 已从 tools/mod.rs 移除               |
+| `tools/permission_checker.rs`                 | ✅ 已从 tools/mod.rs 移除               |
+| `PermissionCheckedTool`                       | ✅ 已从 wrappers.rs 和 registry.rs 移除 |
 
 ---
 
 ## 六、总结评分
 
-| 维度 | 评分 | 说明 |
-|------|------|------|
-| 架构方向 | ⭐⭐⭐⭐ | 删除冗余层、聚焦 Shell 风险审批，方向正确 |
-| 代码质量 | ⭐⭐⭐ | 新代码质量好，但遗留测试代码导致编译不过 |
-| 完整性 | ⭐⭐ | 46 个编译错误 = 不可交付状态 |
-| 前后端对齐 | ⭐⭐⭐ | 基本对齐，但 fire-and-forget 审批有状态不一致风险 |
-| 删除清理 | ⭐⭐⭐ | 非测试代码清理干净，测试代码未跟进 |
+| 维度       | 评分 | 说明                                              |
+| ---------- | ---- | ------------------------------------------------- |
+| 架构方向   | ⭐⭐⭐⭐ | 删除冗余层、聚焦 Shell 风险审批，方向正确         |
+| 代码质量   | ⭐⭐⭐  | 新代码质量好，但遗留测试代码导致编译不过          |
+| 完整性     | ⭐⭐   | 46 个编译错误 = 不可交付状态                      |
+| 前后端对齐 | ⭐⭐⭐  | 基本对齐，但 fire-and-forget 审批有状态不一致风险 |
+| 删除清理   | ⭐⭐⭐  | 非测试代码清理干净，测试代码未跟进                |
 
 ## 七、修复优先级
 
-| 优先级 | 问题 | 状态 | 修复说明 |
-|--------|------|------|---------|
-| **P0** | 清理 ipc/server.rs 测试代码 (46 编译错误) | ✅ 已修复 | 删除6个旧权限测试，重写3个测试移除 Permission 引用 |
-| **P1** | GatewayApprovalGate 封装问题（暴露内部组件） | ✅ 已修复 | 保留 clone-components 方案（GatewayGrpcClient 含 UnboundedReceiver 不可 Arc 共享），agent_id 注入 params |
-| **P1** | agent_id 字段死代码 + dispatch 侧拿不到 agent_id | ✅ 已修复 | request_approval 中注入 `"agent_id": self.agent_id`；APPROVAL_TIMEOUT_SECS 提升为 pub |
-| **P1** | ShellApprovalThreshold 与 ShellRisk 类型统一 | ✅ 已修复 | 新增 ShellApprovalThreshold 到 rollball-core，agent_config/loop_tools 统一使用，消除字符串匹配 |
-| **P1** | 前端审批 fire-and-forget 状态不一致 | ✅ 已修复 | approve 改为 async+await，失败时保持 Modal + toast 提示；新增 approvalError/clearApprovalError |
-| **P2** | APPROVAL_TIMEOUT_SECS 重复定义 | ✅ 已修复 | 删除 approval.rs 中未使用的重复常量，统一使用 approval_gate.rs 的 pub const |
-| **P2** | handle_approval 中 _agent_id 未使用 | ✅ 已修复 | 改为 agent_id，日志中正常使用 |
-| **P2** | IntentSend 复用语义模糊 | 🔜 跳过 | 需要 proto 变更，留待后续迭代 |
-| **P2** | message_id 字符串前缀编码脆弱 | 🔜 跳过 | 需要 proto 变更，留待后续迭代 |
-| **P2** | shell params 解析失败静默放行 | ✅ 已有 | P1 修复时已补 tracing::warn! |
+| 优先级 | 问题                                             | 状态     | 修复说明                                                                                                 |
+| ------ | ------------------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------- |
+| **P0** | 清理 ipc/server.rs 测试代码 (46 编译错误)        | ✅ 已修复 | 删除6个旧权限测试，重写3个测试移除 Permission 引用                                                       |
+| **P1** | GatewayApprovalGate 封装问题（暴露内部组件）     | ✅ 已修复 | 保留 clone-components 方案（GatewayGrpcClient 含 UnboundedReceiver 不可 Arc 共享），agent_id 注入 params |
+| **P1** | agent_id 字段死代码 + dispatch 侧拿不到 agent_id | ✅ 已修复 | request_approval 中注入 `"agent_id": self.agent_id`；APPROVAL_TIMEOUT_SECS 提升为 pub                    |
+| **P1** | ShellApprovalThreshold 与 ShellRisk 类型统一     | ✅ 已修复 | 新增 ShellApprovalThreshold 到 acowork-core，agent_config/loop_tools 统一使用，消除字符串匹配            |
+| **P1** | 前端审批 fire-and-forget 状态不一致              | ✅ 已修复 | approve 改为 async+await，失败时保持 Modal + toast 提示；新增 approvalError/clearApprovalError           |
+| **P2** | APPROVAL_TIMEOUT_SECS 重复定义                   | ✅ 已修复 | 删除 approval.rs 中未使用的重复常量，统一使用 approval_gate.rs 的 pub const                              |
+| **P2** | handle_approval 中 _agent_id 未使用              | ✅ 已修复 | 改为 agent_id，日志中正常使用                                                                            |
+| **P2** | IntentSend 复用语义模糊                          | 🔜 跳过   | 需要 proto 变更，留待后续迭代                                                                            |
+| **P2** | message_id 字符串前缀编码脆弱                    | 🔜 跳过   | 需要 proto 变更，留待后续迭代                                                                            |
+| **P2** | shell params 解析失败静默放行                    | ✅ 已有   | P1 修复时已补 tracing::warn!                                                                             |
 
 **结论：P0/P1 全部修复，P2 完成可快速修复项，proto 相关 P2 留待后续。cargo check 0 error 0 code warning。**

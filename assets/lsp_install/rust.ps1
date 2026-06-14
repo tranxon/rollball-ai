@@ -1,4 +1,4 @@
-# RollBall LSP install script: rust-analyzer
+# AgentCowork LSP install script: rust-analyzer
 # Phases: Install -> Verify -> Health Check
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== RollBall LSP Setup: rust-analyzer ==="
+Write-Host "=== AgentCowork LSP Setup: rust-analyzer ==="
 Install-Server
 Verify-Server
 Health-Check

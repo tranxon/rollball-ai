@@ -13,7 +13,7 @@ $CoreDir = Join-Path $WorkspaceRoot "core"
 $totalSteps = if ($Start) { 5 } else { 3 }
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Rollball Core Build Script" -ForegroundColor Cyan
+Write-Host "AgentCowork Core Build Script" -ForegroundColor Cyan
 if ($Start) { Write-Host "Mode: Build + Restart" -ForegroundColor Cyan }
 else       { Write-Host "Mode: Build Only" -ForegroundColor Cyan }
 Write-Host "========================================" -ForegroundColor Cyan
@@ -26,13 +26,13 @@ if ($Start) {
     $step++
     Write-Host "[$step/$totalSteps] Stopping running Gateway, Runtime, and Embed processes..." -ForegroundColor Yellow
 
-    $gatewayProcs = Get-Process -Name "rollball-gateway" -ErrorAction SilentlyContinue
-    $runtimeProcs = Get-Process -Name "rollball-runtime" -ErrorAction SilentlyContinue
-    $embedProcs   = Get-Process -Name "rollball-embed"   -ErrorAction SilentlyContinue
+    $gatewayProcs = Get-Process -Name "acowork-gateway" -ErrorAction SilentlyContinue
+    $runtimeProcs = Get-Process -Name "acowork-runtime" -ErrorAction SilentlyContinue
+    $embedProcs   = Get-Process -Name "acowork-embed"   -ErrorAction SilentlyContinue
 
     if ($gatewayProcs) {
         Write-Host "  Found Gateway processes: $($gatewayProcs.Id -join ', ')" -ForegroundColor Gray
-        Stop-Process -Name "rollball-gateway" -Force -ErrorAction SilentlyContinue
+        Stop-Process -Name "acowork-gateway" -Force -ErrorAction SilentlyContinue
         Write-Host "  Gateway stopped." -ForegroundColor Green
     } else {
         Write-Host "  No Gateway process running." -ForegroundColor Gray
@@ -40,7 +40,7 @@ if ($Start) {
 
     if ($runtimeProcs) {
         Write-Host "  Found Runtime processes: $($runtimeProcs.Id -join ', ')" -ForegroundColor Gray
-        Stop-Process -Name "rollball-runtime" -Force -ErrorAction SilentlyContinue
+        Stop-Process -Name "acowork-runtime" -Force -ErrorAction SilentlyContinue
         Write-Host "  Runtime stopped." -ForegroundColor Green
     } else {
         Write-Host "  No Runtime process running." -ForegroundColor Gray
@@ -48,7 +48,7 @@ if ($Start) {
 
     if ($embedProcs) {
         Write-Host "  Found Embed processes: $($embedProcs.Id -join ', ')" -ForegroundColor Gray
-        Stop-Process -Name "rollball-embed" -Force -ErrorAction SilentlyContinue
+        Stop-Process -Name "acowork-embed" -Force -ErrorAction SilentlyContinue
         Write-Host "  Embed stopped." -ForegroundColor Green
     } else {
         Write-Host "  No Embed process running." -ForegroundColor Gray
@@ -86,7 +86,7 @@ $step++
 Write-Host "[$step/$totalSteps] Building Gateway (release mode)..." -ForegroundColor Yellow
 Set-Location $CoreDir
 try {
-    cargo build --release -p rollball-gateway 2>&1 | ForEach-Object {
+    cargo build --release -p acowork-gateway 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {
             Write-Host "  $_" -ForegroundColor Gray
         }
@@ -103,7 +103,7 @@ Write-Host ""
 $step++
 Write-Host "[$step/$totalSteps] Building Runtime (release mode)..." -ForegroundColor Yellow
 try {
-    cargo build --release -p rollball-runtime 2>&1 | ForEach-Object {
+    cargo build --release -p acowork-runtime 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {
             Write-Host "  $_" -ForegroundColor Gray
         }
@@ -138,13 +138,13 @@ if (-not $env:ORT_LIB_LOCATION) {
     }
     if (-not $env:ORT_LIB_LOCATION) {
         Write-Host "  ONNX Runtime not found. Run .\dev\setup_ort.ps1 first." -ForegroundColor Red
-        Write-Host "  Alternative: cargo build --release -p rollball-embed --features download-ort" -ForegroundColor Red
+        Write-Host "  Alternative: cargo build --release -p acowork-embed --features download-ort" -ForegroundColor Red
         exit 1
     }
 }
 
 try {
-    cargo build --release -p rollball-embed 2>&1 | ForEach-Object {
+    cargo build --release -p acowork-embed 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {
             Write-Host "  $_" -ForegroundColor Gray
         }
@@ -165,7 +165,7 @@ Write-Host ""
 $step++
 Write-Host "[$step/$totalSteps] Copying runtime resource files to target directories..." -ForegroundColor Yellow
 $offlineSrc = Join-Path $WorkspaceRoot "assets\offline_providers.json"
-$embedModelsSrc = Join-Path $WorkspaceRoot "core\rollball-embed\assets\embedding_models.json"
+$embedModelsSrc = Join-Path $WorkspaceRoot "core\acowork-embed\assets\embedding_models.json"
 $releaseDir = Join-Path $WorkspaceRoot "target\release"
 $debugDir = Join-Path $WorkspaceRoot "target\debug"
 
@@ -193,11 +193,11 @@ if ($Start) {
     # Step: Start Gateway
     $step++
     Write-Host "[$step/$totalSteps] Starting Gateway in daemon mode (debug logging)..." -ForegroundColor Yellow
-    $env:ROLLBALL_GATEWAY_DAEMON = "true"
-    $env:ROLLBALL_GATEWAY_LOG_LEVEL = "debug"
+    $env:ACOWORK_GATEWAY_DAEMON = "true"
+    $env:ACOWORK_GATEWAY_LOG_LEVEL = "debug"
 
     # Start Gateway in background
-    $gatewayExe = Join-Path $WorkspaceRoot "target\release\rollball-gateway.exe"
+    $gatewayExe = Join-Path $WorkspaceRoot "target\release\acowork-gateway.exe"
     if (Test-Path $gatewayExe) {
         Start-Process -FilePath $gatewayExe -NoNewWindow
         Write-Host "  Gateway started." -ForegroundColor Green

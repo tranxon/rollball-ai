@@ -35,7 +35,7 @@
 ### Task 1: Proto / IPC 协议变更
 
 **改动文件**：
-- `core/rollball-core/proto/gateway_ipc.proto`
+- `core/acowork-core/proto/gateway_ipc.proto`
 
 **新增消息**：
 ```protobuf
@@ -52,7 +52,7 @@ SetSessionWorkspace set_session_workspace = 35;
 ```
 
 **改动文件**：
-- `core/rollball-core/src/protocol.rs`
+- `core/acowork-core/src/protocol.rs`
 
 在 `GatewayResponse` enum 中新增：
 ```rust
@@ -69,7 +69,7 @@ SetSessionWorkspace {
 ```
 
 **改动文件**：
-- `core/rollball-core/src/proto_bridge.rs`
+- `core/acowork-core/src/proto_bridge.rs`
 
 添加 `SetSessionWorkspace` 的序列化/反序列化映射。
 
@@ -78,7 +78,7 @@ SetSessionWorkspace {
 ### Task 2: WorkspaceResolver 瘦身
 
 **改动文件**：
-- `core/rollball-runtime/src/tools/workspace_resolver.rs`
+- `core/acowork-runtime/src/tools/workspace_resolver.rs`
 
 **删除**：
 - `WorkspaceResolver.current_dir_index` 字段
@@ -111,7 +111,7 @@ pub last_active: bool,
 ### Task 3: SessionManager 获取 per-session workspace
 
 **改动文件**：
-- `core/rollball-runtime/src/agent/session/session_manager.rs`
+- `core/acowork-runtime/src/agent/session/session_manager.rs`
 
 **新增字段** `SessionManager`：
 ```rust
@@ -198,7 +198,7 @@ pub fn set_workspace_context_for(
 ### Task 4: Context Formatting 改造
 
 **改动文件**：
-- `core/rollball-runtime/src/tools/workspace_resolver.rs`
+- `core/acowork-runtime/src/tools/workspace_resolver.rs`
 
 **新增函数**：
 ```rust
@@ -232,7 +232,7 @@ pub fn format_workspace_context_for_session(
 ### Task 5: Runtime CLI 处理 WorkspaceConfigUpdate
 
 **改动文件**：
-- `core/rollball-runtime/src/cli.rs`
+- `core/acowork-runtime/src/cli.rs`
 
 **修改 `WorkspaceConfigUpdate` 处理**：
 ```rust
@@ -294,7 +294,7 @@ GatewayResponse::SetSessionWorkspace { session_id, workspace_id } => {
 ### Task 6: WorkspaceResolver 的 WorkspaceDir 结构补全
 
 **改动文件**：
-- `core/rollball-runtime/src/tools/workspace_resolver.rs`
+- `core/acowork-runtime/src/tools/workspace_resolver.rs`
 
 当前 `WorkspaceDir`（内部用）缺少 `id` 字段，但 `WorkspaceDirFull`（序列化用）有。需统一：
 
@@ -313,7 +313,7 @@ pub struct WorkspaceDir {
 ### Task 7: Gateway HTTP API 变更
 
 **改动文件**：
-- `core/rollball-gateway/src/http/workspaces.rs`
+- `core/acowork-gateway/src/http/workspaces.rs`
 
 **废弃 `PUT /api/agents/{agent_id}/workspaces/current`**：
 - 该 API 现在不再修改全局 `is_current`，改为：
@@ -353,7 +353,7 @@ Gateway 处理：
 ### Task 8: 新增 `is_path_allowed()` on WorkspaceResolver
 
 **改动文件**：
-- `core/rollball-runtime/src/tools/workspace_resolver.rs`
+- `core/acowork-runtime/src/tools/workspace_resolver.rs`
 
 `SessionManager::current_dir_for()` 需要验证 workspace_id 对应的路径是否仍在列表中。目前 `WorkspaceResolver` 需要暴露 workspace id → path 的查找能力：
 
@@ -371,7 +371,7 @@ impl WorkspaceResolver {
 ### Task 9: 前端 workspaceStore 改造
 
 **改动文件**：
-- `apps/rollball-desktop/src/stores/workspaceStore.ts`
+- `apps/acowork-desktop/src/stores/workspaceStore.ts`
 
 **核心变更**：`currentWorkspaceId` 从全局 string 变为 per-session 映射：
 
@@ -437,7 +437,7 @@ reset: () => {
 ### Task 10: WorkspaceSelector UI — Agent Home 显式化
 
 **改动文件**：
-- `apps/rollball-desktop/src/components/workspace/WorkspaceSelector.tsx`
+- `apps/acowork-desktop/src/components/workspace/WorkspaceSelector.tsx`
 
 **新 props / 数据获取**：
 - 从 `useSessionStore` 获取 `activeSessionId`
@@ -487,7 +487,7 @@ void fetchWorkspaces(agentId);
 ### Task 11: Session 切换时的 workspace 同步
 
 **改动文件**：
-- `apps/rollball-desktop/src/components/chat/ChatPanel.tsx`
+- `apps/acowork-desktop/src/components/chat/ChatPanel.tsx`
 
 ChatPanel 中 `WorkspaceSelector` 需要响应 session 切换：
 
@@ -514,7 +514,7 @@ useEffect(() => {
 ### Task 12: Pending Workspace 前端 UI
 
 **改动文件**：
-- `apps/rollball-desktop/src/components/workspace/WorkspaceSelector.tsx`
+- `apps/acowork-desktop/src/components/workspace/WorkspaceSelector.tsx`
 
 当 `sessionWorkspaceMap[sessionId]` 对应的 workspace 不在当前列表中时：
 
@@ -532,7 +532,7 @@ useEffect(() => {
 ### Task 13: Agent 启动时的 workspace 初始化
 
 **改动文件**：
-- `core/rollball-runtime/src/cli.rs`
+- `core/acowork-runtime/src/cli.rs`
 
 AgentHello 响应后，不再调用 `session_manager.set_workspace_context(fallback)` 广播。改为：
 
@@ -552,10 +552,10 @@ AgentHello 响应后，不再调用 `session_manager.set_workspace_context(fallb
 
 | 测试文件 | 变更 |
 |----------|------|
-| `core/rollball-runtime/src/tools/workspace_resolver.rs` tests | 删除 `current_dir()` 相关测试；新增 `find_by_id()` 测试 |
-| `core/rollball-gateway/tests/` workspace tests | 新增 `SetSessionWorkspace` IPC 端到端测试；更新 `set_current_workspace` 不再依赖 `is_current` |
-| `core/rollball-runtime/tests/` session tests | 新增 per-session workspace 隔离测试 |
-| `core/rollball-core/tests/` protocol tests | 新增 `SetSessionWorkspace` 序列化/反序列化测试 |
+| `core/acowork-runtime/src/tools/workspace_resolver.rs` tests | 删除 `current_dir()` 相关测试；新增 `find_by_id()` 测试 |
+| `core/acowork-gateway/tests/` workspace tests | 新增 `SetSessionWorkspace` IPC 端到端测试；更新 `set_current_workspace` 不再依赖 `is_current` |
+| `core/acowork-runtime/tests/` session tests | 新增 per-session workspace 隔离测试 |
+| `core/acowork-core/tests/` protocol tests | 新增 `SetSessionWorkspace` 序列化/反序列化测试 |
 
 ---
 
@@ -597,15 +597,15 @@ AgentHello 响应后，不再调用 `session_manager.set_workspace_context(fallb
 
 | 文件 | 改动类型 | 行数估计 |
 |------|----------|----------|
-| `core/rollball-core/proto/gateway_ipc.proto` | 新增消息 | +5 |
-| `core/rollball-core/src/protocol.rs` | 新增 enum 变体 | +10 |
-| `core/rollball-core/src/proto_bridge.rs` | 序列化映射 | +15 |
-| `core/rollball-runtime/src/tools/workspace_resolver.rs` | 删除 current_dir, 新增 find_by_id, 重构 context 格式化 | ~120 改动 |
-| `core/rollball-runtime/src/agent/session/session_manager.rs` | 新增字段+方法, 重构 set_workspace_context | ~100 新增 |
-| `core/rollball-runtime/src/cli.rs` | 重构 WorkspaceConfigUpdate 处理, 新增 SetSessionWorkspace 处理 | ~150 改动 |
-| `core/rollball-gateway/src/http/workspaces.rs` | 修改 set_current_workspace, 新增 session query param | ~50 改动 |
-| `apps/rollball-desktop/src/stores/workspaceStore.ts` | 重构为 per-session map | ~40 改动 |
-| `apps/rollball-desktop/src/components/workspace/WorkspaceSelector.tsx` | Agent Home 显式化, 删除 workspace fallback | ~100 改动 |
+| `core/acowork-core/proto/gateway_ipc.proto` | 新增消息 | +5 |
+| `core/acowork-core/src/protocol.rs` | 新增 enum 变体 | +10 |
+| `core/acowork-core/src/proto_bridge.rs` | 序列化映射 | +15 |
+| `core/acowork-runtime/src/tools/workspace_resolver.rs` | 删除 current_dir, 新增 find_by_id, 重构 context 格式化 | ~120 改动 |
+| `core/acowork-runtime/src/agent/session/session_manager.rs` | 新增字段+方法, 重构 set_workspace_context | ~100 新增 |
+| `core/acowork-runtime/src/cli.rs` | 重构 WorkspaceConfigUpdate 处理, 新增 SetSessionWorkspace 处理 | ~150 改动 |
+| `core/acowork-gateway/src/http/workspaces.rs` | 修改 set_current_workspace, 新增 session query param | ~50 改动 |
+| `apps/acowork-desktop/src/stores/workspaceStore.ts` | 重构为 per-session map | ~40 改动 |
+| `apps/acowork-desktop/src/components/workspace/WorkspaceSelector.tsx` | Agent Home 显式化, 删除 workspace fallback | ~100 改动 |
 | 测试文件 | 新增/更新 | ~200 新增 |
 
 ---

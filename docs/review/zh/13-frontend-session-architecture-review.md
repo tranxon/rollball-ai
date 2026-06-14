@@ -1,7 +1,7 @@
 # 13 — 前端 Session 管理架构 Review 与重构方案
 
 **日期**: 2026-05-20
-**审查范围**: `apps/rollball-desktop/src/` 下所有 session/conversation 相关代码
+**审查范围**: `apps/acowork-desktop/src/` 下所有 session/conversation 相关代码
 **问题**: Session 切换时数据串流 — 切换 session 期间 WS 事件写入错误的 session
 
 ---

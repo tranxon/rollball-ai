@@ -21,7 +21,7 @@
 
 ## 二、逐文件 Review
 
-### 2.1 `core/rollball-gateway/src/http/chat.rs`
+### 2.1 `core/acowork-gateway/src/http/chat.rs`
 
 **改动点:**
 - `SendMessageRequest` +`session_id: Option<String>`（`#[serde(default)]`）
@@ -37,7 +37,7 @@
 - ⚠️ 第 197 行 `IntentReceived` 结构体字段缩进错误（`from:`/`action:` 与 `let intent` 对齐，应再缩进一级）→ **已修复**
 - ✅ 其他 3 处 `IntentReceived` 缩进正确
 
-### 2.2 `core/rollball-gateway/src/http/approval.rs`
+### 2.2 `core/acowork-gateway/src/http/approval.rs`
 
 **改动点:**
 - `ApprovalRequest` +`session_id: Option<String>`
@@ -49,7 +49,7 @@
 - ✅ 测试代码同步更新
 - ⚠️ 关键发现：Runtime 请求审批时 params 中**没有** `session_id`（见§四）
 
-### 2.3 `apps/rollball-desktop/src/stores/chatStore.ts`
+### 2.3 `apps/acowork-desktop/src/stores/chatStore.ts`
 
 **改动点:**
 - `sendViaWs` 消息体加 `session_id`
@@ -63,7 +63,7 @@
 - ✅ Tauri `invoke` 参数名（camelCase）与 Rust command（snake_case）自动匹配
 - ⚠️ `sendInterrupt` 和 `stopCurrentMessage` 都发 `type: "stop"`，Gateway 统一转为 `interrupt` action，设计合理
 
-### 2.4 `apps/rollball-desktop/src/stores/permissionStore.ts`
+### 2.4 `apps/acowork-desktop/src/stores/permissionStore.ts`
 
 **改动点:**
 - `import { useSessionStore }`
@@ -74,7 +74,7 @@
 - ✅ 自动审批路径（`sessionAllowed`）也带 `sessionId`
 - ⚠️ 潜在问题：如果审批弹窗显示期间用户切换了 session，`currentSessionId` 会变，审批发到新 session。→ **需要 Runtime 在请求审批时带 session_id，前端存储 event.session_id 而非用 currentSessionId**（见§四）
 
-### 2.5 `apps/rollball-desktop/src-tauri/src/commands/chat.rs`
+### 2.5 `apps/acowork-desktop/src-tauri/src/commands/chat.rs`
 
 **改动点:**
 - `send_message` command +`session_id: Option<String>` +`command: Option<String>`
@@ -83,7 +83,7 @@
 - ✅ 参数顺序与前端 `invoke` 调用一致
 - ✅ `as_deref()` 正确转换 `Option<String>` → `Option<&str>`
 
-### 2.6 `apps/rollball-desktop/src-tauri/src/gateway_client.rs`
+### 2.6 `apps/acowork-desktop/src-tauri/src/gateway_client.rs`
 
 **改动点:**
 - `send_message` +`session_id` +`command` 参数

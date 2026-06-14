@@ -1,4 +1,4 @@
-# RollBall LSP install script: clangd (C/C++)
+# AgentCowork LSP install script: clangd (C/C++)
 # Phases: Install -> Verify -> Health Check
 
 $ErrorActionPreference = "Stop"
@@ -139,7 +139,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== RollBall LSP Setup: clangd (C/C++) ==="
+Write-Host "=== AgentCowork LSP Setup: clangd (C/C++) ==="
 Install-Server
 Verify-Server
 Health-Check

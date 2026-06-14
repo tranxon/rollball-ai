@@ -9,7 +9,7 @@
 #
 # After running, env vars are set for the current session. To build:
 #   .\dev\build_core.ps1              # Auto-detects .ort/ and builds all crates
-#   cargo build -p rollball-embed      # Direct build (env set in this session)
+#   cargo build -p acowork-embed      # Direct build (env set in this session)
 
 param(
     [string] $Version = "",
@@ -21,7 +21,7 @@ $ErrorActionPreference = "Stop"
 $WorkspaceRoot = Split-Path -Parent $PSScriptRoot
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  ONNX Runtime Setup for RollBall.AI (Win)" -ForegroundColor Cyan
+Write-Host "  ONNX Runtime Setup for AgentCowork.AI (Win)" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -169,5 +169,5 @@ Write-Host "    .\dev\build_core.ps1" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Build Embed only (env already set in this session):" -ForegroundColor White
 Write-Host "    cd core" -ForegroundColor Cyan
-Write-Host "    cargo build --release -p rollball-embed" -ForegroundColor Cyan
+Write-Host "    cargo build --release -p acowork-embed" -ForegroundColor Cyan
 Write-Host ""

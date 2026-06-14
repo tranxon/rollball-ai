@@ -27,11 +27,11 @@
 
 ### 1.1 `error_patterns.rs` 未纳入 commit（编译阻断）
 
-**位置**: `core/rollball-core/src/providers/mod.rs` line 6 + `error_patterns.rs`
+**位置**: `core/acowork-core/src/providers/mod.rs` line 6 + `error_patterns.rs`
 
 **症状**:
 ```
-core/rollball-core/src/providers/mod.rs:6 pub mod error_patterns;
+core/acowork-core/src/providers/mod.rs:6 pub mod error_patterns;
 ```
 该模块在 `mod.rs` 中声明为 `pub mod error_patterns` 并通过 `pub use` 导出三个函数。但 `error_patterns.rs` 文件状态为 **Untracked**（`git status` 显示未 `git add`），不在当前 commit 中。
 
@@ -40,13 +40,13 @@ core/rollball-core/src/providers/mod.rs:6 pub mod error_patterns;
 error[E0583]: file not found for module `error_patterns`
 ```
 
-**修复**: `git add core/rollball-core/src/providers/error_patterns.rs && git commit --amend`
+**修复**: `git add core/acowork-core/src/providers/error_patterns.rs && git commit --amend`
 
 ---
 
 ### 1.2 请求体积硬限制：裁剪后的 `chat_request` 被丢弃
 
-**位置**: `core/rollball-runtime/src/agent/loop_.rs` 行 ~922-937
+**位置**: `core/acowork-runtime/src/agent/loop_.rs` 行 ~922-937
 
 **代码**:
 ```rust
@@ -109,7 +109,7 @@ if request_size > REQUEST_SIZE_HARD {
 
 ### 2.1 `loop_llm.rs` 上下文溢出恢复使用旧 `chat_request`
 
-**位置**: `core/rollball-runtime/src/agent/loop_llm.rs` 行 ~238-264
+**位置**: `core/acowork-runtime/src/agent/loop_llm.rs` 行 ~238-264
 
 **代码**:
 ```rust
@@ -151,7 +151,7 @@ if removed > 0 {
 
 ### 2.2 迭代级重试与 `chat_request` 一致性问题
 
-**位置**: `core/rollball-runtime/src/agent/loop_.rs` 行 ~722-747
+**位置**: `core/acowork-runtime/src/agent/loop_.rs` 行 ~722-747
 
 **分析**: 迭代级重试循环包裹了 `execute_single_iteration(iteration, context_builder, user_message, &retrieved_memory_ids)`。每次重试时：
 - `context_builder` 和 `user_message` 是引用，不拥有数据
@@ -164,7 +164,7 @@ if removed > 0 {
 
 ### 2.3 `error_patterns.rs` 默认分类可能掩盖真实错误
 
-**位置**: `core/rollball-core/src/providers/error_patterns.rs` 行 138-141
+**位置**: `core/acowork-core/src/providers/error_patterns.rs` 行 138-141
 
 **代码**:
 ```rust
@@ -182,7 +182,7 @@ if removed > 0 {
 
 ### 2.4 ReliableProvider 流式重试的边界条件
 
-**位置**: `core/rollball-runtime/src/providers/reliable.rs` 行 ~172-210
+**位置**: `core/acowork-runtime/src/providers/reliable.rs` 行 ~172-210
 
 **分析**: 新实现对每个 provider 做 `max_attempts` 次重试（`chat_stream` 调用），失败后切换下一个 provider。这与 #14 建议的"流式重试是重新发起请求"一致。
 
@@ -207,7 +207,7 @@ if removed > 0 {
 
 ### 3.2 `is_balance_exhausted` 包含 MiniMax 业务码
 
-**位置**: `core/rollball-runtime/src/providers/reliable.rs` 行 99 + `error_patterns.rs` 行 108
+**位置**: `core/acowork-runtime/src/providers/reliable.rs` 行 99 + `error_patterns.rs` 行 108
 
 **代码**:
 ```rust
@@ -220,7 +220,7 @@ if lower.contains("1113") || lower.contains("1311") {
 
 ### 3.3 `episode_distill.rs` 错误类型变更
 
-**位置**: `core/rollball-runtime/src/episode_distill.rs` 行 268
+**位置**: `core/acowork-runtime/src/episode_distill.rs` 行 268
 
 **变更**: `RuntimeError::Provider(format!(...))` → `RuntimeError::Core(e)`
 

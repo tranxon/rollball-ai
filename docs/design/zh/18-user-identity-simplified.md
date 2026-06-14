@@ -6,7 +6,7 @@
 
 ## 1. 设计背景
 
-原有设计（07-system-agent.md，已删除）将用户身份管理委托给系统 Agent（`com.rollball.system`），通过 `identity_deps` → `identity_delivery` → `identity_store`/`identity_query` 工具的全链路实现身份管理。该方案引入了过多复杂性：系统 Agent 需要运行、需要 ContentProvider 机制、需要专用的内置工具、需要跨 Agent Intent 通信链路。
+原有设计（07-system-agent.md，已删除）将用户身份管理委托给系统 Agent（`com.acowork.system`），通过 `identity_deps` → `identity_delivery` → `identity_store`/`identity_query` 工具的全链路实现身份管理。该方案引入了过多复杂性：系统 Agent 需要运行、需要 ContentProvider 机制、需要专用的内置工具、需要跨 Agent Intent 通信链路。
 
 本方案参照 **model/MCP/search 等公共资源的管理模式**（version-driven diff sync + AgentHelloResult 注入），将用户身份也视为 Gateway 管理的公共资源，由 Gateway 集中管理、持久化，在 Agent 握手时推送给 Runtime，并在变更时热推送。
 
@@ -215,19 +215,19 @@ UserProfileUpdate.version: 8
 
 | 文件 | 变更 |
 |------|------|
-| `core/rollball-core/src/protocol.rs` | 新增 `UserProfile`、`UserProfileListFile` 结构体；`AgentHelloResult` 新增 `user_identity`/`user_profile_version` 字段；`GatewayResponse` 新增 `UserProfileUpdate` 变体；`GatewayRequest` 新增 `user_profile_version` 字段 |
-| `core/rollball-core/proto/gateway_ipc.proto` | 新增 `UserProfile`、`UserProfileUpdate` 消息；`AgentHelloResult` 增加 `user_identity` 字段 |
-| `core/rollball-core/src/proto_bridge.rs` | 新增 UserProfile ↔ proto 互转 |
-| `core/rollball-core/src/identity.rs` | **简化** — 移除 `IdentityCategory`/`PrivacyLevel`/`IdentityStore trait`/`IDENTITY_FIELDS` 等复杂概念，保留基本数据结构（如有必要）或标记 deprecated |
-| `core/rollball-gateway/src/resource_cache.rs` | `ResourceCache` 新增 `user_profile_list: UserProfileListFile`；新增 `load_user_profile_list()`、`save_user_profile_list()`、`rebuild_and_save_user_profile_cache()` |
-| `core/rollball-gateway/src/ipc/server.rs` | `handle_agent_hello()` 新增 user identity 版本比较和交付逻辑；新增 `handle_user_send_identity()` 广播处理 |
-| `core/rollball-gateway/src/http/users_api.rs` | **新建** — `GET /api/users`、`PUT /api/users/{id}`、`POST /api/users` HTTP API |
-| `core/rollball-gateway/src/http/routes.rs` | 新增 `users_routes()` 合并 |
-| `core/rollball-gateway/src/lifecycle/manager.rs` | **移除** `build_identity_delivery()`、`get_identity_deps()`、`load_user_display_name()`；不再需要 per-agent identity 构建 |
-| `core/rollball-runtime/src/grpc/client.rs` | 解析 `AgentHelloResult.user_identity` → `GatewayResponse::AgentHelloResult`；处理 `UserProfileUpdate` 推送 |
-| `core/rollball-runtime/src/agent/session/session_manager.rs` | 新增 `update_user_identity()` 方法；`identity_context` 从 `UserProfile` 格式化 |
-| `core/rollball-runtime/src/agent/session/session_task.rs` | `identity_context` 接收类型从 `IdentityEntry` 改为 `UserProfile` |
-| `core/rollball-runtime/src/agent/context.rs` | `identity_context` 格式化逻辑简化 |
+| `core/acowork-core/src/protocol.rs` | 新增 `UserProfile`、`UserProfileListFile` 结构体；`AgentHelloResult` 新增 `user_identity`/`user_profile_version` 字段；`GatewayResponse` 新增 `UserProfileUpdate` 变体；`GatewayRequest` 新增 `user_profile_version` 字段 |
+| `core/acowork-core/proto/gateway_ipc.proto` | 新增 `UserProfile`、`UserProfileUpdate` 消息；`AgentHelloResult` 增加 `user_identity` 字段 |
+| `core/acowork-core/src/proto_bridge.rs` | 新增 UserProfile ↔ proto 互转 |
+| `core/acowork-core/src/identity.rs` | **简化** — 移除 `IdentityCategory`/`PrivacyLevel`/`IdentityStore trait`/`IDENTITY_FIELDS` 等复杂概念，保留基本数据结构（如有必要）或标记 deprecated |
+| `core/acowork-gateway/src/resource_cache.rs` | `ResourceCache` 新增 `user_profile_list: UserProfileListFile`；新增 `load_user_profile_list()`、`save_user_profile_list()`、`rebuild_and_save_user_profile_cache()` |
+| `core/acowork-gateway/src/ipc/server.rs` | `handle_agent_hello()` 新增 user identity 版本比较和交付逻辑；新增 `handle_user_send_identity()` 广播处理 |
+| `core/acowork-gateway/src/http/users_api.rs` | **新建** — `GET /api/users`、`PUT /api/users/{id}`、`POST /api/users` HTTP API |
+| `core/acowork-gateway/src/http/routes.rs` | 新增 `users_routes()` 合并 |
+| `core/acowork-gateway/src/lifecycle/manager.rs` | **移除** `build_identity_delivery()`、`get_identity_deps()`、`load_user_display_name()`；不再需要 per-agent identity 构建 |
+| `core/acowork-runtime/src/grpc/client.rs` | 解析 `AgentHelloResult.user_identity` → `GatewayResponse::AgentHelloResult`；处理 `UserProfileUpdate` 推送 |
+| `core/acowork-runtime/src/agent/session/session_manager.rs` | 新增 `update_user_identity()` 方法；`identity_context` 从 `UserProfile` 格式化 |
+| `core/acowork-runtime/src/agent/session/session_task.rs` | `identity_context` 接收类型从 `IdentityEntry` 改为 `UserProfile` |
+| `core/acowork-runtime/src/agent/context.rs` | `identity_context` 格式化逻辑简化 |
 
 ### 4.2 需要移除的组件
 
@@ -436,14 +436,14 @@ message ServerMessage {
 
 | 文件 | 删除内容 |
 |------|---------|
-| `rollball-core/src/identity.rs` | 删除 `IdentityCategory`、`PrivacyLevel`、`IdentitySubscription`、`IdentityStore trait`。保留 `IdentityEntry` 标记 deprecated，或彻底移除。 |
-| `rollball-core/src/protocol.rs` | 删除 `IdentityDelivery`、`IdentityQuery`（request/response）。保留 `AgentHelloResult.identity_entries` 标记 deprecated。 |
-| `rollball-core/proto/gateway_ipc.proto` | 删除 `IdentityDelivery`、`IdentityQueryRequest`、`IdentityQueryResult` 消息。保留 `AgentHelloResult.identity_entries_json` 标记 reserved。 |
-| `rollball-gateway/src/lifecycle/manager.rs` | 删除 `build_identity_delivery()`、`get_identity_deps()`、`load_user_display_name()` 及相关测试 |
-| `rollball-gateway/src/gateway/state.rs` | `RunningAgentInfo.identity_entries` 删除 |
-| `rollball-gateway/src/ipc/server.rs` | 删除 `handle_identity_query()`。`AgentHelloResult` 中移除 `identity_entries` 组装 |
-| `rollball-runtime/src/grpc/client.rs` | 删除 `IdentityDelivery` 解析。`AgentHelloResult` 解析中移除 `identity_entries: vec![]` 硬编码 |
-| `rollball-runtime/src/agent/agent_core.rs` | 无变更（`user_display_name` 保留） |
+| `acowork-core/src/identity.rs` | 删除 `IdentityCategory`、`PrivacyLevel`、`IdentitySubscription`、`IdentityStore trait`。保留 `IdentityEntry` 标记 deprecated，或彻底移除。 |
+| `acowork-core/src/protocol.rs` | 删除 `IdentityDelivery`、`IdentityQuery`（request/response）。保留 `AgentHelloResult.identity_entries` 标记 deprecated。 |
+| `acowork-core/proto/gateway_ipc.proto` | 删除 `IdentityDelivery`、`IdentityQueryRequest`、`IdentityQueryResult` 消息。保留 `AgentHelloResult.identity_entries_json` 标记 reserved。 |
+| `acowork-gateway/src/lifecycle/manager.rs` | 删除 `build_identity_delivery()`、`get_identity_deps()`、`load_user_display_name()` 及相关测试 |
+| `acowork-gateway/src/gateway/state.rs` | `RunningAgentInfo.identity_entries` 删除 |
+| `acowork-gateway/src/ipc/server.rs` | 删除 `handle_identity_query()`。`AgentHelloResult` 中移除 `identity_entries` 组装 |
+| `acowork-runtime/src/grpc/client.rs` | 删除 `IdentityDelivery` 解析。`AgentHelloResult` 解析中移除 `identity_entries: vec![]` 硬编码 |
+| `acowork-runtime/src/agent/agent_core.rs` | 无变更（`user_display_name` 保留） |
 | 项目文件 | 移除 identity 工具相关引用 |
 
 ### 8.2 不删除但降级

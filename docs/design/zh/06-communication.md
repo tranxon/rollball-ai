@@ -13,7 +13,7 @@
 
 ## 0. 通信架构总览
 
-Rollball 平台有三条独立的通信通道，各司其职：
+AgentCowork 平台有三条独立的通信通道，各司其职：
 
 ```
 ┌────────────────┐         ┌────────────────┐         ┌────────────────┐
@@ -116,7 +116,7 @@ Agent Runtime 启动时通过参数接收 endpoint 字符串，内部根据 sche
     "type": "capability_overview",
     "agents": [
         {
-            "agent_id": "com.rollball.system",
+            "agent_id": "com.acowork.system",
             "running": true,
             "capabilities": []
         },
@@ -296,7 +296,7 @@ struct IntentMessage {
     r#type: String,                    // "intent"
 
     /// 目标 Agent ID（必填，显式指定）
-    /// Rollball 不支持隐式 Intent，target 必须是已安装 Agent 的 agent_id
+    /// AgentCowork 不支持隐式 Intent，target 必须是已安装 Agent 的 agent_id
     target: String,
 
     /// 请求的动作名称（必填）
@@ -428,7 +428,7 @@ struct IntentError {
 // 请求
 {
     "type": "intent",
-    "target": "com.rollball.system",
+    "target": "com.acowork.system",
     "action": "identity:observe",
     "params": {"fields": ["city"], "callback_intent": "com.example.weather"},
     "async": true,
@@ -448,7 +448,7 @@ struct IntentError {
 // 后续变更通知（系统 Agent 推送）
 {
     "type": "notification",
-    "from": "com.rollball.system",
+    "from": "com.acowork.system",
     "action": "identity:changed",
     "params": {"field": "city", "old_value": "Beijing", "new_value": "Shanghai"}
 }
@@ -462,7 +462,7 @@ struct IntentError {
 // 订阅请求
 {
     "type": "intent",
-    "target": "com.rollball.system",
+    "target": "com.acowork.system",
     "action": "identity:observe",
     "params": {"fields": ["city"], "callback_intent": "com.example.weather"},
     "async": true,
@@ -483,7 +483,7 @@ struct IntentError {
 
 #### 设计原则
 
-Rollball 不支持隐式 Intent，所有 Intent 调用必须显式指定 `target`（Agent ID）。因此 Capability Registry 只需回答一个问题：**这个 Agent 声明了这个 Action 吗？** 无需 priority 机制，无路由 ambiguity。
+AgentCowork 不支持隐式 Intent，所有 Intent 调用必须显式指定 `target`（Agent ID）。因此 Capability Registry 只需回答一个问题：**这个 Agent 声明了这个 Action 吗？** 无需 priority 机制，无路由 ambiguity。
 
 #### 数据结构
 
@@ -591,7 +591,7 @@ Agent Runtime 握手时，Gateway 主动推送当前已安装的所有 Agent 及
     "type": "capability_overview",
     "agents": [
         {
-            "agent_id": "com.rollball.system",
+            "agent_id": "com.acowork.system",
             "running": true,
             "capabilities": []
         },

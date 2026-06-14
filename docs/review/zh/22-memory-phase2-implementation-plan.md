@@ -15,9 +15,9 @@
 
 | 设计项 | 文档说法 | 代码验证 |
 |--------|---------|---------|
-| ProceduralNode 数据结构 | "已完成" | ✅ `rollball-grafeo/src/types.rs` 存在，但**缺 `source_skill`、`learned_from`、`activation_count`** |
+| ProceduralNode 数据结构 | "已完成" | ✅ `acowork-grafeo/src/types.rs` 存在，但**缺 `source_skill`、`learned_from`、`activation_count`** |
 | ProceduralNode Grafeo 存储 | "已完成" | ✅ `grafeo.rs store_procedural()` 完整 CRUD |
-| RetrievalMetrics | "已完成" | ✅ `rollball-memory/src/types.rs` 基础指标在 runtime 中填充 |
+| RetrievalMetrics | "已完成" | ✅ `acowork-memory/src/types.rs` 基础指标在 runtime 中填充 |
 | Judge 轻量评估 | "已完成" | ⚠️ 骨架存在但 **MOCK 实现**（硬编码 relevance_score: 4），从未被 runtime 调用 |
 | Abstention 可配置 min_score | "已完成" | ✅ |
 
@@ -99,8 +99,8 @@
 | P0-2 | `parse_category()` 新增 `Procedure` 分支 → `ProceduralSubType` | 同上 | P0-1 |
 | P0-3 | `process_memory_store()` 新增 procedure 处理分支 → 调用 `store_procedural()` | `consolidation/instant.rs` | P0-2 |
 | P0-4 | System Prompt 提取指引新增 procedure 用法 | `system_prompt.rs` 或 prompt 模板 | P0-1 |
-| P0-5 | ProceduralNode struct 新增 `source_skill: Option<String>`、`learned_from: String`、`activation_count: u32` | `rollball-grafeo/src/types.rs` + `procedural.rs` | 无 |
-| P0-6 | ProceduralNode `to_properties()` / `from_properties()` 对齐新字段 | `rollball-grafeo/src/semantic/procedural.rs` | P0-5 |
+| P0-5 | ProceduralNode struct 新增 `source_skill: Option<String>`、`learned_from: String`、`activation_count: u32` | `acowork-grafeo/src/types.rs` + `procedural.rs` | 无 |
+| P0-6 | ProceduralNode `to_properties()` / `from_properties()` 对齐新字段 | `acowork-grafeo/src/semantic/procedural.rs` | P0-5 |
 | P0-7 | 数据迁移：已有 ProceduralNode 的 `success_count+fail_count` → `activation_count`（默认 0） | `procedural.rs` 或 migration 脚本 | P0-5 |
 
 **风险**：
@@ -254,7 +254,7 @@ P0 (基础对齐)
 2. **§3.2 主动假设验证**：`detect_merge_candidates()` 不存在（非"未在运行时调用"），应改为"函数未实现"
 3. **§3.1 Judge 轻量评估**：应标记为"骨架/Mock"而非"已完成"
 4. **§3.2 补充**：新增 Generalization 模块（47KB 完整实现但未接线）、MetricsAggregator（完整实现但未接线）、Ambiguous 确认流程（部分实现但未接线）
-5. **§五 MemoryMiddleware**：trait 不存在于任何 crate 中，应修正"trait 定义在 rollball-memory 但未使用"的说法
+5. **§五 MemoryMiddleware**：trait 不存在于任何 crate 中，应修正"trait 定义在 acowork-memory 但未使用"的说法
 
 ---
 

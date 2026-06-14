@@ -1,6 +1,6 @@
 # Agent "Ask User Question" 实现模式对比
 
-> **调研范围**: Claude Code, LangGraph, Spring AI, CrewAI, OpenAI Agents SDK, OpenCode, ZeroClaw, RollBall
+> **调研范围**: Claude Code, LangGraph, Spring AI, CrewAI, OpenAI Agents SDK, OpenCode, ZeroClaw, AgentCowork
 > **日期**: 2026-05-21
 
 ## 1. 核心问题
@@ -90,7 +90,7 @@ Node 中: decision = interrupt({"question": "Approve?"})
 
 ### 2.3 执行前钩子（Pre-Execution Hook）
 
-**代表**: ZeroClaw (`ApprovalManager`), RollBall (`ApprovalGate`)
+**代表**: ZeroClaw (`ApprovalManager`), AgentCowork (`ApprovalGate`)
 
 **原理**: 在 Tool 执行前插入审批检查，符合条件则暂停等待用户确认。本质上是一种**安全守卫（Guard）**模式。
 
@@ -108,7 +108,7 @@ run_tool_call_loop():
       execute_tool()
 ```
 
-**RollBall 实现**:
+**AgentCowork 实现**:
 ```
 shell_tool.execute():
   let risk = assess_risk(command)
@@ -124,7 +124,7 @@ shell_tool.execute():
 - 主要用于**安全审批**场景，而非 LLM 主动提问
 - ZeroClaw 支持 CLI 阻塞 + 非 CLI 异步两种模式
 - ZeroClaw 支持 `Always` 会话级自动批准 + 审计日志
-- RollBall 的 `ApprovalGate` 是 trait，可插拔实现（CLI / GUI / auto）
+- AgentCowork 的 `ApprovalGate` 是 trait，可插拔实现（CLI / GUI / auto）
 
 **优点**:
 - 安全场景的完美方案——强制性，LLM 无法绕过
@@ -199,11 +199,11 @@ OpenCode 进程                  CLI 助手进程
 
 ### 2.6 状态机（State Machine）
 
-**代表**: RollBall (`SessionStatus::WaitingApproval`), OpenAI Agents SDK (`stop_on_first_tool`)
+**代表**: AgentCowork (`SessionStatus::WaitingApproval`), OpenAI Agents SDK (`stop_on_first_tool`)
 
 **原理**: Runtime 层面维护 session 状态机。当需要用户输入时，session 状态切换到等待态，外部 UI 检测到状态变化后展示交互界面，用户确认后发送恢复信号触发状态回切。
 
-**RollBall 实现**:
+**AgentCowork 实现**:
 ```
 AgentLoop 执行中:
   requires_approval() → true
@@ -245,18 +245,18 @@ agent = Agent(
 
 ## 3. 全景对比
 
-| 维度 | Tool-as-Mechanism | Graph Interrupt | Pre-Exec Hook | Task Flag | File IPC | State Machine |
-|------|:-:|:-:|:-:|:-:|:-:|:-:|
-| **代表实现** | Claude Code, Spring AI | LangGraph | ZeroClaw | CrewAI | OpenCode | RollBall |
-| **LLM 感知** | 透明（就是 Tool） | 不感知 | 不感知（自动触发） | 不感知 | 感知（Tool） | 不感知 |
-| **暂停粒度** | Tool 调用层 | 图节点内任意点 | Tool 执行前 | Task 输出前 | Tool 调用层 | Session 级 |
-| **恢复方式** | Tool result 返回 | Command(resume=) | 继续/拒绝 | 控制台输入 | 文件响应 | IPC 恢复信号 |
-| **持久化** | ❌ | ✅ (Checkpointer) | ❌ | ❌ | ❌ | ❌ (内存 Session) |
-| **问答灵活性** | 高（任意选项） | 高（任意 JSON） | 低（仅批准/拒绝） | 低 | 高（自由文本） | 中（仅批准/拒绝） |
-| **安全审批** | ❌ 不适用 | ✅ 可做 | ✅ 原生支持 | ❌ | ❌ | ✅ 可做 |
-| **实现复杂度** | 低 | 高 | 中 | 极低 | 极低 | 高 |
-| **进程分离** | ❌ 同进程 | ❌ 同进程 | ❌ 同进程 | ❌ 同进程 | ✅ 天然跨进程 | ✅ 原生跨进程 |
-| **state-of-the-art** | 通用标准模式 | LangGraph 独家 | 安全专用模式 | 简单场景 | 轻量方案 | 复杂 IPC 架构 |
+| 维度                 |   Tool-as-Mechanism    | Graph Interrupt  |   Pre-Exec Hook    |  Task Flag  |    File IPC    |   State Machine   |
+| -------------------- | :--------------------: | :--------------: | :----------------: | :---------: | :------------: | :---------------: |
+| **代表实现**         | Claude Code, Spring AI |    LangGraph     |      ZeroClaw      |   CrewAI    |    OpenCode    |    AgentCowork    |
+| **LLM 感知**         |   透明（就是 Tool）    |      不感知      | 不感知（自动触发） |   不感知    |  感知（Tool）  |      不感知       |
+| **暂停粒度**         |      Tool 调用层       |  图节点内任意点  |    Tool 执行前     | Task 输出前 |  Tool 调用层   |    Session 级     |
+| **恢复方式**         |    Tool result 返回    | Command(resume=) |     继续/拒绝      | 控制台输入  |    文件响应    |   IPC 恢复信号    |
+| **持久化**           |           ❌            | ✅ (Checkpointer) |         ❌          |      ❌      |       ❌        | ❌ (内存 Session)  |
+| **问答灵活性**       |     高（任意选项）     | 高（任意 JSON）  | 低（仅批准/拒绝）  |     低      | 高（自由文本） | 中（仅批准/拒绝） |
+| **安全审批**         |        ❌ 不适用        |      ✅ 可做      |     ✅ 原生支持     |      ❌      |       ❌        |      ✅ 可做       |
+| **实现复杂度**       |           低           |        高        |         中         |    极低     |      极低      |        高         |
+| **进程分离**         |        ❌ 同进程        |     ❌ 同进程     |      ❌ 同进程      |  ❌ 同进程   |  ✅ 天然跨进程  |   ✅ 原生跨进程    |
+| **state-of-the-art** |      通用标准模式      |  LangGraph 独家  |    安全专用模式    |  简单场景   |    轻量方案    |   复杂 IPC 架构   |
 
 ---
 
@@ -265,47 +265,47 @@ agent = Agent(
 ### 场景 A: LLM 主动提问（"问你个事"）
 LLM 在推理过程中主动需要用户决策或澄清。
 
-| 模式 | 适用性 | 理由 |
-|------|:------:|------|
-| **Tool-as-Mechanism** | ⭐⭐⭐⭐⭐ | 最自然——LLM 按需调用，框架无需预判 |
-| **Task Flag** | ⭐⭐⭐ | 简单但缺乏灵活性 |
-| **File IPC** | ⭐⭐⭐ | 轻量方案，适合非标准架构 |
-| **Graph Interrupt** | ⭐⭐⭐⭐ | 灵活但依赖 LangGraph |
+| 模式                  | 适用性 | 理由                               |
+| --------------------- | :----: | ---------------------------------- |
+| **Tool-as-Mechanism** | ⭐⭐⭐⭐⭐  | 最自然——LLM 按需调用，框架无需预判 |
+| **Task Flag**         |  ⭐⭐⭐   | 简单但缺乏灵活性                   |
+| **File IPC**          |  ⭐⭐⭐   | 轻量方案，适合非标准架构           |
+| **Graph Interrupt**   |  ⭐⭐⭐⭐  | 灵活但依赖 LangGraph               |
 
 ### 场景 B: 安全审批（"这个操作安全吗"）
 高风险操作需要用户显式批准。
 
-| 模式 | 适用性 | 理由 |
-|------|:------:|------|
-| **Pre-Exec Hook** | ⭐⭐⭐⭐⭐ | 强制拦截，LLM 无法绕过，安全性最高 |
-| **State Machine** | ⭐⭐⭐⭐ | 适合 IPC 架构的安全层 |
-| **Tool-as-Mechanism** | ⭐⭐ | LLM 可以决定不调用，不安全 |
-| **Task Flag** | ⭐ | 无法精细控制 |
+| 模式                  | 适用性 | 理由                               |
+| --------------------- | :----: | ---------------------------------- |
+| **Pre-Exec Hook**     | ⭐⭐⭐⭐⭐  | 强制拦截，LLM 无法绕过，安全性最高 |
+| **State Machine**     |  ⭐⭐⭐⭐  | 适合 IPC 架构的安全层              |
+| **Tool-as-Mechanism** |   ⭐⭐   | LLM 可以决定不调用，不安全         |
+| **Task Flag**         |   ⭐    | 无法精细控制                       |
 
 ### 场景 C: 前端交互（Desktop App + Gateway 架构）
 
-| 模式 | 适用性 | 理由 |
-|------|:------:|------|
-| **State Machine** | ⭐⭐⭐⭐⭐ | 原生支持分布式架构 |
-| **Pre-Exec Hook + IPC** | ⭐⭐⭐⭐ | 需要额外 IPC 穿透 |
-| **Tool-as-Mechanism** | ⭐⭐⭐ | 需要 Tool 执行时能跨进程阻塞 |
+| 模式                    | 适用性 | 理由                         |
+| ----------------------- | :----: | ---------------------------- |
+| **State Machine**       | ⭐⭐⭐⭐⭐  | 原生支持分布式架构           |
+| **Pre-Exec Hook + IPC** |  ⭐⭐⭐⭐  | 需要额外 IPC 穿透            |
+| **Tool-as-Mechanism**   |  ⭐⭐⭐   | 需要 Tool 执行时能跨进程阻塞 |
 
 ---
 
-## 5. 对 RollBall 的建议
+## 5. 对 AgentCowork 的建议
 
-RollBall 当前已经具备 **两种模式** 的雏形：
+AgentCowork 当前已经具备 **两种模式** 的雏形：
 
 ### 已有: `ApprovalGate` (Pre-Execution Hook)
 ```
-rollball-runtime/src/security/approval_gate.rs
+acowork-runtime/src/security/approval_gate.rs
 → 针对 Shell 安全审批，trait 化，可插拔
 → 当前只有 CLI 实现，Desktop 待做
 ```
 
 ### 已有: `SessionStatus::WaitingApproval` (State Machine)
 ```
-rollball-runtime/src/agent/session_state.rs
+acowork-runtime/src/agent/session_state.rs
 → session 级别的状态机
 → Gateway → Frontend 链路已通（ChunkEvent）
 → 有 IPC 协议（approval_decision 消息）
@@ -320,12 +320,12 @@ rollball-runtime/src/agent/session_state.rs
 
 ### 推荐方案
 
-| 需求 | 使用模式 | 优先级 |
-|------|----------|:------:|
-| Shell 高风险命令审批 | `ApprovalGate` (已有) | P0 ✓ |
-| Tool 安全拦截（任意 tool） | `PermissionChecked` wrapper (Phase 3) | P1 |
-| **LLM 主动向用户提问** | **新增 `AskUserQuestion` Tool** | **P1** |
-| Desktop UI 交互 | `ApprovalGate` 的 GUI 实现 + `SessionStatus` 联动 | P2 |
+| 需求                       | 使用模式                                          | 优先级 |
+| -------------------------- | ------------------------------------------------- | :----: |
+| Shell 高风险命令审批       | `ApprovalGate` (已有)                             |  P0 ✓  |
+| Tool 安全拦截（任意 tool） | `PermissionChecked` wrapper (Phase 3)             |   P1   |
+| **LLM 主动向用户提问**     | **新增 `AskUserQuestion` Tool**                   | **P1** |
+| Desktop UI 交互            | `ApprovalGate` 的 GUI 实现 + `SessionStatus` 联动 |   P2   |
 
 **新增 `AskUserQuestion` Tool 的架构建议**:
 
@@ -349,7 +349,7 @@ LLM 调用 ask_user_question(question, options?)
 1. **Tool-as-Mechanism 是行业共识**：所有主流框架（Claude Code、Spring AI、OpenAI SDK）都将其实现为一个普通 Tool，这是最自然、最通用的模式
 2. **Graph Interrupt 是 LangGraph 的差异化优势**：提供更精细的控制和持久化，但绑定框架
 3. **Pre-Execution Hook 是安全场景的标配**：零信任安全模型下必不可少
-4. **State Machine 是 IPC 架构的底层基础设施**：RollBall 的分布式架构决定了状态驱动是最合理的
+4. **State Machine 是 IPC 架构的底层基础设施**：AgentCowork 的分布式架构决定了状态驱动是最合理的
 5. **File IPC 是最轻量的方案**：适合快速原型和跨语言场景
 
-最终推荐 RollBall: **Tool-as-Mechanism + State Machine 双模式**——用 Tool 触发 LLM 主动提问，用 ApprovalGate 处理框架强制安全审批，两者共享同一套 `SessionStatus::WaitingApproval` 状态机和 IPC 链路。
+最终推荐 AgentCowork: **Tool-as-Mechanism + State Machine 双模式**——用 Tool 触发 LLM 主动提问，用 ApprovalGate 处理框架强制安全审批，两者共享同一套 `SessionStatus::WaitingApproval` 状态机和 IPC 链路。

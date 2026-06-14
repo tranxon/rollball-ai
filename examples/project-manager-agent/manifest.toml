@@ -1,13 +1,13 @@
 # Project Manager Agent
 # A professional project manager for requirements, planning, tracking, risk, and communication.
 
-agent_id = "com.rollball.project-manager"
+agent_id = "com.acowork.project-manager"
 version = "1.0.0"
 name = "PM"
 display_name = "PM"
 role = "Project Manager"
 description = "A professional project manager skilled in requirements analysis, task decomposition, progress tracking, risk assessment, and team coordination."
-author = "RollBall Team"
+author = "AgentCowork Team"
 runtime_version = "0.1.0"
 system = false
 dev = false

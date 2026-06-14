@@ -1,4 +1,4 @@
-# rollball-core — 共享类型与协议
+# acowork-core — 共享类型与协议
 
 > 属于 [模块设计总览](00-overview.md) 的一部分
 
@@ -7,7 +7,7 @@
 ## 目录结构
 
 ```
-crates/rollball-core/
+crates/acowork-core/
 ├── Cargo.toml
 └── src/
     ├── lib.rs                 # crate 入口 + re-exports

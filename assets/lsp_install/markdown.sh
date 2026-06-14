@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RollBall LSP install script: marksman (Markdown)
+# AgentCowork LSP install script: marksman (Markdown)
 # Phases: Install → Verify → Health Check
 # marksman is a standalone binary (not npm). Defaults to stdio mode.
 
@@ -133,7 +133,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== RollBall LSP Setup: marksman (Markdown) ==="
+echo "=== AgentCowork LSP Setup: marksman (Markdown) ==="
 install
 verify
 health_check

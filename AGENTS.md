@@ -1,4 +1,4 @@
-# AGENTS.md — RollBall.AI
+# AGENTS.md — AgentCowork.AI
 
 **Generated:** 2026-04-13
 **Commit:** cec6614
@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 
-RollBall.AI is a decentralized, high-security, scalable AI Agent runtime platform modeled after Android. Each Agent is a declarative `.agent` package (config + prompts + skills, no binary), loaded by a universal Agent Runtime binary and managed by a lightweight Gateway.
+AgentCowork.AI is a decentralized, high-security, scalable AI Agent runtime platform modeled after Android. Each Agent is a declarative `.agent` package (config + prompts + skills, no binary), loaded by a universal Agent Runtime binary and managed by a lightweight Gateway.
 
 ## STRUCTURE
 
@@ -14,13 +14,13 @@ RollBall.AI is a decentralized, high-security, scalable AI Agent runtime platfor
 agent-study/
 ├── core/                    # Rust workspace (library crates + integration tests)
 │   ├── Cargo.toml           # Workspace root
-│   ├── rollball-core/       # Shared types, errors, config
-│   ├── rollball-runtime/    # Agent runtime (main loop, tools, providers)
-│   ├── rollball-gateway/    # Gateway (lifecycle, IPC, HTTP API)
-│   ├── rollball-grafeo/     # Memory engine (graph-based, layered)
-│   ├── rollball-memory/     # Memory manager (trait, middleware)
-│   ├── rollball-vault/      # Encrypted key/value store
-│   ├── rollball-sign/       # Package signing & verification
+│   ├── acowork-core/       # Shared types, errors, config
+│   ├── acowork-runtime/    # Agent runtime (main loop, tools, providers)
+│   ├── acowork-gateway/    # Gateway (lifecycle, IPC, HTTP API)
+│   ├── acowork-grafeo/     # Memory engine (graph-based, layered)
+│   ├── acowork-memory/     # Memory manager (trait, middleware)
+│   ├── acowork-vault/      # Encrypted key/value store
+│   ├── acowork-sign/       # Package signing & verification
 │   ├── tests/               # Integration tests
 │   ├── rustfmt.toml
 │   └── clippy.toml
@@ -42,24 +42,24 @@ agent-study/
 
 ## WHERE TO LOOK
 
-| Task | Location | Notes |
-|------|----------|-------|
-| Platform overview | `docs/01-overview.md` | Android analogy, core principles |
-| Package format | `docs/02-agent-package.md` | `.agent` structure, signing |
-| Runtime internals | `docs/03-agent-runtime.md` | Main loop, tool dispatch, Session Actor model |
-| Gateway design | `docs/04-gateway.md` + `docs/module-design/03-gateway.md` | Lifecycle, IntentRouter, Vault |
-| Memory architecture | `docs/05-memory.md` + `docs/module-design/04-grafeo.md` | Grafeo, layered memory, MemoryStore trait, lifecycle |
-| Security design | `docs/08-security.md` + `docs/module-design/05-vault-sign.md` | Isolation, signing, permissions |
-| Debug protocol | `docs/10-debug-protocol.md` | DevMode, breakpoints, recording/replay |
-| Tool system | `docs/12-tool-system.md` | Built-in / WASM / Gateway tools |
-| Skill system | `docs/13-skill-system.md` | SKILL.md + Grafeo experience layer |
-| Desktop app | `docs/14-desktop-app.md` | Tauri layout, tray, Gateway HTTP API |
-| Conversation persistence | `docs/15-conversation-persistence.md` | Session Actor model, selectedSession, JSONL, Episode, Token budget, JSONL safety |
-| Communication protocol | `docs/06-communication.md` | IPC message format, gRPC session messages (v3.6), Socket API, Intent mechanism |
-| Module workspace plan | `docs/module-design/00-overview.md` | 7-crate workspace structure |
-| Implementation roadmap | `docs/09-roadmap-and-scenarios.md` | 7-phase plan |
-| Design review reports | `docs/review/` | Design doc reviews, numbered |
-| Code review reports | `docs/review/` | Source code reviews, numbered |
+| Task                     | Location                                                      | Notes                                                                            |
+| ------------------------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Platform overview        | `docs/01-overview.md`                                         | Android analogy, core principles                                                 |
+| Package format           | `docs/02-agent-package.md`                                    | `.agent` structure, signing                                                      |
+| Runtime internals        | `docs/03-agent-runtime.md`                                    | Main loop, tool dispatch, Session Actor model                                    |
+| Gateway design           | `docs/04-gateway.md` + `docs/module-design/03-gateway.md`     | Lifecycle, IntentRouter, Vault                                                   |
+| Memory architecture      | `docs/05-memory.md` + `docs/module-design/04-grafeo.md`       | Grafeo, layered memory, MemoryStore trait, lifecycle                             |
+| Security design          | `docs/08-security.md` + `docs/module-design/05-vault-sign.md` | Isolation, signing, permissions                                                  |
+| Debug protocol           | `docs/10-debug-protocol.md`                                   | DevMode, breakpoints, recording/replay                                           |
+| Tool system              | `docs/12-tool-system.md`                                      | Built-in / WASM / Gateway tools                                                  |
+| Skill system             | `docs/13-skill-system.md`                                     | SKILL.md + Grafeo experience layer                                               |
+| Desktop app              | `docs/14-desktop-app.md`                                      | Tauri layout, tray, Gateway HTTP API                                             |
+| Conversation persistence | `docs/15-conversation-persistence.md`                         | Session Actor model, selectedSession, JSONL, Episode, Token budget, JSONL safety |
+| Communication protocol   | `docs/06-communication.md`                                    | IPC message format, gRPC session messages (v3.6), Socket API, Intent mechanism   |
+| Module workspace plan    | `docs/module-design/00-overview.md`                           | 7-crate workspace structure                                                      |
+| Implementation roadmap   | `docs/09-roadmap-and-scenarios.md`                            | 7-phase plan                                                                     |
+| Design review reports    | `docs/review/`                                                | Design doc reviews, numbered                                                     |
+| Code review reports      | `docs/review/`                                                | Source code reviews, numbered                                                    |
 
 ## ARCHITECTURE MAP
 
@@ -84,7 +84,7 @@ Gateway (常驻独立进程)
         │ Gateway Service API (Socket)
         ▼
 Agent Runtime (统一二进制)
-├── System Agent (com.rollball.system) — identity, preferences
+├── System Agent (com.acowork.system) — identity, preferences
 ├── User Agents — each has private Grafeo + LLM direct connection
 └── DevMode — Debug Protocol (WebSocket, 开发者调试)
 ```
@@ -93,8 +93,8 @@ Agent Runtime (统一二进制)
 
 - Design docs in both Chinese and English; code comments (Rust `//`, `//!`, `///`) **MUST be in English**
 - `.agent` bundles are **declarative only** — no executable code
-- ref-repo is **reference only** — not source of truth for RollBall design
-- Rust implementation follows workspace pattern under `core/`: `rollball-core`, `rollball-runtime`, `rollball-gateway`, `rollball-grafeo`, `rollball-vault`, `rollball-sign`
+- ref-repo is **reference only** — not source of truth for AgentCowork design
+- Rust implementation follows workspace pattern under `core/`: `acowork-core`, `acowork-runtime`, `acowork-gateway`, `acowork-grafeo`, `acowork-vault`, `acowork-sign`
 
 ## ANTI-PATTERNS (THIS PROJECT)
 

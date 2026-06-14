@@ -7,7 +7,7 @@ apps/**/target/
 Cargo.lock
 
 # Desktop app build staging (populated by build.rs)
-apps/rollball-desktop/src-tauri/bin/
+apps/acowork-desktop/src-tauri/bin/
 
 # IDE
 .workbuddy/

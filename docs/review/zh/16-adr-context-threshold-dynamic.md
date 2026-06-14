@@ -26,7 +26,7 @@ let request_size = serde_json::to_vec(&chat_request).map(|v| v.len()).unwrap_or(
 
 ### 修改 1：`context_trim_budget()` 扣减 output 预留
 
-**文件**: `core/rollball-runtime/src/agent/agent_core.rs`
+**文件**: `core/acowork-runtime/src/agent/agent_core.rs`
 
 ```rust
 // Before: 直接返回 context_window
@@ -42,7 +42,7 @@ let usable = caps.context_window.saturating_sub(output_reserve);
 
 ### 修改 2：字节阈值 → token 比率阈值
 
-**文件**: `core/rollball-runtime/src/agent/loop_.rs`
+**文件**: `core/acowork-runtime/src/agent/loop_.rs`
 
 ```rust
 // Before: 硬编码字节
@@ -62,7 +62,7 @@ let current_tokens = self.session.history.token_count();
 
 ### 修改 3：`loop_llm.rs` 日志增强
 
-**文件**: `core/rollball-runtime/src/agent/loop_llm.rs`
+**文件**: `core/acowork-runtime/src/agent/loop_llm.rs`
 
 溢出恢复路径增加 `current_tokens` / `remaining_tokens` 结构化日志，便于调试。
 

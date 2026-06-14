@@ -100,7 +100,7 @@ Standalone 模式下 `AgentLoop::new()` 直接构造 AgentCore，不经过 `clon
 
 ```rust
 async fn relay_stream_chunk(
-    outbound_tx: &tokio::sync::mpsc::Sender<rollball_core::proto::ClientMessage>,
+    outbound_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
     action: &str,
     params: &serde_json::Value,
 )
@@ -152,14 +152,14 @@ chunk relay 是一个独立的 `tokio::spawn` task。如果 outbound channel 关
 
 ## 测试覆盖评估
 
-| 变更点 | 测试覆盖 |
-|--------|---------|
-| SessionChunkEvent 包装 | ✅ e2e_session_test、gateway_routing_test 均已更新 |
+| 变更点                                | 测试覆盖                                              |
+| ------------------------------------- | ----------------------------------------------------- |
+| SessionChunkEvent 包装                | ✅ e2e_session_test、gateway_routing_test 均已更新     |
 | AgentCore.session_id / try_send_chunk | ⚠️ 间接覆盖（通过 AgentLoop 集成测试），无直接单元测试 |
-| SessionManager.current_session_id | ✅ SessionManager 自身测试用 String::new() |
-| resolve_target_session | ❌ 无单元测试 |
-| relay_stream_chunk / relay_intent | ❌ 无单元测试（需 live Gateway） |
-| switch_conversation dead_code | ✅ 无调用者，标注正确 |
+| SessionManager.current_session_id     | ✅ SessionManager 自身测试用 String::new()             |
+| resolve_target_session                | ❌ 无单元测试                                          |
+| relay_stream_chunk / relay_intent     | ❌ 无单元测试（需 live Gateway）                       |
+| switch_conversation dead_code         | ✅ 无调用者，标注正确                                  |
 
 **建议补充**:
 - `resolve_target_session` 的 3 种输入（Some("x"), Some(""), None）单元测试
@@ -169,14 +169,14 @@ chunk relay 是一个独立的 `tokio::spawn` task。如果 outbound channel 关
 
 ## 文件改动统计
 
-| 文件 | 改动类型 | 影响行数(估) |
-|------|---------|-------------|
-| loop_.rs | SessionChunkEvent 定义 + emit 简化 + switch dead_code | ~80 |
-| agent_core.rs | session_id 字段 + try_send_chunk + clone_for_session | ~40 |
-| loop_llm.rs | emit 简化 | ~8 |
-| session_task.rs | SessionChunkEvent 包装 + clone_for_session 参数 | ~20 |
-| session_manager.rs | current_session_id + resolve_target_session | ~30 |
-| cli.rs | relay 重写 + 参数精简 + 删 dead_code | -290 净 |
-| 测试文件 (3个) | 类型/匹配模式更新 | ~40 |
+| 文件               | 改动类型                                              | 影响行数(估) |
+| ------------------ | ----------------------------------------------------- | ------------ |
+| loop_.rs           | SessionChunkEvent 定义 + emit 简化 + switch dead_code | ~80          |
+| agent_core.rs      | session_id 字段 + try_send_chunk + clone_for_session  | ~40          |
+| loop_llm.rs        | emit 简化                                             | ~8           |
+| session_task.rs    | SessionChunkEvent 包装 + clone_for_session 参数       | ~20          |
+| session_manager.rs | current_session_id + resolve_target_session           | ~30          |
+| cli.rs             | relay 重写 + 参数精简 + 删 dead_code                  | -290 净      |
+| 测试文件 (3个)     | 类型/匹配模式更新                                     | ~40          |
 
 **净效果**: ~-70 行，但更重要的是架构清晰度大幅提升（竞态消除 + 状态集中 + 重复代码删除）。

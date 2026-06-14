@@ -8,13 +8,13 @@
 
 ## 一、问题总览
 
-| # | 严重度 | 问题 | 影响范围 |
-|---|--------|------|----------|
-| P1-1 | 高 | `current_session_id` 散落在 cli.rs，未收归 SessionManager | cli.rs:1180 + 6处修改点 |
-| P1-2 | 高 | Session 操作逻辑内联+外联双份，`#[allow(dead_code)]` | cli.rs:1440-1592 vs 2380-2670 |
-| P1-3 | 高 | ChunkEvent session_id 通过 watch relay 事后注入，存在竞态 | cli.rs:660-900 |
-| P2-1 | 中 | `session_id_watch_tx` 穿透 5 层函数参数 | run_gateway_loop → process_gateway_recv → handle_* |
-| P2-2 | 中 | Chunk relay 9 个 match arm 复制粘贴 `params["session_id"]` | cli.rs:672-900 |
+| #    | 严重度 | 问题                                                       | 影响范围                                           |
+| ---- | ------ | ---------------------------------------------------------- | -------------------------------------------------- |
+| P1-1 | 高     | `current_session_id` 散落在 cli.rs，未收归 SessionManager  | cli.rs:1180 + 6处修改点                            |
+| P1-2 | 高     | Session 操作逻辑内联+外联双份，`#[allow(dead_code)]`       | cli.rs:1440-1592 vs 2380-2670                      |
+| P1-3 | 高     | ChunkEvent session_id 通过 watch relay 事后注入，存在竞态  | cli.rs:660-900                                     |
+| P2-1 | 中     | `session_id_watch_tx` 穿透 5 层函数参数                    | run_gateway_loop → process_gateway_recv → handle_* |
+| P2-2 | 中     | Chunk relay 9 个 match arm 复制粘贴 `params["session_id"]` | cli.rs:672-900                                     |
 
 ---
 
@@ -70,11 +70,11 @@ impl SessionManager {
 
 **具体差异**:
 
-| 操作 | 内联版 (行号) | 外联版 (行号) | 差异 |
-|------|--------------|--------------|------|
-| create | 1440-1470 | 2381-2432 | 内联走 SessionManager，外联走 agent_loop.switch_conversation |
-| activate | 1476-1497 | 2476-2533 | 内联仅更新 current + watch，外联调用 switch_conversation |
-| delete | 1526-1592 | 2600-2670 | 内联走 SessionManager.destroy，外联走 agent_loop |
+| 操作     | 内联版 (行号) | 外联版 (行号) | 差异                                                         |
+| -------- | ------------- | ------------- | ------------------------------------------------------------ |
+| create   | 1440-1470     | 2381-2432     | 内联走 SessionManager，外联走 agent_loop.switch_conversation |
+| activate | 1476-1497     | 2476-2533     | 内联仅更新 current + watch，外联调用 switch_conversation     |
+| delete   | 1526-1592     | 2600-2670     | 内联走 SessionManager.destroy，外联走 agent_loop             |
 
 **建议**: 删除外联版，将内联版逻辑收归 SessionManager（见 P1-1 建议），cli.rs 只做 `session_manager.xxx()` 调用 + `send_session_response()`。
 
@@ -148,7 +148,7 @@ relay 只需要从 event 中读取 session_id，不再需要 watch channel。
 ```rust
 let mut params = serde_json::json!({...});
 params["session_id"] = serde_json::json!(relay_session_id);  // ← 每处重复
-let msg = rollball_core::proto::ClientMessage { ... };
+let msg = acowork_core::proto::ClientMessage { ... };
 if outbound_tx.send(msg).await.is_err() { ... }
 ```
 
@@ -166,14 +166,14 @@ async fn relay_chunk(event: SessionChunkEvent, tx: &Sender<ClientMessage>) {
 
 ## 三、已有良好封装的部分
 
-| 模块 | 文件 | 评价 |
-|------|------|------|
-| SessionManager | session_manager.rs | ✅ 高内聚：sessions HashMap + create/destroy/send/broadcast + 缓存重放 |
-| SessionHandle | session_handle.rs | ✅ 简洁：3 个方法 send/send_inbound/is_alive |
-| SessionTask | session_task.rs | ✅ 独立执行：own AgentLoop + session_id + chunk_tx |
-| SessionMessage | session_task.rs | ✅ 消息协议清晰：12 种消息类型 |
-| ConversationSession | conversation.rs | ✅ JSONL 持久化：new/resume/session_id |
-| Gateway IPC session_id 保留 | ipc/server.rs | ✅ 三处 if let 保留 session_id |
+| 模块                        | 文件               | 评价                                                                  |
+| --------------------------- | ------------------ | --------------------------------------------------------------------- |
+| SessionManager              | session_manager.rs | ✅ 高内聚：sessions HashMap + create/destroy/send/broadcast + 缓存重放 |
+| SessionHandle               | session_handle.rs  | ✅ 简洁：3 个方法 send/send_inbound/is_alive                           |
+| SessionTask                 | session_task.rs    | ✅ 独立执行：own AgentLoop + session_id + chunk_tx                     |
+| SessionMessage              | session_task.rs    | ✅ 消息协议清晰：12 种消息类型                                         |
+| ConversationSession         | conversation.rs    | ✅ JSONL 持久化：new/resume/session_id                                 |
+| Gateway IPC session_id 保留 | ipc/server.rs      | ✅ 三处 if let 保留 session_id                                         |
 
 **关键洞察**: SessionManager 的内部封装已经很好（770 行，清晰的 create/destroy/broadcast），但 **cli.rs 作为"胶水层"承担了太多 session 状态管理职责**，导致状态散落和重复。
 
@@ -209,12 +209,12 @@ async fn relay_chunk(event: SessionChunkEvent, tx: &Sender<ClientMessage>) {
 
 ## 五、风险与约束
 
-| 风险 | 缓解 |
-|------|------|
-| Phase A 修改 ChunkEvent 枚举，所有 match 都要改 | 编译器强制穷举，不会遗漏 |
-| Phase B SessionManager 需要 async 方法 | 已经是 async（create_session_with_id_and_conversation 等），无新增难度 |
-| Phase A+B 一起做改动量大 | **强烈建议分两批**，每批独立可测试 |
-| 删除 watch channel 后 CLI 单 session 模式如何获取 current | SessionManager.current_session_id() 即可 |
+| 风险                                                      | 缓解                                                                   |
+| --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Phase A 修改 ChunkEvent 枚举，所有 match 都要改           | 编译器强制穷举，不会遗漏                                               |
+| Phase B SessionManager 需要 async 方法                    | 已经是 async（create_session_with_id_and_conversation 等），无新增难度 |
+| Phase A+B 一起做改动量大                                  | **强烈建议分两批**，每批独立可测试                                     |
+| 删除 watch channel 后 CLI 单 session 模式如何获取 current | SessionManager.current_session_id() 即可                               |
 
 ---
 

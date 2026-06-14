@@ -30,7 +30,7 @@ case "$(uname -s)" in
 esac
 
 echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}Rollball Core Rebuild & Restart Script${NC}"
+echo -e "${CYAN}AgentCowork Core Rebuild & Restart Script${NC}"
 echo -e "${CYAN}OS: $OS${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
@@ -67,9 +67,9 @@ stop_process() {
 
 # Step 1: Stop running processes
 echo -e "${YELLOW}[1/5] Stopping running Gateway, Runtime, and Embed processes...${NC}"
-stop_process "rollball-gateway" "Gateway"
-stop_process "rollball-runtime" "Runtime"
-stop_process "rollball-embed"  "Embed"
+stop_process "acowork-gateway" "Gateway"
+stop_process "acowork-runtime" "Runtime"
+stop_process "acowork-embed"  "Embed"
 
 # Ensure embed port is released before starting a new gateway.
 # On Unix, pkill may not have finished releasing port 18080 within the
@@ -95,7 +95,7 @@ echo ""
 # Step 2: Build Gateway
 echo -e "${YELLOW}[2/5] Building Gateway (release mode)...${NC}"
 cd "$CORE_DIR"
-if cargo build --release -p rollball-gateway 2>&1 | tee /tmp/gateway_build.log; then
+if cargo build --release -p acowork-gateway 2>&1 | tee /tmp/gateway_build.log; then
     if grep -q "error" /tmp/gateway_build.log 2>/dev/null; then
         echo -e "${RED}  Gateway build failed with errors.${NC}"
         exit 1
@@ -109,7 +109,7 @@ echo ""
 
 # Step 3: Build Runtime
 echo -e "${YELLOW}[3/5] Building Runtime (release mode)...${NC}"
-if cargo build --release -p rollball-runtime 2>&1 | tee /tmp/runtime_build.log; then
+if cargo build --release -p acowork-runtime 2>&1 | tee /tmp/runtime_build.log; then
     if grep -q "error" /tmp/runtime_build.log 2>/dev/null; then
         echo -e "${RED}  Runtime build failed with errors.${NC}"
         exit 1
@@ -162,11 +162,11 @@ else
     fi
     if [ -z "$ORT_LIB_LOCATION" ]; then
         echo -e "${RED}  ONNX Runtime not found. Run ./dev/setup_ort.sh first.${NC}"
-        echo -e "${RED}  Alternative: cargo build --release -p rollball-embed --features download-ort${NC}"
+        echo -e "${RED}  Alternative: cargo build --release -p acowork-embed --features download-ort${NC}"
         exit 1
     fi
 
-    if cargo build --release -p rollball-embed 2>&1 | tee /tmp/embed_build.log; then
+    if cargo build --release -p acowork-embed 2>&1 | tee /tmp/embed_build.log; then
         if grep -q "error" /tmp/embed_build.log 2>/dev/null; then
             echo -e "${RED}  Embedding Runtime build failed with errors.${NC}"
             exit 1
@@ -200,9 +200,9 @@ fi
 # The gateway (and embed) read this from `{exe_dir}/embedding_models.json`.
 # Whoever distributes the binary (this script for dev, the package installer
 # for release, the Tauri bundler for desktop) is responsible for placing it
-# there. Source of truth is core/rollball-embed/assets/embedding_models.json.
+# there. Source of truth is core/acowork-embed/assets/embedding_models.json.
 echo -e "${YELLOW}[4.5/5] Copying embedding_models.json next to binaries...${NC}"
-EMBED_MODELS_SRC="$WORKSPACE_ROOT/core/rollball-embed/assets/embedding_models.json"
+EMBED_MODELS_SRC="$WORKSPACE_ROOT/core/acowork-embed/assets/embedding_models.json"
 if [ -f "$EMBED_MODELS_SRC" ]; then
     for DIR in "$RELEASE_DIR" "$DEBUG_DIR"; do
         if [ -d "$DIR" ]; then
@@ -218,14 +218,14 @@ echo ""
 
 # Step 5: Start Gateway
 echo -e "${YELLOW}[5/5] Starting Gateway in daemon mode (debug logging)...${NC}"
-export ROLLBALL_GATEWAY_DAEMON="true"
-export ROLLBALL_GATEWAY_LOG_LEVEL="debug"
+export ACOWORK_GATEWAY_DAEMON="true"
+export ACOWORK_GATEWAY_LOG_LEVEL="debug"
 
 GATEWAY_EXE=""
 if [ "$OS" = "windows" ]; then
-    GATEWAY_EXE="$WORKSPACE_ROOT/target/release/rollball-gateway.exe"
+    GATEWAY_EXE="$WORKSPACE_ROOT/target/release/acowork-gateway.exe"
 else
-    GATEWAY_EXE="$WORKSPACE_ROOT/target/release/rollball-gateway"
+    GATEWAY_EXE="$WORKSPACE_ROOT/target/release/acowork-gateway"
 fi
 
 if [ -f "$GATEWAY_EXE" ]; then

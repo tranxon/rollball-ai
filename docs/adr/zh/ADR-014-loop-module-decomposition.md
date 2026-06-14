@@ -9,7 +9,7 @@
 
 ## 背景
 
-`loop_.rs` 是 RollBall Runtime 中最大的单文件，3908 行（生产代码 2635 行 + 测试 1273 行）。它包含了 AgentLoop 的全部业务逻辑，但 8 个正交关注点混合在一起，没有物理边界隔离。
+`loop_.rs` 是 AgentCowork Runtime 中最大的单文件，3908 行（生产代码 2635 行 + 测试 1273 行）。它包含了 AgentLoop 的全部业务逻辑，但 8 个正交关注点混合在一起，没有物理边界隔离。
 
 ### 问题 1：God Method — `execute_single_iteration`（742 行）
 
@@ -19,13 +19,13 @@
 
 ### 问题 2：5 处代码重复
 
-| # | 重复模式 | 出现次数 | 总冗余行数 |
-|---|---------|---------|-----------|
-| D1 | InboundMessage → ChatMessage 注入 | 3 处（drain_inbound deferred/live + run_inner 迭代暂停） | ~60 行 |
-| D2 | Think block 持久化 | 2 处（text response path + tool calls path） | ~12 行 |
-| D3 | Stop handling | 2 处（pre-tool stop + post-tool stop） | ~30 行 |
-| D4 | `await_approval_decision` 与 `await_question_answer` | 2 处（select! 循环结构完全同构） | ~90 行 |
-| D5 | `APPROVAL_TIMEOUT_SECS` 常量 | 2 处硬编码 300 | — |
+| #   | 重复模式                                             | 出现次数                                                 | 总冗余行数 |
+| --- | ---------------------------------------------------- | -------------------------------------------------------- | ---------- |
+| D1  | InboundMessage → ChatMessage 注入                    | 3 处（drain_inbound deferred/live + run_inner 迭代暂停） | ~60 行     |
+| D2  | Think block 持久化                                   | 2 处（text response path + tool calls path）             | ~12 行     |
+| D3  | Stop handling                                        | 2 处（pre-tool stop + post-tool stop）                   | ~30 行     |
+| D4  | `await_approval_decision` 与 `await_question_answer` | 2 处（select! 循环结构完全同构）                         | ~90 行     |
+| D5  | `APPROVAL_TIMEOUT_SECS` 常量                         | 2 处硬编码 300                                           | —          |
 
 **总计约 192 行冗余代码**，每处重复都是"改一处忘另一处"的 bug 温床。
 
@@ -33,16 +33,16 @@
 
 `loop_.rs` 混合了 8 个正交关注点：
 
-| 关注点 | 方法数 | 行数(估) | 代表方法 |
-|--------|--------|---------|---------|
-| 上下文管理 | 7 | ~310 | `compact_history_if_needed`(171)、`resolve_distill_model`(50)、`trim_history_to_budget`(20) |
-| 审批子系统 | 5 | ~167 | `await_approval_decision`(103)、`handle_approval_request`(37)、`ApprovalHandle`(20) |
-| 用户交互 | 3 | ~227 | `handle_ask_user_question`(59)、`handle_todo_write`(80)、`await_question_answer`(88) |
-| 入站消息 | 3 | ~208 | `drain_inbound_queue`(124)、`poll_stop`(40)、`apply_user_op`(44) |
-| 会话生命周期 | 7 | ~143 | `close_session_inner`(93)、构造器(52)、`transition_status`(24) |
-| 记忆系统 | 3 | ~98 | `retrieve_and_inject_memories`(76)、`init_memory_store`(3)、`write_document_entries`(19) |
-| Debug 钩子 | 调用点 | ~90 | 已迁移到 observer，调用点仍在此 |
-| 核心编排 | 4 | ~246 | `run_inner`(194)、`run/replay`(6)、`execute_tool_by_name`(20)、`execute_single_iteration`(骨架) |
+| 关注点       | 方法数 | 行数(估) | 代表方法                                                                                        |
+| ------------ | ------ | -------- | ----------------------------------------------------------------------------------------------- |
+| 上下文管理   | 7      | ~310     | `compact_history_if_needed`(171)、`resolve_distill_model`(50)、`trim_history_to_budget`(20)     |
+| 审批子系统   | 5      | ~167     | `await_approval_decision`(103)、`handle_approval_request`(37)、`ApprovalHandle`(20)             |
+| 用户交互     | 3      | ~227     | `handle_ask_user_question`(59)、`handle_todo_write`(80)、`await_question_answer`(88)            |
+| 入站消息     | 3      | ~208     | `drain_inbound_queue`(124)、`poll_stop`(40)、`apply_user_op`(44)                                |
+| 会话生命周期 | 7      | ~143     | `close_session_inner`(93)、构造器(52)、`transition_status`(24)                                  |
+| 记忆系统     | 3      | ~98      | `retrieve_and_inject_memories`(76)、`init_memory_store`(3)、`write_document_entries`(19)        |
+| Debug 钩子   | 调用点 | ~90      | 已迁移到 observer，调用点仍在此                                                                 |
+| 核心编排     | 4      | ~246     | `run_inner`(194)、`run/replay`(6)、`execute_tool_by_name`(20)、`execute_single_iteration`(骨架) |
 
 一个开发者想理解"审批超时逻辑"，需要在一个 3908 行文件中找到 103 行的方法，然后理解它与其他方法的依赖关系——**认知成本与文件总长度成正比，而非与目标方法长度成正比**。
 
@@ -69,39 +69,39 @@
 
 **理由**：行数最多（~310 行），含最大单方法 `compact_history_if_needed`（171 行），且上下文管理是主循环中耦合最深的关注点——`execute_single_iteration` 中有 6 个内联块属于此职责。
 
-| 方法 | 来源 | 行数 |
-|------|------|------|
-| `compact_history_if_needed` | loop_.rs | 171 |
-| `resolve_distill_model` | loop_.rs | 50 |
-| `trim_history_to_budget` | loop_.rs | 20 |
-| `context_trim_budget` | loop_.rs | 3 |
-| `update_provider` | loop_.rs | 11 |
-| `update_gateway_model_capabilities` | loop_.rs | 3 |
-| `update_max_output_tokens_limit` | loop_.rs | 3 |
-| `apply_runtime_config` | loop_.rs | 10 |
+| 方法                                | 来源     | 行数 |
+| ----------------------------------- | -------- | ---- |
+| `compact_history_if_needed`         | loop_.rs | 171  |
+| `resolve_distill_model`             | loop_.rs | 50   |
+| `trim_history_to_budget`            | loop_.rs | 20   |
+| `context_trim_budget`               | loop_.rs | 3    |
+| `update_provider`                   | loop_.rs | 11   |
+| `update_gateway_model_capabilities` | loop_.rs | 3    |
+| `update_max_output_tokens_limit`    | loop_.rs | 3    |
+| `apply_runtime_config`              | loop_.rs | 10   |
 
 **从 `execute_single_iteration` 提取的子方法**：
 
-| 新方法 | 来源块 | 行数 | 说明 |
-|--------|--------|------|------|
-| `check_budget_and_warn()` | B3 | 25 | Budget 前置检查 + 警告 |
-| `build_chat_request()` | B5+B7 | 22 | 构建 ChatRequest + MCP tool merge |
-| `check_context_overflow_and_trim()` | B6 | 38 | 上下文溢出 circuit-breaking |
-| `process_llm_response_usage()` | B9 | 105 | LLM 响应后 usage 报告 + budget 更新 |
-| `pre_trim_for_tool_results()` | B19 | 23 | 工具结果前预裁剪 |
+| 新方法                              | 来源块 | 行数 | 说明                                |
+| ----------------------------------- | ------ | ---- | ----------------------------------- |
+| `check_budget_and_warn()`           | B3     | 25   | Budget 前置检查 + 警告              |
+| `build_chat_request()`              | B5+B7  | 22   | 构建 ChatRequest + MCP tool merge   |
+| `check_context_overflow_and_trim()` | B6     | 38   | 上下文溢出 circuit-breaking         |
+| `process_llm_response_usage()`      | B9     | 105  | LLM 响应后 usage 报告 + budget 更新 |
+| `pre_trim_for_tool_results()`       | B19    | 23   | 工具结果前预裁剪                    |
 
 #### Phase 2：`loop_approval.rs` — 审批子系统
 
 **理由**：消除重复 #4（`await_approval_decision` 与 `await_question_answer` 同构），审批逻辑与主循环完全正交——主循环只在 `execute_tools_parallel` 中调用 `ApprovalHandle`，不需要知道审批的内部实现。
 
-| 方法/类型 | 来源 | 行数 |
-|-----------|------|------|
-| `ApprovalHandle` | loop_.rs | 20 |
-| `ApprovalDecision` | loop_.rs (类型) | — |
-| `await_approval_decision` | loop_.rs | 103 |
-| `await_question_answer` | loop_.rs | 88 |
-| `handle_approval_request` | loop_.rs | 37 |
-| `send_tool_approval_needed` | loop_.rs | 13 |
+| 方法/类型                   | 来源            | 行数 |
+| --------------------------- | --------------- | ---- |
+| `ApprovalHandle`            | loop_.rs        | 20   |
+| `ApprovalDecision`          | loop_.rs (类型) | —    |
+| `await_approval_decision`   | loop_.rs        | 103  |
+| `await_question_answer`     | loop_.rs        | 88   |
+| `handle_approval_request`   | loop_.rs        | 37   |
+| `send_tool_approval_needed` | loop_.rs        | 13   |
 
 **去重方案**：提取通用等待器 `InboundWaiter`，封装 `tokio::select!` 循环 + deferred 缓存 + 超时 + Stop 信号处理：
 
@@ -132,11 +132,11 @@ impl<'a> InboundWaiter<'a> {
 
 **理由**：消除重复 #1（消息注入 3 处重复），入站消息是主循环与外部世界的接口，理应有独立模块。
 
-| 方法 | 来源 | 行数 |
-|------|------|------|
-| `drain_inbound_queue` | loop_.rs | 124 |
-| `poll_stop` | loop_.rs | 40 |
-| `apply_user_op` | loop_.rs | 44 |
+| 方法                  | 来源     | 行数 |
+| --------------------- | -------- | ---- |
+| `drain_inbound_queue` | loop_.rs | 124  |
+| `poll_stop`           | loop_.rs | 40   |
+| `apply_user_op`       | loop_.rs | 44   |
 
 **去重方案**：提取 `inject_inbound_into_history()` 辅助函数，消除 3 处消息注入重复：
 
@@ -168,26 +168,26 @@ fn inject_inbound_into_history(msg: InboundMessage, history: &mut HistoryManager
 
 **理由**：3 个"特殊工具"（ask_user_question、todo_write、ask_question）的拦截和交互逻辑与主循环无关，是独立的用户交互子协议。
 
-| 方法 | 来源 | 行数 |
-|------|------|------|
-| `handle_ask_user_question` | loop_.rs | 59 |
-| `handle_todo_write` | loop_.rs | 80 |
-| `await_question_answer` → Phase 2 移至 `InboundWaiter` | — | — |
+| 方法                                                   | 来源     | 行数 |
+| ------------------------------------------------------ | -------- | ---- |
+| `handle_ask_user_question`                             | loop_.rs | 59   |
+| `handle_todo_write`                                    | loop_.rs | 80   |
+| `await_question_answer` → Phase 2 移至 `InboundWaiter` | —        | —    |
 
 #### Phase 5：`loop_session.rs` — 会话生命周期
 
 **理由**：session 创建/关闭/蒸馏是独立于主循环编排的生命周期管理。
 
-| 方法/类型 | 来源 | 行数 |
-|-----------|------|------|
-| `new` / `new_with_observer` / `from_core_and_session` | loop_.rs | 52 |
-| `transition_status` | loop_.rs | 24 |
-| `close_session_inner` | loop_.rs | 93 |
-| `close_session_with_distillation` | loop_.rs | 3 |
-| `current_session_id` | loop_.rs | 3 |
-| `update_session_title` | loop_.rs | 3 |
-| `update_session_workspace_id` | loop_.rs | 5 |
-| `extract_think_block` / `strip_think_block` / `build_think_metadata` | loop_.rs (自由函数) | 32 |
+| 方法/类型                                                            | 来源                | 行数 |
+| -------------------------------------------------------------------- | ------------------- | ---- |
+| `new` / `new_with_observer` / `from_core_and_session`                | loop_.rs            | 52   |
+| `transition_status`                                                  | loop_.rs            | 24   |
+| `close_session_inner`                                                | loop_.rs            | 93   |
+| `close_session_with_distillation`                                    | loop_.rs            | 3    |
+| `current_session_id`                                                 | loop_.rs            | 3    |
+| `update_session_title`                                               | loop_.rs            | 3    |
+| `update_session_workspace_id`                                        | loop_.rs            | 5    |
+| `extract_think_block` / `strip_think_block` / `build_think_metadata` | loop_.rs (自由函数) | 32   |
 
 **去重方案**：提取 `persist_think_block()` 消除重复 #2（think 持久化 2 处重复）。
 
@@ -195,11 +195,11 @@ fn inject_inbound_into_history(msg: InboundMessage, history: &mut HistoryManager
 
 **理由**：记忆检索/注入与 Grafeo 紧耦合，与主循环完全无关。
 
-| 方法 | 来源 | 行数 |
-|------|------|------|
-| `retrieve_and_inject_memories` | loop_.rs | 76 |
-| `init_memory_store` | loop_.rs | 3 |
-| `write_document_entries` | loop_.rs | 19 |
+| 方法                           | 来源     | 行数 |
+| ------------------------------ | -------- | ---- |
+| `retrieve_and_inject_memories` | loop_.rs | 76   |
+| `init_memory_store`            | loop_.rs | 3    |
+| `write_document_entries`       | loop_.rs | 19   |
 
 ### 拆分后的 `loop_.rs` 骨架
 
@@ -255,80 +255,80 @@ impl AgentLoop {
 
 ### Phase 1: loop_context.rs
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
-| `loop_context.rs` | **新增** | 8 个方法 + 5 个从 execute_single_iteration 提取的子方法 |
-| `loop_.rs` | **大改** | 删除 8 个方法 + 将 execute_single_iteration 中 5 个内联块替换为方法调用 |
-| `agent/mod.rs` | 小改 | 新增 `mod loop_context` |
+| 文件              | 变更     | 说明                                                                    |
+| ----------------- | -------- | ----------------------------------------------------------------------- |
+| `loop_context.rs` | **新增** | 8 个方法 + 5 个从 execute_single_iteration 提取的子方法                 |
+| `loop_.rs`        | **大改** | 删除 8 个方法 + 将 execute_single_iteration 中 5 个内联块替换为方法调用 |
+| `agent/mod.rs`    | 小改     | 新增 `mod loop_context`                                                 |
 
 ### Phase 2: loop_approval.rs
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
+| 文件               | 变更     | 说明                                           |
+| ------------------ | -------- | ---------------------------------------------- |
 | `loop_approval.rs` | **新增** | ApprovalHandle + 4 个方法 + InboundWaiter 去重 |
-| `loop_.rs` | **大改** | 删除 6 个审批相关方法，替换为子模块调用 |
-| `loop_tools.rs` | 小改 | 导入路径调整（ApprovalHandle 来源） |
-| `agent/mod.rs` | 小改 | 新增 `mod loop_approval` |
+| `loop_.rs`         | **大改** | 删除 6 个审批相关方法，替换为子模块调用        |
+| `loop_tools.rs`    | 小改     | 导入路径调整（ApprovalHandle 来源）            |
+| `agent/mod.rs`     | 小改     | 新增 `mod loop_approval`                       |
 
 ### Phase 3: loop_inbound.rs
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
-| `loop_inbound.rs` | **新增** | 3 个方法 + inject_inbound_into_history 辅助函数 |
-| `loop_.rs` | **中改** | 删除 3 个方法，run_inner 中消息注入替换为辅助函数 |
-| `agent/mod.rs` | 小改 | 新增 `mod loop_inbound` |
+| 文件              | 变更     | 说明                                              |
+| ----------------- | -------- | ------------------------------------------------- |
+| `loop_inbound.rs` | **新增** | 3 个方法 + inject_inbound_into_history 辅助函数   |
+| `loop_.rs`        | **中改** | 删除 3 个方法，run_inner 中消息注入替换为辅助函数 |
+| `agent/mod.rs`    | 小改     | 新增 `mod loop_inbound`                           |
 
 ### Phase 4: loop_interaction.rs
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
+| 文件                  | 变更     | 说明                                                              |
+| --------------------- | -------- | ----------------------------------------------------------------- |
 | `loop_interaction.rs` | **新增** | 2 个方法（await_question_answer 已在 Phase 2 迁入 InboundWaiter） |
-| `loop_.rs` | **中改** | 删除 2 个交互方法，tool dispatch 中的拦截逻辑提取 |
-| `agent/mod.rs` | 小改 | 新增 `mod loop_interaction` |
+| `loop_.rs`            | **中改** | 删除 2 个交互方法，tool dispatch 中的拦截逻辑提取                 |
+| `agent/mod.rs`        | 小改     | 新增 `mod loop_interaction`                                       |
 
 ### Phase 5: loop_session.rs
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
+| 文件              | 变更     | 说明                             |
+| ----------------- | -------- | -------------------------------- |
 | `loop_session.rs` | **新增** | 构造器 + 生命周期方法 + 自由函数 |
-| `loop_.rs` | **中改** | 删除构造器和生命周期方法 |
-| `agent/mod.rs` | 小改 | 新增 `mod loop_session` |
+| `loop_.rs`        | **中改** | 删除构造器和生命周期方法         |
+| `agent/mod.rs`    | 小改     | 新增 `mod loop_session`          |
 
 ### Phase 6: loop_memory.rs
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
-| `loop_memory.rs` | **新增** | 3 个记忆方法 |
-| `loop_.rs` | **小改** | 删除 3 个记忆方法 |
-| `agent/mod.rs` | 小改 | 新增 `mod loop_memory` |
+| 文件             | 变更     | 说明                   |
+| ---------------- | -------- | ---------------------- |
+| `loop_memory.rs` | **新增** | 3 个记忆方法           |
+| `loop_.rs`       | **小改** | 删除 3 个记忆方法      |
+| `agent/mod.rs`   | 小改     | 新增 `mod loop_memory` |
 
 ### Phase 7: 去重 + 核心提取（execute_single_iteration 骨架化 Part 1）
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
+| 文件              | 变更     | 说明                                                                   |
+| ----------------- | -------- | ---------------------------------------------------------------------- |
 | `loop_session.rs` | **中改** | +`persist_think_to_conversation()` (D2 去重) +`handle_text_response()` |
-| `loop_inbound.rs` | **中改** | +`handle_stopped()` (D3 去重) |
-| `loop_.rs` | **大改** | +`await_debug_resume()`；替换 text response / stopped 内联代码 |
+| `loop_inbound.rs` | **中改** | +`handle_stopped()` (D3 去重)                                          |
+| `loop_.rs`        | **大改** | +`await_debug_resume()`；替换 text response / stopped 内联代码         |
 
 ### Phase 8: Tool Pipeline 提取（execute_single_iteration 骨架化 Part 2）
 
-| 文件 | 变更 | 说明 |
-|------|------|------|
+| 文件            | 变更     | 说明                                                                                                                                                  |
+| --------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loop_tools.rs` | **大改** | +`prepare_tool_calls()` +`pre_check_loop_detection()` +`dispatch_and_merge_tools()` +`persist_and_emit_tool_results()` +`post_check_loop_detection()` |
-| `loop_.rs` | **大改** | 替换 5 段内联工具 pipeline 代码为子方法调用 |
+| `loop_.rs`      | **大改** | 替换 5 段内联工具 pipeline 代码为子方法调用                                                                                                           |
 
 ---
 
 ## 重构后预期效果
 
-| 指标 | 重构前 | 重构后（实际） |
-|------|--------|--------|
-| `loop_.rs` 总行数 | 3908 | 2024 |
-| `loop_.rs` 生产代码 | 2635 | ~1300（含测试） |
-| `execute_single_iteration` | 742 行 | 106 行 |
-| 文件数 | 3（loop_ + loop_llm + loop_tools） | 9（+6 新模块） |
-| 代码重复 | 5 处 / ~192 行 | D1+D2+D3+D5 已消除（~142 行），D4 暂缓（见 Risk 4） |
-| 最大单方法 | 742 行 | ~171 行（compact_history_if_needed） |
+| 指标                       | 重构前                             | 重构后（实际）                                      |
+| -------------------------- | ---------------------------------- | --------------------------------------------------- |
+| `loop_.rs` 总行数          | 3908                               | 2024                                                |
+| `loop_.rs` 生产代码        | 2635                               | ~1300（含测试）                                     |
+| `execute_single_iteration` | 742 行                             | 106 行                                              |
+| 文件数                     | 3（loop_ + loop_llm + loop_tools） | 9（+6 新模块）                                      |
+| 代码重复                   | 5 处 / ~192 行                     | D1+D2+D3+D5 已消除（~142 行），D4 暂缓（见 Risk 4） |
+| 最大单方法                 | 742 行                             | ~171 行（compact_history_if_needed）                |
 
 ### 各模块行数预估
 
@@ -403,24 +403,24 @@ loop_memory.rs      ~100  (记忆系统)
 
 ### 变得更好的
 
-| 维度 | 改善 |
-|------|------|
-| **可维护性** | 修改上下文逻辑只需理解 `loop_context.rs`（~310 行），不需要阅读 3908 行 |
-| **可测试性** | 每个模块可以有独立的 `mod tests`，测试更聚焦 |
-| **代码重复** | 5 处 / ~192 行重复 → 0 处 |
-| **认知负载** | 新人理解 AgentLoop 的核心编排路径只需阅读 ~400 行 |
-| **God Method** | `execute_single_iteration` 从 742 行 → ~80 行，每个子步骤有明确名称 |
-| **Review 效率** | PR 改动集中在单个模块，reviewer 不需要理解无关关注点 |
+| 维度            | 改善                                                                    |
+| --------------- | ----------------------------------------------------------------------- |
+| **可维护性**    | 修改上下文逻辑只需理解 `loop_context.rs`（~310 行），不需要阅读 3908 行 |
+| **可测试性**    | 每个模块可以有独立的 `mod tests`，测试更聚焦                            |
+| **代码重复**    | 5 处 / ~192 行重复 → 0 处                                               |
+| **认知负载**    | 新人理解 AgentLoop 的核心编排路径只需阅读 ~400 行                       |
+| **God Method**  | `execute_single_iteration` 从 742 行 → ~80 行，每个子步骤有明确名称     |
+| **Review 效率** | PR 改动集中在单个模块，reviewer 不需要理解无关关注点                    |
 
 ### 变得更差的（代价）
 
-| 维度 | 代价 |
-|------|------|
-| **文件数增多** | 3 → 9 个文件，需要记住方法在哪个文件中 |
-| **方法签名暴露** | 部分方法需要从 `private` 提升为 `pub(crate)` 以供跨文件调用 |
-| **编译隔离弱** | `impl AgentLoop` 分文件没有编译期强制边界，依赖约定 |
-| **Git blame 历史** | 方法移动后 `git blame` 需要跟随文件重命名 |
-| **过渡期** | 6 个 Phase 的过渡期中，部分方法可能已移动但调用方仍在旧文件 |
+| 维度               | 代价                                                        |
+| ------------------ | ----------------------------------------------------------- |
+| **文件数增多**     | 3 → 9 个文件，需要记住方法在哪个文件中                      |
+| **方法签名暴露**   | 部分方法需要从 `private` 提升为 `pub(crate)` 以供跨文件调用 |
+| **编译隔离弱**     | `impl AgentLoop` 分文件没有编译期强制边界，依赖约定         |
+| **Git blame 历史** | 方法移动后 `git blame` 需要跟随文件重命名                   |
+| **过渡期**         | 6 个 Phase 的过渡期中，部分方法可能已移动但调用方仍在旧文件 |
 
 ### 不变的
 
@@ -496,7 +496,7 @@ impl LoopContext<'_> {
 
 ## 参考
 
-- 当前代码：`core/rollball-runtime/src/agent/loop_.rs`（3908 行）
+- 当前代码：`core/acowork-runtime/src/agent/loop_.rs`（3908 行）
 - 已有拆分先例：`loop_llm.rs`（405 行）、`loop_tools.rs`（572 行）
 - 前序 ADR：ADR-013（Debug Observer Pipeline）
 - 灵感来源：Martin Fowler《Refactoring》"Extract Method" + "Decompose Conditional"

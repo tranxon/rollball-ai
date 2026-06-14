@@ -1,6 +1,6 @@
 # AGENTS.md — docs/
 
-Architecture design documents for RollBall.AI platform (v3.x).
+Architecture design documents for AgentCowork.AI platform (v3.x).
 
 ## OVERVIEW
 
@@ -66,15 +66,15 @@ docs/
 
 ## WHERE TO LOOK
 
-| Need | File |
-|------|------|
-| Platform overview | `design/zh/01-overview.md` |
-| .agent package format | `design/zh/02-agent-package.md` |
-| Rust crate structure | `module-design/zh/00-overview.md` |
-| Security/isolation | `design/zh/08-security.md` |
-| Gateway components | `module-design/zh/03-gateway.md` |
-| Memory (Grafeo) | `module-design/zh/04-grafeo.md` |
-| Implementation roadmap | `plan/zh/plan-overview.md` |
+| Need                   | File                              |
+| ---------------------- | --------------------------------- |
+| Platform overview      | `design/zh/01-overview.md`        |
+| .agent package format  | `design/zh/02-agent-package.md`   |
+| Rust crate structure   | `module-design/zh/00-overview.md` |
+| Security/isolation     | `design/zh/08-security.md`        |
+| Gateway components     | `module-design/zh/03-gateway.md`  |
+| Memory (Grafeo)        | `module-design/zh/04-grafeo.md`   |
+| Implementation roadmap | `plan/zh/plan-overview.md`        |
 
 ## CONVENTIONS (THIS DIR)
 
@@ -82,4 +82,4 @@ docs/
 - **English docs**: Created for reference materials and ADRs originally in English; new English translations follow at project completion
 - **File naming**: Same filename across zh/en for correspondence
 - Version v3.x only — no v2.x terminology
-- Rust workspace: 7 crates under `core/rollball-*`
+- Rust workspace: 7 crates under `core/acowork-*`

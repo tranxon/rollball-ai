@@ -4,7 +4,7 @@
 // without any manual env-var setup on any platform.
 //
 // Usage: node dev/ort_env.js <command...>
-// Example: node dev/ort_env.js cargo build --manifest-path core/Cargo.toml -p rollball-embed
+// Example: node dev/ort_env.js cargo build --manifest-path core/Cargo.toml -p acowork-embed
 
 const { spawn } = require("child_process");
 const fs = require("fs");

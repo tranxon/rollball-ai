@@ -17,18 +17,18 @@
 
 ### 1.2 日志时间线
 
-| 时间 | 事件 | 请求大小 | 历史token |
-|------|------|---------|----------|
-| 09:43:46 | Runtime 启动，连接 Gateway | - | - |
-| 09:45:07 | 用户发送第一条消息 | - | 71 |
-| 09:45:24 | 第 2 次 LLM 请求 | - | 2,976 |
-| ... | 持续 tool 调用循环 | 递增 | 递增 |
-| 09:48:53 | 第 43 次迭代 | 251,174 bytes | 54,831 |
-| 09:49:11 | 第 50 次迭代 | 266,375 bytes | 58,179 |
-| 09:50:17 | 第 61 次迭代 | 282,579 bytes | 61,632 |
-| **09:50:26** | **最后一次请求发出** | **283,364 bytes** | **61,732** |
-| 09:50:26→09:52:26 | **2 分钟静默期（无任何日志）** | - | - |
-| **09:52:26** | **❌ SessionTask agent loop error** | - | - |
+| 时间              | 事件                               | 请求大小          | 历史token  |
+| ----------------- | ---------------------------------- | ----------------- | ---------- |
+| 09:43:46          | Runtime 启动，连接 Gateway         | -                 | -          |
+| 09:45:07          | 用户发送第一条消息                 | -                 | 71         |
+| 09:45:24          | 第 2 次 LLM 请求                   | -                 | 2,976      |
+| ...               | 持续 tool 调用循环                 | 递增              | 递增       |
+| 09:48:53          | 第 43 次迭代                       | 251,174 bytes     | 54,831     |
+| 09:49:11          | 第 50 次迭代                       | 266,375 bytes     | 58,179     |
+| 09:50:17          | 第 61 次迭代                       | 282,579 bytes     | 61,632     |
+| **09:50:26**      | **最后一次请求发出**               | **283,364 bytes** | **61,732** |
+| 09:50:26→09:52:26 | **2 分钟静默期（无任何日志）**     | -                 | -          |
+| **09:52:26**      | **❌ SessionTask agent loop error** | -                 | -          |
 
 ### 1.3 根因分析
 
@@ -60,18 +60,18 @@
 
 ### 1.5 相关源码位置
 
-| 文件 | 行号 | 问题 |
-|------|------|------|
-| `rollball-runtime/src/providers/anthropic.rs` | 38-39 | HTTP 超时仅全局 120s，无 per-chunk read timeout |
-| `rollball-runtime/src/providers/anthropic.rs` | 546-553 | 流错误直接 return，无重试 |
-| `rollball-runtime/src/agent/loop_.rs` | - | AgentLoop 对 Provider error 无重试逻辑 |
-| `rollball-runtime/src/agent/session/session_task.rs` | 363-381 | SessionTask 收到 error 直接发 ChunkEvent::Error 终止 |
+| 文件                                                 | 行号    | 问题                                                 |
+| ---------------------------------------------------- | ------- | ---------------------------------------------------- |
+| `acowork-runtime/src/providers/anthropic.rs`        | 38-39   | HTTP 超时仅全局 120s，无 per-chunk read timeout      |
+| `acowork-runtime/src/providers/anthropic.rs`        | 546-553 | 流错误直接 return，无重试                            |
+| `acowork-runtime/src/agent/loop_.rs`                | -       | AgentLoop 对 Provider error 无重试逻辑               |
+| `acowork-runtime/src/agent/session/session_task.rs` | 363-381 | SessionTask 收到 error 直接发 ChunkEvent::Error 终止 |
 
 ---
 
 ## 2. 主流编程 Agent 竞品调研
 
-### 2.1 ZeroClaw（RollBall 的参考实现）
+### 2.1 ZeroClaw（AgentCowork 的参考实现）
 
 **三层重试架构** (`ReliableProvider`，`zeroclaw/src/providers/reliable.rs`)：
 
@@ -92,13 +92,13 @@ tokio::time::sleep(Duration::from_millis(wait)).await;
 
 **错误分类**（5 类，决定是否重试）：
 
-| 类别 | 判断函数 | 是否可重试 | 典型模式 |
-|------|---------|-----------|---------|
-| 认证失败 | `is_non_retryable()` | ❌ | `invalid api key`, `unauthorized`, `forbidden` |
-| 模型不存在 | `is_non_retryable()` | ❌ | `model not found`, `invalid model` |
-| 业务级限流 | `is_non_retryable_rate_limit()` | ❌ | `insufficient balance`, 业务码 1113/1311 |
-| 上下文溢出 | `is_context_window_exceeded()` | ✅（裁剪后） | `exceeds the context window`, `too many tokens` |
-| 临时错误 | 默认 | ✅ | 5xx, 429, timeout, connection reset |
+| 类别       | 判断函数                        | 是否可重试  | 典型模式                                        |
+| ---------- | ------------------------------- | ----------- | ----------------------------------------------- |
+| 认证失败   | `is_non_retryable()`            | ❌           | `invalid api key`, `unauthorized`, `forbidden`  |
+| 模型不存在 | `is_non_retryable()`            | ❌           | `model not found`, `invalid model`              |
+| 业务级限流 | `is_non_retryable_rate_limit()` | ❌           | `insufficient balance`, 业务码 1113/1311        |
+| 上下文溢出 | `is_context_window_exceeded()`  | ✅（裁剪后） | `exceeds the context window`, `too many tokens` |
+| 临时错误   | 默认                            | ✅           | 5xx, 429, timeout, connection reset             |
 
 **上下文溢出自动恢复**：
 
@@ -176,10 +176,10 @@ parseStreamError(input) →
 
 **无限重试 + 23 种异常分类表**：
 
-| 配置项 | 值 |
-|--------|-----|
-| 初始退避 | 0.125s |
-| 退避因子 | 2x |
+| 配置项       | 值         |
+| ------------ | ---------- |
+| 初始退避     | 0.125s     |
+| 退避因子     | 2x         |
 | 最大重试次数 | **无限制** |
 
 Aider 的哲学是"**永远不要因为临时错误停止**"。对于 5xx / 429 / 网络错误会无限重试，只有认证失败和上下文溢出才停止。23 种异常类型每种都明确标记 `retry` / `no_retry` / `drop_content`。
@@ -198,7 +198,7 @@ Level 4: 激进裁剪（仅保留 system + 最近 N 轮）
 Level 5: 新建 session（完全重新开始）
 ```
 
-**已知不足**：Provider 层面 **没有重试逻辑**，流式中断会直接停止。与 RollBall 当前行为相同。
+**已知不足**：Provider 层面 **没有重试逻辑**，流式中断会直接停止。与 AgentCowork 当前行为相同。
 
 ---
 
@@ -211,18 +211,18 @@ Level 5: 新建 session（完全重新开始）
 
 ### 2.6 核心差异对比
 
-| 能力 | ZeroClaw | OpenCode | Aider | Claude Code | Cline | **RollBall (当前)** |
-|------|----------|----------|-------|-------------|-------|---------------------|
-| Provider 重试 | ✅ 三层 | ✅ Effect Schedule | ✅ 无限 | ❌ 无 | ⚠️ 仅 429 | ❌ 无 |
-| 指数退避 | ✅ 2x cap 10s | ✅ 2x cap 30s | ✅ 2x 从 0.125s | ❌ | ⚠️ 固定 | ❌ 无 |
-| Retry-After 支持 | ✅ cap 30s | ✅ | ❌ | ❌ | ❌ | ❌ 无 |
-| 错误分类 | ✅ 5 类 | ✅ 15+ 模式 | ✅ 23 种 | ❌ 二元 | ⚠️ 仅 429 | ❌ 无 |
-| 模型降级 | ✅ fallback chain | ❌ | ❌ | ❌ | ❌ | ❌ 无 |
-| 上下文压缩 | ✅ 三阶段 | ✅ 结构化摘要 | ⚠️ 简单裁剪 | ✅ 五级 | ❌ | ✅ preemptive trim |
-| 上下文溢出重试 | ✅ 自动裁剪+重试 | ❌ 直接报错 | ❌ | ⚠️ 手动 | ❌ | ❌ 无 |
-| Tool Schema 降级 | ✅ prompt 引导 | ❌ | ❌ | ❌ | ❌ | ❌ 无 |
-| Read Timeout | ⚠️ 120s 全局 | ⚠️ race timeout | ❌ | ❌ | ❌ 致命缺陷 | ⚠️ 120s 全局 |
-| 流式静默检测 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 能力             | ZeroClaw         | OpenCode          | Aider          | Claude Code | Cline      | **AgentCowork (当前)** |
+| ---------------- | ---------------- | ----------------- | -------------- | ----------- | ---------- | ---------------------- |
+| Provider 重试    | ✅ 三层           | ✅ Effect Schedule | ✅ 无限         | ❌ 无        | ⚠️ 仅 429   | ❌ 无                   |
+| 指数退避         | ✅ 2x cap 10s     | ✅ 2x cap 30s      | ✅ 2x 从 0.125s | ❌           | ⚠️ 固定     | ❌ 无                   |
+| Retry-After 支持 | ✅ cap 30s        | ✅                 | ❌              | ❌           | ❌          | ❌ 无                   |
+| 错误分类         | ✅ 5 类           | ✅ 15+ 模式        | ✅ 23 种        | ❌ 二元      | ⚠️ 仅 429   | ❌ 无                   |
+| 模型降级         | ✅ fallback chain | ❌                 | ❌              | ❌           | ❌          | ❌ 无                   |
+| 上下文压缩       | ✅ 三阶段         | ✅ 结构化摘要      | ⚠️ 简单裁剪     | ✅ 五级      | ❌          | ✅ preemptive trim      |
+| 上下文溢出重试   | ✅ 自动裁剪+重试  | ❌ 直接报错        | ❌              | ⚠️ 手动      | ❌          | ❌ 无                   |
+| Tool Schema 降级 | ✅ prompt 引导    | ❌                 | ❌              | ❌           | ❌          | ❌ 无                   |
+| Read Timeout     | ⚠️ 120s 全局      | ⚠️ race timeout    | ❌              | ❌           | ❌ 致命缺陷 | ⚠️ 120s 全局            |
+| 流式静默检测     | ❌                | ❌                 | ❌              | ❌           | ❌          | ❌                      |
 
 > 💡 **"流式静默检测"**——即 SSE 流已建立但长时间无数据返回——是**所有 Agent 的共同盲区**。没有任何一家实现了 read-timeout-based 的静默检测。
 
@@ -232,18 +232,18 @@ Level 5: 新建 session（完全重新开始）
 
 ### 3.1 优先级排序
 
-| 优先级 | 方案 | 工作量 | 影响 |
-|--------|------|--------|------|
-| **P0** | Provider 层流式重试 | 1-2 天 | 直接解决本次故障 |
-| **P0** | 增加 per-chunk read timeout | 0.5 天 | 防止 2 分钟干等 |
-| **P1** | 请求体积告警/熔断 | 1 天 | 主动预防大请求 |
-| **P1** | AgentLoop 级别有限重试 | 1 天 | 兜底恢复 |
-| **P2** | ReliableProvider 三层重试架构 | 3-5 天 | 长期架构升级 |
-| **P2** | 流式静默检测 | 1 天 | 行业首创 |
+| 优先级 | 方案                          | 工作量 | 影响             |
+| ------ | ----------------------------- | ------ | ---------------- |
+| **P0** | Provider 层流式重试           | 1-2 天 | 直接解决本次故障 |
+| **P0** | 增加 per-chunk read timeout   | 0.5 天 | 防止 2 分钟干等  |
+| **P1** | 请求体积告警/熔断             | 1 天   | 主动预防大请求   |
+| **P1** | AgentLoop 级别有限重试        | 1 天   | 兜底恢复         |
+| **P2** | ReliableProvider 三层重试架构 | 3-5 天 | 长期架构升级     |
+| **P2** | 流式静默检测                  | 1 天   | 行业首创         |
 
 ### 3.2 P0 方案一：Provider 层流式重试
 
-**改动位置**：`rollball-runtime/src/providers/anthropic.rs`
+**改动位置**：`acowork-runtime/src/providers/anthropic.rs`
 
 **设计**：在 `chat_stream` 外包装 `chat_stream_with_retry`，对可重试的流式错误自动重发请求。
 
@@ -300,7 +300,7 @@ pub async fn chat_stream_with_retry(
 
 ### 3.3 P0 方案二：增加 Per-Chunk Read Timeout
 
-**改动位置**：`rollball-runtime/src/providers/anthropic.rs` 的 SSE 解析循环
+**改动位置**：`acowork-runtime/src/providers/anthropic.rs` 的 SSE 解析循环
 
 **设计**：在每次 `chunk.next()` 调用外包装 `tokio::time::timeout`，避免在服务端挂起时干等 2 分钟。
 
@@ -331,7 +331,7 @@ loop {
 
 ### 3.4 P1 方案：请求体积告警/熔断
 
-**改动位置**：`rollball-runtime/src/agent/loop_.rs`
+**改动位置**：`acowork-runtime/src/agent/loop_.rs`
 
 **设计**：在每次发送 LLM 请求前检查 request_len，超过阈值时触发更激进的上下文压缩。
 
@@ -362,7 +362,7 @@ fn check_request_budget(request_len: usize, history_tokens: u64) -> LoopControl 
 
 ### 3.5 P1 方案：AgentLoop 级别有限重试
 
-**改动位置**：`rollball-runtime/src/agent/loop_.rs`
+**改动位置**：`acowork-runtime/src/agent/loop_.rs`
 
 **设计**：在 AgentLoop 的 `run()` 方法中，对 Provider error 做有限次重试，而非直接终止。
 
@@ -408,26 +408,26 @@ pub struct ReliableProvider {
 
 ### 3.7 P2 方案：流式静默检测（行业首创）
 
-这是目前所有编程 Agent 都未解决的问题。RollBall 可以率先实现：
+这是目前所有编程 Agent 都未解决的问题。AgentCowork 可以率先实现：
 
 在 SSE 解析循环中加入 per-chunk read timeout（即 P0 方案二），当连续 N 秒无新数据到达时，主动判定为流式静默并触发重试。这比等待全局 HTTP timeout 快得多（45s vs 120s），能显著改善用户体验。
 
 ---
 
-## 4. 附录：RollBall 当前代码中的相关防御机制
+## 4. 附录：AgentCowork 当前代码中的相关防御机制
 
-RollBall Runtime 已有部分防御机制，但在此次故障中未能覆盖：
+AgentCowork Runtime 已有部分防御机制，但在此次故障中未能覆盖：
 
-| 机制 | 位置 | 状态 | 说明 |
-|------|------|------|------|
-| Preemptive trim | `agent/context.rs` | ✅ 生效 | 在历史 token 超过阈值时主动裁剪 |
-| Token budget 计算 | `agent/context.rs` | ✅ 生效 | 基于 context_window 计算 max_output_tokens |
-| History truncation | `agent/history.rs` | ✅ 生效 | FIFO 式历史裁剪 |
-| Episode distillation | `agent/loop_.rs` | ⚠️ 非致命失败 | session 级 distillation 失败（os error 2），但不影响主流程 |
-| Provider retry | `providers/anthropic.rs` | ❌ 缺失 | 流式错误直接终止，无重试 |
-| Read timeout | `providers/anthropic.rs` | ❌ 缺失 | 仅全局 120s timeout |
-| Error classification | - | ❌ 缺失 | 无可重试/不可重试区分 |
-| Stream silence detection | - | ❌ 缺失 | 无 per-chunk read timeout |
+| 机制                     | 位置                     | 状态         | 说明                                                       |
+| ------------------------ | ------------------------ | ------------ | ---------------------------------------------------------- |
+| Preemptive trim          | `agent/context.rs`       | ✅ 生效       | 在历史 token 超过阈值时主动裁剪                            |
+| Token budget 计算        | `agent/context.rs`       | ✅ 生效       | 基于 context_window 计算 max_output_tokens                 |
+| History truncation       | `agent/history.rs`       | ✅ 生效       | FIFO 式历史裁剪                                            |
+| Episode distillation     | `agent/loop_.rs`         | ⚠️ 非致命失败 | session 级 distillation 失败（os error 2），但不影响主流程 |
+| Provider retry           | `providers/anthropic.rs` | ❌ 缺失       | 流式错误直接终止，无重试                                   |
+| Read timeout             | `providers/anthropic.rs` | ❌ 缺失       | 仅全局 120s timeout                                        |
+| Error classification     | -                        | ❌ 缺失       | 无可重试/不可重试区分                                      |
+| Stream silence detection | -                        | ❌ 缺失       | 无 per-chunk read timeout                                  |
 
 ---
 

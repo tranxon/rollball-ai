@@ -1,7 +1,7 @@
 # 上下文压缩简化（ADR-010）代码审查报告
 
 **审查日期**：2026-05-28  
-**范围**：15 个文件的 git diff（`core/rollball-runtime` + `docs/`）  
+**范围**：15 个文件的 git diff（`core/acowork-runtime` + `docs/`）  
 **核心依据**：[ADR-010](../../adr/zh/ADR-010-context-compression-simplification.md)、[19-context-compression-review.md](./19-context-compression-review.md)
 
 ---

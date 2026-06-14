@@ -1,13 +1,13 @@
 # Senior Software Engineer Agent
 # A multi-skilled senior engineer for code review, architecture, debugging, refactoring, testing, and documentation.
 
-agent_id = "com.rollball.senior-engineer"
+agent_id = "com.acowork.senior-engineer"
 version = "1.0.0"
 name = "SSE"
 display_name = "SSE"
 role = "Senior Software Engineer"
 description = "An experienced senior software engineer capable of code review, architecture design, debugging, refactoring, testing, and documentation."
-author = "RollBall Team"
+author = "AgentCowork Team"
 runtime_version = "0.1.0"
 system = false
 dev = false

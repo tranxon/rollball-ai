@@ -1,11 +1,11 @@
-# rollball-vault + rollball-sign
+# acowork-vault + acowork-sign
 
-## rollball-vault — 密钥加密存储
+## acowork-vault — 密钥加密存储
 
 **定位**：集中管理 LLM API Key，加密存储，一次性分发。
 
 ```
-crates/rollball-vault/
+crates/acowork-vault/
 ├── Cargo.toml
 └── src/
     ├── lib.rs
@@ -125,12 +125,12 @@ impl Vault {
 
 ---
 
-## rollball-sign — .agent 包签名/验签
+## acowork-sign — .agent 包签名/验签
 
-**定位**：独立的签名工具链，提供 `rollball-keygen`、`rollball-sign`、`rollball-verify` 三个命令。
+**定位**：独立的签名工具链，提供 `acowork-keygen`、`acowork-sign`、`acowork-verify` 三个命令。
 
 ```
-crates/rollball-sign/
+crates/acowork-sign/
 ├── Cargo.toml
 └── src/
     ├── lib.rs

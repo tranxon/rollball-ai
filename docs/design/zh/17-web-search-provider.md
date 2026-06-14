@@ -12,7 +12,7 @@
 
 ### 1.1 当前问题
 
-- [web_search.rs](file:///d:/projects/rust/agent-study/core/rollball-runtime/src/tools/builtin/web_search.rs) 硬编码 DuckDuckGo HTML 爬虫
+- [web_search.rs](file:///d:/projects/rust/agent-study/core/acowork-runtime/src/tools/builtin/web_search.rs) 硬编码 DuckDuckGo HTML 爬虫
 - DDG 频繁限流，搜索成功率极低
 - 无备选方案，工具形同虚设
 - API Key 管理缺失（web_search 无需 key 是因为 DDG 不需要，但主流供应商都需要）
@@ -189,7 +189,7 @@ pub trait SearchBackend: Send + Sync {
 │ List         │ .json (Gateway)  │          │ + 热更新 push          │
 │              │ (versioned)      │          │                        │
 ├──────────────┼─────────────────┼──────────┼────────────────────────┤
-│ Key Vault    │ rollball-vault   │  ❌ 否   │ AgentHello 始终全量     │
+│ Key Vault    │ acowork-vault   │  ❌ 否   │ AgentHello 始终全量     │
 │              │ (加密存储)       │          │ + 热更新 push          │
 ├──────────────┼─────────────────┼──────────┼────────────────────────┤
 │ Per-Agent    │ agent workspace  │  ❌ 否   │ Runtime 自己管理        │
@@ -286,7 +286,7 @@ Desktop App          Gateway                            Runtime
   │ ──────────────────▶│                                    │
   │  (tavily, api_key) │                                    │
   │                    │ ① VaultFacade.store_search_key()   │
-  │                    │    加密保存到 rollball-vault        │
+  │                    │    加密保存到 acowork-vault        │
   │                    │                                    │
   │                    │ ② resource_cache::                 │
   │                    │    rebuild_and_save_search_cache()  │
@@ -566,7 +566,7 @@ impl VaultFacade {
 
 ### 5.3 安全性
 
-- API Key 通过 Argon2id + ChaCha20-Poly1305 加密存储（复用 rollball-vault）
+- API Key 通过 Argon2id + ChaCha20-Poly1305 加密存储（复用 acowork-vault）
 - 分发后 Runtime 仅内存持有，使用后不落盘
 - 传输通过 gRPC（本地连接，不出机器）
 - 前端仅显示 masked preview（前3+后3字符）
@@ -1087,7 +1087,7 @@ Harness / Search Tab                    Agent Setup / Search Block
 
 ## 9. 协议变更清单
 
-### 9.1 rollball-core/protocol.rs
+### 9.1 acowork-core/protocol.rs
 
 ```rust
 // ── 新增数据结构 ──
@@ -1164,7 +1164,7 @@ GatewayResponse::SearchConfigDelivery {
 }
 ```
 
-### 9.2 rollball-gateway/src/resource_cache.rs 新增
+### 9.2 acowork-gateway/src/resource_cache.rs 新增
 
 ```rust
 /// Versioned search provider list persisted to disk.
@@ -1298,7 +1298,7 @@ message ServerMessage {
 ### 9.4 Gateway handle_agent_hello 新增逻辑
 
 ```rust
-// rollball-gateway/src/ipc/server.rs
+// acowork-gateway/src/ipc/server.rs
 
 pub async fn handle_agent_hello(
     agent_id: &str,
@@ -1384,33 +1384,33 @@ fallback_providers = ["brave"]
 
 | 任务 | 产出 | 预估 |
 |------|------|------|
-| P1.1 | `SearchProviderConfig` / `SearchKeyEntry` / `SearchProviderListItem` 数据结构定义 | `rollball-core/src/protocol.rs` |
-| P1.2 | `SearchBackend` trait + Tavily / Brave / Firecrawl / SearXNG 实现 | `rollball-runtime/src/tools/builtin/web_search/` |
-| P1.3 | VaultFacade 新增 `store_search_key` / `get_search_provider` / `list_search_providers` / `remove_search_key` | `rollball-gateway/src/vault/mod.rs` |
-| P1.4 | ResourceCache 新增 `SearchListFile` + `rebuild_and_save_search_cache()` + load/save 函数 | `rollball-gateway/src/resource_cache.rs` |
-| P1.5 | Gateway 启动时 `rebuild_and_save_search_cache()` 初始化 search_list.json | `rollball-gateway/src/gateway/mod.rs` |
-| P1.6 | Gateway HTTP API 新增 `POST/DELETE /api/search/keys` 端点 (add → 触发 rebuild_cache) | `rollball-gateway/src/http/search_api.rs` |
-| P1.7 | Tauri Command 新增 `list_search_keys` / `add_search_key` / `remove_search_key` / `update_search_key` | `apps/rollball-desktop/src-tauri/src/commands/` |
-| P1.8 | GatewayRequest::AgentHello 新增 `search_list_version` 字段 | `rollball-core/src/protocol.rs` |
-| P1.9 | GatewayResponse::AgentHelloResult 新增 `search_list` / `search_list_version` / `search_key_vault` | `rollball-core/src/protocol.rs` |
-| P1.10 | `handle_agent_hello` 新增 search_list 差量同步逻辑 | `rollball-gateway/src/ipc/server.rs` |
-| P1.11 | GatewayResponse 新增 `SearchConfigDelivery` 变体 | `rollball-core/src/protocol.rs` |
-| P1.12 | gRPC proto 更新: AgentHello + AgentHelloResult + SearchConfigDelivery + ServerMessage | `rollball-core/proto/gateway_ipc.proto` |
-| P1.13 | Proto bridge 更新: AgentHello / AgentHelloResult / SearchConfigDelivery 的序列化 | `rollball-core/src/proto_bridge.rs` |
-| P1.14 | Gateway gRPC dispatch 新增 `SearchConfigDelivery` 推送 | `rollball-gateway/src/grpc/dispatch.rs` |
-| P1.15 | Runtime `send_agent_hello` 新增 `cached_search_version` 参数 | `rollball-runtime/src/grpc/client.rs` |
-| P1.16 | `WebSearchTool` 重构，移除 DuckDuckGo，接入 SearchBackend fallback 链 | `rollball-runtime/src/tools/builtin/web_search.rs` |
-| P1.17 | Agent workspace `agent_search.json` 读写（per-agent search provider 优先级列表） | `rollball-runtime/src/agent_config.rs` (扩展) |
-| P1.18 | Runtime 侧 `resource_cache.json` 读写 (search_list_version 版本号持久化) | `rollball-runtime/src/agent_config.rs` (扩展) |
-| P1.19 | SessionManager 新增 `update_search_config()` + `CachedSearchConfig` | `rollball-runtime/src/agent/session/` |
-| P1.20 | Gateway 热推送: vault_api 修改 Search Key 后调用 `rebuild_search_cache()` + `push_search_config()` | `rollball-gateway/src/http/search_api.rs` |
+| P1.1 | `SearchProviderConfig` / `SearchKeyEntry` / `SearchProviderListItem` 数据结构定义 | `acowork-core/src/protocol.rs` |
+| P1.2 | `SearchBackend` trait + Tavily / Brave / Firecrawl / SearXNG 实现 | `acowork-runtime/src/tools/builtin/web_search/` |
+| P1.3 | VaultFacade 新增 `store_search_key` / `get_search_provider` / `list_search_providers` / `remove_search_key` | `acowork-gateway/src/vault/mod.rs` |
+| P1.4 | ResourceCache 新增 `SearchListFile` + `rebuild_and_save_search_cache()` + load/save 函数 | `acowork-gateway/src/resource_cache.rs` |
+| P1.5 | Gateway 启动时 `rebuild_and_save_search_cache()` 初始化 search_list.json | `acowork-gateway/src/gateway/mod.rs` |
+| P1.6 | Gateway HTTP API 新增 `POST/DELETE /api/search/keys` 端点 (add → 触发 rebuild_cache) | `acowork-gateway/src/http/search_api.rs` |
+| P1.7 | Tauri Command 新增 `list_search_keys` / `add_search_key` / `remove_search_key` / `update_search_key` | `apps/acowork-desktop/src-tauri/src/commands/` |
+| P1.8 | GatewayRequest::AgentHello 新增 `search_list_version` 字段 | `acowork-core/src/protocol.rs` |
+| P1.9 | GatewayResponse::AgentHelloResult 新增 `search_list` / `search_list_version` / `search_key_vault` | `acowork-core/src/protocol.rs` |
+| P1.10 | `handle_agent_hello` 新增 search_list 差量同步逻辑 | `acowork-gateway/src/ipc/server.rs` |
+| P1.11 | GatewayResponse 新增 `SearchConfigDelivery` 变体 | `acowork-core/src/protocol.rs` |
+| P1.12 | gRPC proto 更新: AgentHello + AgentHelloResult + SearchConfigDelivery + ServerMessage | `acowork-core/proto/gateway_ipc.proto` |
+| P1.13 | Proto bridge 更新: AgentHello / AgentHelloResult / SearchConfigDelivery 的序列化 | `acowork-core/src/proto_bridge.rs` |
+| P1.14 | Gateway gRPC dispatch 新增 `SearchConfigDelivery` 推送 | `acowork-gateway/src/grpc/dispatch.rs` |
+| P1.15 | Runtime `send_agent_hello` 新增 `cached_search_version` 参数 | `acowork-runtime/src/grpc/client.rs` |
+| P1.16 | `WebSearchTool` 重构，移除 DuckDuckGo，接入 SearchBackend fallback 链 | `acowork-runtime/src/tools/builtin/web_search.rs` |
+| P1.17 | Agent workspace `agent_search.json` 读写（per-agent search provider 优先级列表） | `acowork-runtime/src/agent_config.rs` (扩展) |
+| P1.18 | Runtime 侧 `resource_cache.json` 读写 (search_list_version 版本号持久化) | `acowork-runtime/src/agent_config.rs` (扩展) |
+| P1.19 | SessionManager 新增 `update_search_config()` + `CachedSearchConfig` | `acowork-runtime/src/agent/session/` |
+| P1.20 | Gateway 热推送: vault_api 修改 Search Key 后调用 `rebuild_search_cache()` + `push_search_config()` | `acowork-gateway/src/http/search_api.rs` |
 
 #### 附带：命名统一清理（独立 PR，可与 Search Provider 并行）
 
 | 任务 | 内容 | 产出 |
 |------|------|------|
-| Cleanup.1 | 将 `mcp_servers.json` 重命名为 `agent_mcp.json`（文件已存在） | `rollball-runtime/src/agent_config.rs` |
-| Cleanup.2 | 更新 Gateway HTTP API `/api/agents/{id}/mcp-servers` 读写路径 | `rollball-gateway/src/http/agents.rs` |
+| Cleanup.1 | 将 `mcp_servers.json` 重命名为 `agent_mcp.json`（文件已存在） | `acowork-runtime/src/agent_config.rs` |
+| Cleanup.2 | 更新 Gateway HTTP API `/api/agents/{id}/mcp-servers` 读写路径 | `acowork-gateway/src/http/agents.rs` |
 
 ### Phase 2: 前端 UI
 
@@ -1432,7 +1432,7 @@ fallback_providers = ["brave"]
 | P2.7 | AgentSetupTab 新增 Search 配置块 UI | `AgentSetupTab.tsx` |
 | P2.8 | 拖拽排序实现（调整 provider 优先级） | 复用或引入轻量 dnd 库 |
 | P2.9 | Toggle 开关 + 自动保存到 `agent_search.json` | AgentSetupTab 逻辑扩展 |
-| P2.10 | 新增 Gateway HTTP API: `/api/agents/{id}/search-providers` + `search-config` GET/PUT | `rollball-gateway/src/http/agents.rs` |
+| P2.10 | 新增 Gateway HTTP API: `/api/agents/{id}/search-providers` + `search-config` GET/PUT | `acowork-gateway/src/http/agents.rs` |
 | P2.11 | 灰色降级展示（Vault 中无 Key 的 provider） | AgentSetupTab 联动 search_list |
 
 ### Phase 3: 集成测试
@@ -1461,6 +1461,6 @@ fallback_providers = ["brave"]
 - [04-gateway.md](./04-gateway.md) — Gateway 设计
 - [08-security.md](./08-security.md) — 安全设计（Vault）
 - [16-ipc-grpc-migration.md](./16-ipc-grpc-migration.md) — gRPC migration
-- [现有 web_search.rs](../../../core/rollball-runtime/src/tools/builtin/web_search.rs)
-- [现有 VaultFacade](../../../core/rollball-gateway/src/vault/mod.rs)
-- [现有 HarnessPage ProvidersTab](../../../apps/rollball-desktop/src/components/harness/HarnessPage.tsx)
+- [现有 web_search.rs](../../../core/acowork-runtime/src/tools/builtin/web_search.rs)
+- [现有 VaultFacade](../../../core/acowork-gateway/src/vault/mod.rs)
+- [现有 HarnessPage ProvidersTab](../../../apps/acowork-desktop/src/components/harness/HarnessPage.tsx)

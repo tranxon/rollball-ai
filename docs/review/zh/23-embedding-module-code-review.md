@@ -2,7 +2,7 @@
 
 **审查日期**: 2026-06-06
 **审查范围**: 本地未提交的所有更改（41 个文件，+1,948/-244 行）
-**主要模块**: `rollball-embed`（新增）、Gateway Embedding API、Runtime Embedding Provider、Grafeo 记忆 consolidation、前端 Embedding 设置 UI
+**主要模块**: `acowork-embed`（新增）、Gateway Embedding API、Runtime Embedding Provider、Grafeo 记忆 consolidation、前端 Embedding 设置 UI
 **审查视角**: Completeness + Correctness
 
 ---
@@ -33,8 +33,8 @@
 
 ## Critical Issues (MUST FIX) — 需要修复
 
-### 1. Gateway 从未启动 rollball-embed 子进程 ✅确认
-**位置**: `core/rollball-gateway/src/lifecycle/embed.rs#L35`
+### 1. Gateway 从未启动 acowork-embed 子进程 ✅确认
+**位置**: `core/acowork-gateway/src/lifecycle/embed.rs#L35`
 
 **问题**: `spawn_embed_process` 已实现，但 Gateway 的 `run()` 启动流程和 HTTP API 中均无调用点。`GatewayState.embed_process` 永远为 `None`，本地 ONNX Embedding 服务实际上不可用。
 
@@ -44,9 +44,9 @@
 
 ### 2. gRPC 协议桥丢弃 AgentHelloResult 的 embed 字段 ✅确认
 **位置**:
-- `core/rollball-core/src/proto_bridge.rs#L525-L526`
-- `core/rollball-runtime/src/grpc/client.rs#L512-L519`
-- `core/rollball-core/proto/gateway_ipc.proto`
+- `core/acowork-core/src/proto_bridge.rs#L525-L526`
+- `core/acowork-runtime/src/grpc/client.rs#L512-L519`
+- `core/acowork-core/proto/gateway_ipc.proto`
 
 **问题**:
 - `proto_bridge.rs` L525-526 显式 `let _ = (..., embed_endpoint, embed_model_id, embed_dimension)` 丢弃
@@ -63,7 +63,7 @@
 ---
 
 ### 3. Runtime 热更新 embedding 配置是未实现的 stub ✅确认
-**位置**: `core/rollball-runtime/src/agent/session/session_manager.rs#L933-L949`
+**位置**: `core/acowork-runtime/src/agent/session/session_manager.rs#L933-L949`
 
 **问题**: `handle_embedding_config_update` 仅打印日志（L946-949 明确标注 TODO）。Gateway 推送新模型/维度变更时，运行中的 Agent 不会重建 `FallbackEmbeddingProvider` 链，也不会更新 Grafeo memory store 的维度。
 
@@ -72,7 +72,7 @@
 ---
 
 ### 4. ONNX 阻塞推理卡住 tokio 工作线程 ✅确认
-**位置**: `core/rollball-embed/src/model.rs#L174-L229`
+**位置**: `core/acowork-embed/src/model.rs#L174-L229`
 
 **问题**: `embed_batch` L175 通过 `tokio::sync::Mutex` 获取 `Session` 后直接执行 `session.run()`。ONNX 推理是 CPU 密集型阻塞操作，会长时间占用 tokio worker 线程，高并发下 HTTP 服务器完全无响应。
 
@@ -90,7 +90,7 @@ let result = tokio::task::spawn_blocking(move || {
 ---
 
 ### 5. 每次 embedding 都新建 OS 线程 + tokio Runtime ✅确认
-**位置**: `core/rollball-runtime/src/memory/consolidation_bg.rs#L144-L165`
+**位置**: `core/acowork-runtime/src/memory/consolidation_bg.rs#L144-L165`
 
 **问题**: `embedding_fn` L147-164 每调用一次（每个文本）都 `std::thread::spawn` + `tokio::runtime::Builder::new_current_thread().build()`。100 次 embedding = 100 个线程 + 100 个 Runtime，极易耗尽资源。
 
@@ -106,7 +106,7 @@ handle.block_on(provider.embed(text)) // 仅在非异步上下文使用
 ---
 
 ### 6. UTF-8 字节切片越界 panic ✅确认
-**位置**: `core/rollball-grafeo/src/consolidation/offline.rs#L332-L333`
+**位置**: `core/acowork-grafeo/src/consolidation/offline.rs#L332-L333`
 
 **问题**: `&summary_value[..200]` 按字节切片。中文等多字节 UTF-8 字符可能被切在字符中间，导致运行时 panic。
 
@@ -125,7 +125,7 @@ let truncated = if summary_value.chars().count() > 200 {
 ## Warnings (SHOULD FIX) — 建议修复
 
 ### 7. Gateway 启动 Agent 时 RuntimeConfigUpdate 永远不带 embed_config_json ✅确认
-**位置**: `core/rollball-gateway/src/http/agents.rs` L1018/L1415/L1601
+**位置**: `core/acowork-gateway/src/http/agents.rs` L1018/L1415/L1601
 
 **问题**: 三处推送 `RuntimeConfigUpdate` 的代码均硬编码 `embed_config_json: None`。Agent 首次启动时收不到 embedding 配置，只能依赖环境变量或回退到 Ollama/Remote。而 `global_push.rs` L409-L433 在模型切换时已正确构造 `embed_config_json`。
 
@@ -133,8 +133,8 @@ let truncated = if summary_value.chars().count() > 200 {
 
 ---
 
-### 8. rollball-embed 首次启动自动下载后未保留模型 ✅确认
-**位置**: `core/rollball-embed/src/main.rs#L109-L115`
+### 8. acowork-embed 首次启动自动下载后未保留模型 ✅确认
+**位置**: `core/acowork-embed/src/main.rs#L109-L115`
 
 **问题**: 自动下载成功后 L109-115 调用 `try_load_model`，但紧接着 `drop(model)` 且未赋给 `initial_model`。`AppState.model` 最终为 `None`，服务启动后仍需手动调用 `POST /models/{id}/load`。
 
@@ -142,17 +142,17 @@ let truncated = if summary_value.chars().count() > 200 {
 
 ---
 
-### 9. Gateway 关闭时未清理 rollball-embed 子进程 ✅确认
-**位置**: `core/rollball-gateway/src/lifecycle/embed.rs#L132`
+### 9. Gateway 关闭时未清理 acowork-embed 子进程 ✅确认
+**位置**: `core/acowork-gateway/src/lifecycle/embed.rs#L132`
 
-**问题**: `kill_embed_process` 已实现，但 Gateway shutdown 路径从未调用。Gateway 退出后 `rollball-embed` 会成为孤儿进程。
+**问题**: `kill_embed_process` 已实现，但 Gateway shutdown 路径从未调用。Gateway 退出后 `acowork-embed` 会成为孤儿进程。
 
 **修复**: 在 Gateway `run()` 的 shutdown 尾部读取 `gw.embed_process` 并调用 `kill_embed_process`。
 
 ---
 
 ### 10. 异步读锁跨越 await 点阻塞写者 ⚠️部分确认
-**位置**: `core/rollball-gateway/src/http/embedding_api.rs#L98-L150`
+**位置**: `core/acowork-gateway/src/http/embedding_api.rs#L98-L150`
 
 **问题**: `list_embedding_models` 在持有 `tokio::sync::RwLockReadGuard` 的状态下 await HTTP 请求（查询 embed 服务模型状态）。读锁长时间不释放，写者被阻塞。
 
@@ -163,7 +163,7 @@ let truncated = if summary_value.chars().count() > 200 {
 ---
 
 ### 11. 模型下载全量载入内存 ✅确认
-**位置**: `core/rollball-embed/src/download.rs#L282`
+**位置**: `core/acowork-embed/src/download.rs#L282`
 
 **问题**: `download_file_inner` L282 使用 `response.bytes().await?` 将整个文件（可能是数百 MB 的 ONNX 模型）一次性读入内存再写入磁盘，易造成 OOM。
 
@@ -172,7 +172,7 @@ let truncated = if summary_value.chars().count() > 200 {
 ---
 
 ### 12. 下载接口的取消标志永为 false ✅确认
-**位置**: `core/rollball-embed/src/server.rs#L532`
+**位置**: `core/acowork-embed/src/server.rs#L532`
 
 **问题**: `download_model` handler L532 每次新建局部 `AtomicBool::new(false)` 传给下载器。没有任何代码能将其设为 `true`，取消逻辑形同虚设。
 
@@ -183,9 +183,9 @@ let truncated = if summary_value.chars().count() > 200 {
 ## Suggestions (CONSIDER) — 可改进
 
 ### 13. Gateway data_dir 缺少默认 embedding_models.json ✅确认
-**位置**: `core/rollball-gateway/src/resource_cache.rs`
+**位置**: `core/acowork-gateway/src/resource_cache.rs`
 
-若本地不存在 `embedding_models.json`，初始化为空列表。但 `rollball-embed/assets/embedding_models.json` 已包含内置注册表，可考虑首次部署时自动回退加载。
+若本地不存在 `embedding_models.json`，初始化为空列表。但 `acowork-embed/assets/embedding_models.json` 已包含内置注册表，可考虑首次部署时自动回退加载。
 
 ---
 
@@ -194,14 +194,14 @@ let truncated = if summary_value.chars().count() > 200 {
 ---
 
 ### 15. `ModelRegistry::is_downloaded` 与 `Downloader::is_downloaded` 语义不一致 ✅确认
-**位置**: `core/rollball-embed/src/registry.rs#L156-L159`
+**位置**: `core/acowork-embed/src/registry.rs#L156-L159`
 
 前者 L156-158 仅检查目录是否存在，后者检查 `model.onnx` 和 `tokenizer.json` 两个具体文件。建议统一判断逻辑，避免空目录被误判为已下载。
 
 ---
 
 ### 16. `shutdown.rs` 中 Unix 信号处理重复注册 ✅确认
-**位置**: `core/rollball-embed/src/shutdown.rs#L47-L70`
+**位置**: `core/acowork-embed/src/shutdown.rs#L47-L70`
 
 L47 `flag::register(SIGTERM, AtomicBool::new(false))` 和 L61 `flag::register(SIGINT, AtomicBool::new(false))` 创建的 `AtomicBool` 从未被读取（实际信号处理由 L51-57/63-69 的 `Signals::new` 完成），逻辑冗余。
 
@@ -210,7 +210,7 @@ L47 `flag::register(SIGTERM, AtomicBool::new(false))` 和 L61 `flag::register(SI
 ---
 
 ### 17. `last_token_pooling` 对全零 mask 的兜底行为可文档化 ✅确认
-**位置**: `core/rollball-embed/src/pool.rs#L71-L80`
+**位置**: `core/acowork-embed/src/pool.rs#L71-L80`
 
 L78 `unwrap_or(0)` 当 `attention_mask` 全为 0 时回退到返回 `hidden_state[0]`，建议在该函数文档中说明此兜底策略。
 
@@ -244,7 +244,7 @@ L78 `unwrap_or(0)` 当 `attention_mask` 全为 0 时回退到返回 `hidden_stat
 
 ## Summary of Changes
 
-- **新增 `rollball-embed` crate**: 完整的 ONNX 本地 Embedding 服务（HTTP API、模型下载、ONNX 推理、配置管理）
+- **新增 `acowork-embed` crate**: 完整的 ONNX 本地 Embedding 服务（HTTP API、模型下载、ONNX 推理、配置管理）
 - **Gateway 集成**: Embedding HTTP API 路由、模型生命周期管理（但未实际启动进程）
 - **Runtime 集成**: Embedding Provider 接口、Fallback 链、背景记忆 consolidation（但热更新为 stub）
 - **Grafeo 集成**: 离线 consolidation 大幅扩展，支持 embedding 向量存储

@@ -80,24 +80,24 @@
 
 ### 需要修改的代码文件
 
-- `core/rollball-runtime/src/agent/history.rs`：
+- `core/acowork-runtime/src/agent/history.rs`：
   - 移除 `fold_tool_results()` 的日常触发
   - `trim_fifo()` 降级为仅在 emergency_trim 时使用
   - 保留 `emergency_trim()`、`sanitize_messages()`、`estimate_text_tokens()`
   - 新增 `compact_via_llm()` — 组装完整上下文发送给 Compact Model
 
-- `core/rollball-runtime/src/agent/loop_.rs`：
+- `core/acowork-runtime/src/agent/loop_.rs`：
   - `trim_history_to_budget()` 逻辑简化：70% warn → 80% compact → 95% emergency
   - 移除 tool result 追加前的 70% 预裁剪
 
-- `core/rollball-runtime/src/agent/context.rs`：
+- `core/acowork-runtime/src/agent/context.rs`：
   - `ContextBuilder::build()` 中接入 `system_prompt_cache`（上轮审查标记的缺口）
   - 移除任何在 build 阶段做的折叠/截断
 
-- `core/rollball-runtime/src/token/counter.rs`：
+- `core/acowork-runtime/src/token/counter.rs`：
   - `BudgetAllocation` 结构体保留但标记为 deprecated，不再接入裁剪流水线
 
-- `core/rollball-runtime/src/memory/manager.rs`：
+- `core/acowork-runtime/src/memory/manager.rs`：
   - `inject()` 中检索结果注入简化为语义相似度排序，移除 8 级优先级
 
 ### 需要更新的设计文档

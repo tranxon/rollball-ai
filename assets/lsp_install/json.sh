@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RollBall LSP install script: vscode-json-language-server
+# AgentCowork LSP install script: vscode-json-language-server
 # Phases: Install -> Verify -> Health Check
 #
 # vscode-json-languageserver npm package was DEPRECATED.
@@ -157,7 +157,7 @@ health_check() {
 }
 
 # ── Main ────────────────────────────────────────────────────────────
-echo "=== RollBall LSP Setup: vscode-json-language-server ==="
+echo "=== AgentCowork LSP Setup: vscode-json-language-server ==="
 install
 verify
 health_check

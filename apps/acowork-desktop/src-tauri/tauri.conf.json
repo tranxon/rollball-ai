@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-v2-schema/main/schema.json",
+  "productName": "AgentCowork",
+  "version": "0.1.0",
+  "identifier": "com.acowork.desktop",
+  "build": {
+    "beforeDevCommand": "node ../../dev/ort_env.js cargo build --manifest-path ../../core/Cargo.toml -p acowork-gateway -p acowork-runtime -p acowork-embed && npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "cargo build --release --manifest-path ../../core/Cargo.toml -p acowork-gateway -p acowork-runtime -p acowork-embed && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "main-capability"
+      ]
+    },
+    "windows": [
+      {
+        "title": "AgentCowork",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 600,
+        "decorations": false,
+        "transparent": true,
+        "center": true,
+        "visible": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../../examples/system-agent": "system-agent",
+      "../../../assets/offline_providers.json": "offline_providers.json",
+      "../../../assets/lsp_servers.json": "lsp_servers.json",
+      "../../../assets/lsp_install": "lsp_install",
+      "../../../core/acowork-embed/assets/embedding_models.json": "embedding_models.json",
+      "bin/*": "./"
+    }
+  }
+}

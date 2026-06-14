@@ -18,45 +18,45 @@
 
 ## 🟢 完全一致（无需修改）
 
-| PRD 编号 | 需求描述 | 实现位置 | 状态 |
-|---------|---------|---------|------|
-| **PKG-01~05** | Agent `.agent` 压缩包格式 + 签名验证 | `rollball-sign/` 全部模块 | ✅ 完整实现 |
-| **FMT-01** | manifest.toml Schema（双文件+TopPrompt） | `rollball-core/src/manifest.rs` | ✅ 完整实现 |
-| **FMT-02** | manifest.json（补充信息） | `rollball-core/src/manifest.rs` | ✅ 完整实现 |
-| **FMT-03** | 包结构规范（prompts/ / skills/ / tools.json） | `rollball-core/src/packaging.rs` | ✅ 完整实现 |
-| **RUN-01** | 异步主循环（tokio） | `rollball-runtime/src/agent/loop_.rs` | ✅ 完整实现 |
-| **RUN-02** | 工具拦截器链 + 权限中间件 | `rollball-runtime/src/tools/` + `permission.rs` | ✅ 完整实现 |
-| **RUN-03** | 动态 Prompt 组装（System Prompt 生成） | `rollball-runtime/src/agent/prompt_builder.rs` | ✅ 完整实现 |
-| **RUN-07** | 流式输出 | `loop_.rs` + providers streaming | ✅ 完整实现 |
-| **RUN-08** | 循环检测 | `rollball-runtime/src/utils/loop_detector.rs` | ✅ 完整实现 |
-| **RUN-09** | 上下文溢出处理 | `history.rs` + `loop_.rs` token 计数 + FIFO 裁剪 | ✅ 完整实现 |
-| **RUN-10** | 工具调用去重（上回合已调用不重复） | `loop_.rs` 第 181~188 行 | ✅ 完整实现 |
-| **RUN-11** | Tool Result 折叠（长结果截断） | `history.rs` + `config.json` | ✅ 完整实现 |
-| **MEM-01** | 每个 Agent 私有 Grafeo | `rollball-grafeo/` 全部模块 | ✅ 完整实现 |
-| **MEM-02** | 三层五类记忆 | `rollball-grafeo/src/types.rs` + 模块结构 | ✅ 完整实现 |
-| **MEM-03** | 即时提取（用户提问后 300ms 内提取） | `memory_store` 工具 + `memory_store` 函数 | ✅ 完整实现 |
-| **MEM-05** | 关联扩散 | `spreading.rs` | ✅ 完整实现 |
-| **MEM-06** | 自传体记忆 | `semantic/autobiographical.rs` | ✅ 完整实现 |
-| **MEM-08** | 隐私分级（Public/Personal/Sensitive） | `PrivacyLevel` enum + 工具注入过滤 | ✅ 完整实现 |
-| **MEM-10** | 云端同步（Zone 设计 + 同步策略） | `sync/` 模块 + 三层同步策略 | ✅ 完整实现 |
-| **MEM-11** | 内容分类压缩 | `ContentType` + `ArtifactRef` | ✅ 完整实现 |
-| **MEM-12** | Embedding 推理 | `rollball-grafeo/src/embedding/` 模块 | ✅ 完整实现 |
-| **TOL-05** | 工具权限校验 | `tools/permission.rs` + 注入前校验 | ✅ 完整实现 |
-| **GTW-01** | Gateway 独立进程常驻 | `rollball-gateway/src/` + `Cargo.toml` 独立 bin | ✅ 完整实现 |
-| **GTW-02** | Agent 生命周期管理 | `lifecycle/manager.rs` | ✅ 完整实现 |
-| **GTW-03** | 独立进程 spawn/kill | `lifecycle/process.rs` | ✅ 完整实现 |
-| **GTW-04** | Intent 路由 | `intent/router.rs` | ✅ 完整实现 |
-| **GTW-05** | Key Vault | `rollball-vault/` 全部模块 | ✅ 完整实现 |
-| **GTW-06** | 预算追踪 | `budget/` 模块 | ✅ 完整实现 |
-| **GTW-07** | 速率限制 | `rate/bucket.rs` | ✅ 完整实现 |
-| **GTW-11** | Gateway CLI 二进制 | `rollball-gateway/src/cli.rs` | ✅ 基本框架完成 |
-| **SYS-01** | 系统 Agent（com.rollball.system） | `lifecycle/manager.rs` 常量 + 启动逻辑 | ✅ 完整实现 |
-| **SYS-02** | 系统 Agent 共享 Graph | `shared_grafeo.rs` | ✅ 完整实现 |
-| **SYS-06** | Platform 签名私钥 | `sign.rs` + `keygen.rs` | ✅ 完整实现 |
-| **SEC-01~02** | 进程隔离 + 文件系统隔离 | `lifecycle/process.rs` | ✅ 完整实现 |
-| **SEC-04~05** | 权限校验 + WASM 沙箱 | `tools/wrappers.rs` + `wasmtime` 沙箱 | ✅ 完整实现 |
-| **SEC-07** | API Key 安全（Vault 加密 + Socket 分发） | `vault.rs` + `ipc/server.rs` | ✅ 完整实现 |
-| **PLT-01** | 跨平台统一（.agent 包 + 通信合同） | `ipc/transport.rs` 抽象层 | ✅ 完整实现 |
+| PRD 编号      | 需求描述                                      | 实现位置                                         | 状态           |
+| ------------- | --------------------------------------------- | ------------------------------------------------ | -------------- |
+| **PKG-01~05** | Agent `.agent` 压缩包格式 + 签名验证          | `acowork-sign/` 全部模块                        | ✅ 完整实现     |
+| **FMT-01**    | manifest.toml Schema（双文件+TopPrompt）      | `acowork-core/src/manifest.rs`                  | ✅ 完整实现     |
+| **FMT-02**    | manifest.json（补充信息）                     | `acowork-core/src/manifest.rs`                  | ✅ 完整实现     |
+| **FMT-03**    | 包结构规范（prompts/ / skills/ / tools.json） | `acowork-core/src/packaging.rs`                 | ✅ 完整实现     |
+| **RUN-01**    | 异步主循环（tokio）                           | `acowork-runtime/src/agent/loop_.rs`            | ✅ 完整实现     |
+| **RUN-02**    | 工具拦截器链 + 权限中间件                     | `acowork-runtime/src/tools/` + `permission.rs`  | ✅ 完整实现     |
+| **RUN-03**    | 动态 Prompt 组装（System Prompt 生成）        | `acowork-runtime/src/agent/prompt_builder.rs`   | ✅ 完整实现     |
+| **RUN-07**    | 流式输出                                      | `loop_.rs` + providers streaming                 | ✅ 完整实现     |
+| **RUN-08**    | 循环检测                                      | `acowork-runtime/src/utils/loop_detector.rs`    | ✅ 完整实现     |
+| **RUN-09**    | 上下文溢出处理                                | `history.rs` + `loop_.rs` token 计数 + FIFO 裁剪 | ✅ 完整实现     |
+| **RUN-10**    | 工具调用去重（上回合已调用不重复）            | `loop_.rs` 第 181~188 行                         | ✅ 完整实现     |
+| **RUN-11**    | Tool Result 折叠（长结果截断）                | `history.rs` + `config.json`                     | ✅ 完整实现     |
+| **MEM-01**    | 每个 Agent 私有 Grafeo                        | `acowork-grafeo/` 全部模块                      | ✅ 完整实现     |
+| **MEM-02**    | 三层五类记忆                                  | `acowork-grafeo/src/types.rs` + 模块结构        | ✅ 完整实现     |
+| **MEM-03**    | 即时提取（用户提问后 300ms 内提取）           | `memory_store` 工具 + `memory_store` 函数        | ✅ 完整实现     |
+| **MEM-05**    | 关联扩散                                      | `spreading.rs`                                   | ✅ 完整实现     |
+| **MEM-06**    | 自传体记忆                                    | `semantic/autobiographical.rs`                   | ✅ 完整实现     |
+| **MEM-08**    | 隐私分级（Public/Personal/Sensitive）         | `PrivacyLevel` enum + 工具注入过滤               | ✅ 完整实现     |
+| **MEM-10**    | 云端同步（Zone 设计 + 同步策略）              | `sync/` 模块 + 三层同步策略                      | ✅ 完整实现     |
+| **MEM-11**    | 内容分类压缩                                  | `ContentType` + `ArtifactRef`                    | ✅ 完整实现     |
+| **MEM-12**    | Embedding 推理                                | `acowork-grafeo/src/embedding/` 模块            | ✅ 完整实现     |
+| **TOL-05**    | 工具权限校验                                  | `tools/permission.rs` + 注入前校验               | ✅ 完整实现     |
+| **GTW-01**    | Gateway 独立进程常驻                          | `acowork-gateway/src/` + `Cargo.toml` 独立 bin  | ✅ 完整实现     |
+| **GTW-02**    | Agent 生命周期管理                            | `lifecycle/manager.rs`                           | ✅ 完整实现     |
+| **GTW-03**    | 独立进程 spawn/kill                           | `lifecycle/process.rs`                           | ✅ 完整实现     |
+| **GTW-04**    | Intent 路由                                   | `intent/router.rs`                               | ✅ 完整实现     |
+| **GTW-05**    | Key Vault                                     | `acowork-vault/` 全部模块                       | ✅ 完整实现     |
+| **GTW-06**    | 预算追踪                                      | `budget/` 模块                                   | ✅ 完整实现     |
+| **GTW-07**    | 速率限制                                      | `rate/bucket.rs`                                 | ✅ 完整实现     |
+| **GTW-11**    | Gateway CLI 二进制                            | `acowork-gateway/src/cli.rs`                    | ✅ 基本框架完成 |
+| **SYS-01**    | 系统 Agent（com.acowork.system）             | `lifecycle/manager.rs` 常量 + 启动逻辑           | ✅ 完整实现     |
+| **SYS-02**    | 系统 Agent 共享 Graph                         | `shared_grafeo.rs`                               | ✅ 完整实现     |
+| **SYS-06**    | Platform 签名私钥                             | `sign.rs` + `keygen.rs`                          | ✅ 完整实现     |
+| **SEC-01~02** | 进程隔离 + 文件系统隔离                       | `lifecycle/process.rs`                           | ✅ 完整实现     |
+| **SEC-04~05** | 权限校验 + WASM 沙箱                          | `tools/wrappers.rs` + `wasmtime` 沙箱            | ✅ 完整实现     |
+| **SEC-07**    | API Key 安全（Vault 加密 + Socket 分发）      | `vault.rs` + `ipc/server.rs`                     | ✅ 完整实现     |
+| **PLT-01**    | 跨平台统一（.agent 包 + 通信合同）            | `ipc/transport.rs` 抽象层                        | ✅ 完整实现     |
 
 ---
 
@@ -171,7 +171,7 @@
 - **PRD 需求**：
   - SKL-01：Skill 双层模型（Base + Experience），SKILL.md 格式
   - SKL-02：agentskills.io 兼容
-- **代码现状**：`rollball-runtime/src/skills/mod.rs` 只有 `// TODO: Implement SKILL.md parsing`，没有实现。
+- **代码现状**：`acowork-runtime/src/skills/mod.rs` 只有 `// TODO: Implement SKILL.md parsing`，没有实现。
 - **差异分析**：**PRD 标为 P0，但完全未实现**。这是设计文档和 PRD 的核心承诺。
 - **讨论**：Phase 2 是否真的完成了？如果 Skill 是 P0 但未实现，是否应该：
   - 选项 A：紧急补实现（工作量较大，SKILL.md 解析 + 经验层 + agentskills.io 适配）
@@ -183,18 +183,18 @@
 
 PRD §7 架构决策记录（ADR）清单：
 
-| ADR 编号 | 决策内容 | 代码遵循情况 |
-|---------|---------|-------------|
-| ADR-01 | Agent 包为声明式（无二进制） | ✅ `packaging.rs` 严格验证无 .so/.exe |
-| ADR-02 | Runtime 单二进制统一执行 | ✅ 单 `agent-runtime` bin |
-| ADR-03 | Gateway 常驻独立进程 | ✅ 独立 `gateway` bin |
-| ADR-04 | IPC 用 Unix Socket（合同统一） | ✅ `ipc/transport.rs` 抽象层 |
-| ADR-05 | Grafeo 嵌入 Runtime | ✅ `rollball-grafeo` 是库 crate |
-| ADR-06 | 记忆分三层五类 | ✅ `types.rs` 完整定义 |
-| ADR-07 | 隐私分级 | ✅ `PrivacyLevel` enum |
-| ADR-08 | Agent 自治（LLM 直连） | ✅ Runtime 直接调用 provider HTTP API |
-| ADR-09 | 签名分 Developer/Platform | ✅ `SignatureType` enum |
-| ADR-10 | 沙箱分平台实现 | ✅ `process.rs` 有 Linux/Windows 分支 |
+| ADR 编号 | 决策内容                       | 代码遵循情况                         |
+| -------- | ------------------------------ | ------------------------------------ |
+| ADR-01   | Agent 包为声明式（无二进制）   | ✅ `packaging.rs` 严格验证无 .so/.exe |
+| ADR-02   | Runtime 单二进制统一执行       | ✅ 单 `agent-runtime` bin             |
+| ADR-03   | Gateway 常驻独立进程           | ✅ 独立 `gateway` bin                 |
+| ADR-04   | IPC 用 Unix Socket（合同统一） | ✅ `ipc/transport.rs` 抽象层          |
+| ADR-05   | Grafeo 嵌入 Runtime            | ✅ `acowork-grafeo` 是库 crate       |
+| ADR-06   | 记忆分三层五类                 | ✅ `types.rs` 完整定义                |
+| ADR-07   | 隐私分级                       | ✅ `PrivacyLevel` enum                |
+| ADR-08   | Agent 自治（LLM 直连）         | ✅ Runtime 直接调用 provider HTTP API |
+| ADR-09   | 签名分 Developer/Platform      | ✅ `SignatureType` enum               |
+| ADR-10   | 沙箱分平台实现                 | ✅ `process.rs` 有 Linux/Windows 分支 |
 
 **ADR 全部遵循，无偏差。**
 
@@ -204,31 +204,31 @@ PRD §7 架构决策记录（ADR）清单：
 
 ### 立即处理（本次讨论确定）
 
-| 优先级 | 问题 | 建议方向 |
-|--------|------|---------|
-| **P0** | SKL-01/02 Skill 系统未实现 | 需确认：补实现 or 降级 PRD |
-| **P0** | RUN-04~06 多 Provider 未实现 | 需确认：补实现 or 降级 PRD |
-| **P1** | RUN-12 Rate Limit 分层处理 | 建议改代码（小改动） |
-| **P1** | MEM-04 遗忘机制缺自动调度 | 需确认：补后台 task or 改 PRD |
-| **P1** | GTW-08 HTTP API 完全缺失 | 需确认：补 Axum or 降级 PRD |
-| **P1** | TOL-01 工具数量不一致 | 建议改 PRD（加 identity_observe） |
+| 优先级 | 问题                         | 建议方向                          |
+| ------ | ---------------------------- | --------------------------------- |
+| **P0** | SKL-01/02 Skill 系统未实现   | 需确认：补实现 or 降级 PRD        |
+| **P0** | RUN-04~06 多 Provider 未实现 | 需确认：补实现 or 降级 PRD        |
+| **P1** | RUN-12 Rate Limit 分层处理   | 建议改代码（小改动）              |
+| **P1** | MEM-04 遗忘机制缺自动调度    | 需确认：补后台 task or 改 PRD     |
+| **P1** | GTW-08 HTTP API 完全缺失     | 需确认：补 Axum or 降级 PRD       |
+| **P1** | TOL-01 工具数量不一致        | 建议改 PRD（加 identity_observe） |
 
 ### 延后处理（Phase 3）
 
-| 优先级 | 问题 | 建议 |
-|--------|------|------|
-| **P2** | MEM-09 离线巩固 | 改 PRD 标记 Phase 3 |
-| **P2** | GTW-10 定时触发器 | 改 PRD 标记 Phase 3 |
-| **P2** | GTW-12 冷启动身份注入 | 改 PRD 标记 Phase 3 |
+| 优先级 | 问题                     | 建议                |
+| ------ | ------------------------ | ------------------- |
+| **P2** | MEM-09 离线巩固          | 改 PRD 标记 Phase 3 |
+| **P2** | GTW-10 定时触发器        | 改 PRD 标记 Phase 3 |
+| **P2** | GTW-12 冷启动身份注入    | 改 PRD 标记 Phase 3 |
 | **P2** | SYS-03 身份提报 LLM 判断 | 改 PRD 标记 Phase 3 |
-| **P2** | SEC-08 Shell 安全分级 | 改 PRD 标记 Phase 3 |
+| **P2** | SEC-08 Shell 安全分级    | 改 PRD 标记 Phase 3 |
 
 ### 文档同步
 
-| 优先级 | 问题 | 建议 |
-|--------|------|------|
+| 优先级 | 问题                                | 建议                               |
+| ------ | ----------------------------------- | ---------------------------------- |
 | **P2** | COM-05 Header 12 字节 vs PRD 8 字节 | 同步更新 PRD / 03-agent-runtime.md |
-| **P2** | PERF-01 内存目标无验证 | 在 03-agent-runtime.md 补设计约束 |
+| **P2** | PERF-01 内存目标无验证              | 在 03-agent-runtime.md 补设计约束  |
 
 ---
 
@@ -246,10 +246,10 @@ PRD §7 架构决策记录（ADR）清单：
 
 ---
 
-## 二次审查意见（RollBall 开发团队）
+## 二次审查意见（AgentCowork 开发团队）
 
 > **审查日期**：2026-04-26  
-> **审查人**：RollBall 开发团队  
+> **审查人**：AgentCowork 开发团队  
 > **审查方法**：逐条对照初稿结论，验证代码实现状态，提供修正意见。
 
 ### 一、初稿误判纠正（2 处）
@@ -259,9 +259,9 @@ PRD §7 架构决策记录（ADR）清单：
 初稿结论称“当前是严格的单 Provider 实现”，**与实际代码不符**。
 
 **已实现证据**：
-- `rollball-runtime/src/providers/registry.rs` — `ProviderRegistry` 完整实现：动态注册、能力查询、fallback 链、路由策略切换（`RoutingStrategy::CostPriority / QualityPriority / LatencyPriority`）。
-- `rollball-runtime/src/providers/router.rs` — `create_provider()` 工厂函数 + 路由逻辑。
-- `rollball-core/src/manifest.rs` — `LlmConfig` 包含 `providers: HashMap<String, ProviderConfig>` 多 Provider 配置、`routing: Option<RoutingConfig>` 路由策略、`budget: Option<LlmBudget>` 预算配置。
+- `acowork-runtime/src/providers/registry.rs` — `ProviderRegistry` 完整实现：动态注册、能力查询、fallback 链、路由策略切换（`RoutingStrategy::CostPriority / QualityPriority / LatencyPriority`）。
+- `acowork-runtime/src/providers/router.rs` — `create_provider()` 工厂函数 + 路由逻辑。
+- `acowork-core/src/manifest.rs` — `LlmConfig` 包含 `providers: HashMap<String, ProviderConfig>` 多 Provider 配置、`routing: Option<RoutingConfig>` 路由策略、`budget: Option<LlmBudget>` 预算配置。
 - S5.1~S5.2 任务已完成，17 个集成测试全部通过（`s5_integration.rs`）。
 
 **修正结论**：RUN-04~06 已完整实现，初稿应标记为 ✅。
@@ -273,9 +273,9 @@ PRD §7 架构决策记录（ADR）清单：
 初稿结论称“`start_agent()` 只有基础 spawn 逻辑，没有身份注入”，**与实际代码不符**。
 
 **已实现证据**：
-- `rollball-gateway/src/lifecycle/manager.rs` — `auto_start_system_agent()` 启动 System Agent；`build_identity_delivery()` 构建身份投递协议；`deliver_identity()` 在 spawn 前完成身份注入。
+- `acowork-gateway/src/lifecycle/manager.rs` — `auto_start_system_agent()` 启动 System Agent；`build_identity_delivery()` 构建身份投递协议；`deliver_identity()` 在 spawn 前完成身份注入。
 - S3.3 任务已完成，冷启动身份注入端到端测试通过。
-- `rollball-runtime/src/agent/context.rs` — `ContextBuilder::with_identity()` 支持身份注入到 System Prompt。
+- `acowork-runtime/src/agent/context.rs` — `ContextBuilder::with_identity()` 支持身份注入到 System Prompt。
 
 **修正结论**：GTW-12 已完整实现，初稿应标记为 ✅。
 
@@ -283,19 +283,19 @@ PRD §7 架构决策记录（ADR）清单：
 
 ### 二、初稿合理项的处置决定（11 项）
 
-| 编号 | 问题 | 初稿建议 | 团队决定 | 执行方式 |
-|------|------|---------|---------|----------|
-| #1 | TOL-01 工具数量（15 vs 14） | 改 PRD 加 identity_observe | ✅ 同意 | 更新 PRD 文档 |
-| #3 | RUN-12 Rate Limit 分层处理 | 改代码拆分错误类型 | ✅ 同意 | 修改代码 |
-| #4 | MEM-04 遗忘机制缺自动调度 | 改 PRD 为按需计算 | ✅ 同意 | 更新 PRD 文档 |
-| #5 | MEM-09 离线巩固未实现 | 改 PRD 标记 Phase 3 | ✅ 同意 | 更新 PRD 文档 |
-| #6 | GTW-08 HTTP API 缺失 | 改 PRD 降级为 P2/P3 | ✅ 同意，保留接口预留 | 更新 PRD 文档 |
-| #7 | GTW-10 定时触发器缺失 | 改 PRD 标记 Phase 3 | ✅ 同意 | 更新 PRD 文档 |
-| #9 | SYS-03 身份提报 LLM 判断缺失 | 改 PRD 标记 Phase 3 | ✅ 同意 | 更新 PRD 文档 |
-| #10 | SEC-08 Shell 安全分级缺失 | 改 PRD 标记 Phase 3 | ✅ 同意 | 更新 PRD 文档 |
-| #11 | COM-05 Header 12 字节 vs PRD 8 字节 | 同步更新 PRD | ✅ 同意 | 更新 PRD 文档 |
-| #12 | PERF-01 内存目标无验证 | 文档补充设计约束 | ✅ 同意 | 更新设计文档 |
-| #13 | SKL-01/02 Skill 系统未实现 | 需讨论 | ⏳ 待定 | 见下方专项讨论 |
+| 编号 | 问题                                | 初稿建议                   | 团队决定             | 执行方式       |
+| ---- | ----------------------------------- | -------------------------- | -------------------- | -------------- |
+| #1   | TOL-01 工具数量（15 vs 14）         | 改 PRD 加 identity_observe | ✅ 同意               | 更新 PRD 文档  |
+| #3   | RUN-12 Rate Limit 分层处理          | 改代码拆分错误类型         | ✅ 同意               | 修改代码       |
+| #4   | MEM-04 遗忘机制缺自动调度           | 改 PRD 为按需计算          | ✅ 同意               | 更新 PRD 文档  |
+| #5   | MEM-09 离线巩固未实现               | 改 PRD 标记 Phase 3        | ✅ 同意               | 更新 PRD 文档  |
+| #6   | GTW-08 HTTP API 缺失                | 改 PRD 降级为 P2/P3        | ✅ 同意，保留接口预留 | 更新 PRD 文档  |
+| #7   | GTW-10 定时触发器缺失               | 改 PRD 标记 Phase 3        | ✅ 同意               | 更新 PRD 文档  |
+| #9   | SYS-03 身份提报 LLM 判断缺失        | 改 PRD 标记 Phase 3        | ✅ 同意               | 更新 PRD 文档  |
+| #10  | SEC-08 Shell 安全分级缺失           | 改 PRD 标记 Phase 3        | ✅ 同意               | 更新 PRD 文档  |
+| #11  | COM-05 Header 12 字节 vs PRD 8 字节 | 同步更新 PRD               | ✅ 同意               | 更新 PRD 文档  |
+| #12  | PERF-01 内存目标无验证              | 文档补充设计约束           | ✅ 同意               | 更新设计文档   |
+| #13  | SKL-01/02 Skill 系统未实现          | 需讨论                     | ⏳ 待定               | 见下方专项讨论 |
 
 **说明**：
 - **#3 RUN-12 Rate Limit 分层**：代码改动小（增加 `ProviderErrorType::PaymentRequired`），但价值大（避免余额不足场景无意义重试），**建议立即执行**。
@@ -325,12 +325,12 @@ PRD §7 架构决策记录（ADR）清单：
 
 ### 四、执行计划汇总
 
-| 优先级 | 任务 | 类型 | 预估工作量 |
-|--------|------|------|-----------|
-| **P0** | SKL-01 SKILL.md 解析实现 | 改代码 | 1-2 天 |
-| **P1** | RUN-12 Rate Limit 分层（PaymentRequired） | 改代码 | 0.5 天 |
-| **P2** | 文档同步（TOL-01、MEM-04、MEM-09、GTW-08、GTW-10、SYS-03、SEC-08、COM-05、PERF-01） | 改文档 | 1 天 |
-| **P2** | 初稿误判纠正（RUN-04~06、GTW-12） | 改 review 文档 | 0.1 天 |
+| 优先级 | 任务                                                                                | 类型           | 预估工作量 |
+| ------ | ----------------------------------------------------------------------------------- | -------------- | ---------- |
+| **P0** | SKL-01 SKILL.md 解析实现                                                            | 改代码         | 1-2 天     |
+| **P1** | RUN-12 Rate Limit 分层（PaymentRequired）                                           | 改代码         | 0.5 天     |
+| **P2** | 文档同步（TOL-01、MEM-04、MEM-09、GTW-08、GTW-10、SYS-03、SEC-08、COM-05、PERF-01） | 改文档         | 1 天       |
+| **P2** | 初稿误判纠正（RUN-04~06、GTW-12）                                                   | 改 review 文档 | 0.1 天     |
 
 ---
 
@@ -376,19 +376,19 @@ PRD §7 架构决策记录（ADR）清单：
 
 ### ✅ 确认合理的处置决定（11 项全部认可）
 
-| # | 问题 | 评估 |
-|---|------|------|
-| #1 TOL-01 | 改 PRD 加 identity_observe | ✅ 正确，工具清单应同步 |
-| #3 RUN-12 | 改代码拆分 PaymentRequired | ✅ 正确，小改动高价值 |
-| #4 MEM-04 | 改 PRD 接受按需计算 | ✅ 正确，后台 decay 资源开销大 |
-| #5 MEM-09 | 改 PRD 标记 Phase 3 | ✅ 正确 |
-| #6 GTW-08 | 改 PRD 降级，保留接口预留 | ✅ 正确 |
-| #7 GTW-10 | 改 PRD 标记 Phase 3 | ✅ 正确 |
-| #9 SYS-03 | 改 PRD 标记 Phase 3 | ✅ 正确 |
-| #10 SEC-08 | 改 PRD 标记 Phase 3 | ✅ 正确 |
-| #11 COM-05 | 同步更新 PRD | ✅ 正确 |
-| #12 PERF-01 | 文档补充设计约束 | ✅ 正确 |
-| #13 SKL-01/02 | 分两阶段：Phase 2 补解析，Phase 3 延期兼容 | ✅ 合理 |
+| #             | 问题                                       | 评估                          |
+| ------------- | ------------------------------------------ | ----------------------------- |
+| #1 TOL-01     | 改 PRD 加 identity_observe                 | ✅ 正确，工具清单应同步        |
+| #3 RUN-12     | 改代码拆分 PaymentRequired                 | ✅ 正确，小改动高价值          |
+| #4 MEM-04     | 改 PRD 接受按需计算                        | ✅ 正确，后台 decay 资源开销大 |
+| #5 MEM-09     | 改 PRD 标记 Phase 3                        | ✅ 正确                        |
+| #6 GTW-08     | 改 PRD 降级，保留接口预留                  | ✅ 正确                        |
+| #7 GTW-10     | 改 PRD 标记 Phase 3                        | ✅ 正确                        |
+| #9 SYS-03     | 改 PRD 标记 Phase 3                        | ✅ 正确                        |
+| #10 SEC-08    | 改 PRD 标记 Phase 3                        | ✅ 正确                        |
+| #11 COM-05    | 同步更新 PRD                               | ✅ 正确                        |
+| #12 PERF-01   | 文档补充设计约束                           | ✅ 正确                        |
+| #13 SKL-01/02 | 分两阶段：Phase 2 补解析，Phase 3 延期兼容 | ✅ 合理                        |
 
 ---
 
@@ -408,31 +408,31 @@ PRD §7 架构决策记录（ADR）清单：
 
 ### 最终结论
 
-| 项目 | 原判定 | 二次审查 | 复核结论 | 最终状态 |
-|------|--------|---------|---------|---------|
-| RUN-04~06 | 🔴 缺失 | ✅ 已实现 | 🟡 结构实现但运行时未接入 | **🟡 部分实现** |
-| GTW-12 | 🔴 缺失 | ✅ 已实现 | 🟡 骨架实现，逻辑未连接 | **🟡 部分实现** |
-| RUN-12 | 🔴 缺失 | ✅ 改代码 | ✅ 同意 | **改代码** |
-| MEM-04 | 🔴 缺失 | ✅ 改 PRD | ✅ 同意 | **改 PRD** |
-| MEM-09 | 🔴 缺失 | ✅ 改 PRD | ✅ 同意 | **改 PRD** |
-| GTW-08 | 🔴 缺失 | ✅ 改 PRD | ✅ 同意 | **改 PRD** |
-| GTW-10 | 🔴 缺失 | ✅ 改 PRD | ✅ 同意 | **改 PRD** |
-| SYS-03 | 🔴 缺失 | ✅ 改 PRD | ✅ 同意 | **改 PRD** |
-| SEC-08 | 🔴 缺失 | ✅ 改 PRD | ✅ 同意 | **改 PRD** |
-| TOL-01 | 🔴 不一致 | ✅ 改 PRD | ✅ 同意 | **改 PRD** |
-| COM-05 | 🟡 不一致 | ✅ 改 PRD | ✅ 同意 | **改 PRD** |
-| PERF-01 | 🟡 不一致 | ✅ 改文档 | ✅ 同意 | **改文档** |
-| SKL-01/02 | 🔴 缺失 | ⏳ 分阶段 | ✅ 同意 | **Phase 2 补解析，Phase 3 延期** |
+| 项目      | 原判定   | 二次审查 | 复核结论                 | 最终状态                         |
+| --------- | -------- | -------- | ------------------------ | -------------------------------- |
+| RUN-04~06 | 🔴 缺失   | ✅ 已实现 | 🟡 结构实现但运行时未接入 | **🟡 部分实现**                   |
+| GTW-12    | 🔴 缺失   | ✅ 已实现 | 🟡 骨架实现，逻辑未连接   | **🟡 部分实现**                   |
+| RUN-12    | 🔴 缺失   | ✅ 改代码 | ✅ 同意                   | **改代码**                       |
+| MEM-04    | 🔴 缺失   | ✅ 改 PRD | ✅ 同意                   | **改 PRD**                       |
+| MEM-09    | 🔴 缺失   | ✅ 改 PRD | ✅ 同意                   | **改 PRD**                       |
+| GTW-08    | 🔴 缺失   | ✅ 改 PRD | ✅ 同意                   | **改 PRD**                       |
+| GTW-10    | 🔴 缺失   | ✅ 改 PRD | ✅ 同意                   | **改 PRD**                       |
+| SYS-03    | 🔴 缺失   | ✅ 改 PRD | ✅ 同意                   | **改 PRD**                       |
+| SEC-08    | 🔴 缺失   | ✅ 改 PRD | ✅ 同意                   | **改 PRD**                       |
+| TOL-01    | 🔴 不一致 | ✅ 改 PRD | ✅ 同意                   | **改 PRD**                       |
+| COM-05    | 🟡 不一致 | ✅ 改 PRD | ✅ 同意                   | **改 PRD**                       |
+| PERF-01   | 🟡 不一致 | ✅ 改文档 | ✅ 同意                   | **改文档**                       |
+| SKL-01/02 | 🔴 缺失   | ⏳ 分阶段 | ✅ 同意                   | **Phase 2 补解析，Phase 3 延期** |
 
 **执行计划（更新版）**：
 
-| 优先级 | 任务 | 类型 | 预估工作量 |
-|--------|------|------|-----------|
-| **P0** | SKL-01 SKILL.md 解析实现 | 改代码 | 1-2 天 |
-| **P1** | RUN-12 Rate Limit 分层（PaymentRequired） | 改代码 | 0.5 天 |
-| **P1** | RUN-04~06 AgentLoop 接入 ProviderRegistry | 改代码 | 1-2 天 |
-| **P1** | GTW-12 连接 start_agent → build_identity_delivery | 改代码 | 0.5 天 |
-| **P2** | 文档同步（TOL-01、MEM-04、MEM-09、GTW-08、GTW-10、SYS-03、SEC-08、COM-05、PERF-01） | 改文档 | 1 天 |
+| 优先级 | 任务                                                                                | 类型   | 预估工作量 |
+| ------ | ----------------------------------------------------------------------------------- | ------ | ---------- |
+| **P0** | SKL-01 SKILL.md 解析实现                                                            | 改代码 | 1-2 天     |
+| **P1** | RUN-12 Rate Limit 分层（PaymentRequired）                                           | 改代码 | 0.5 天     |
+| **P1** | RUN-04~06 AgentLoop 接入 ProviderRegistry                                           | 改代码 | 1-2 天     |
+| **P1** | GTW-12 连接 start_agent → build_identity_delivery                                   | 改代码 | 0.5 天     |
+| **P2** | 文档同步（TOL-01、MEM-04、MEM-09、GTW-08、GTW-10、SYS-03、SEC-08、COM-05、PERF-01） | 改文档 | 1 天       |
 
 ---
 
@@ -440,10 +440,10 @@ PRD §7 架构决策记录（ADR）清单：
 
 ---
 
-## 二次审查意见（RollBall 开发团队）
+## 二次审查意见（AgentCowork 开发团队）
 
 > **审查日期**：2026-04-26  
-> **审查人**：RollBall 开发团队  
+> **审查人**：AgentCowork 开发团队  
 > **审查方法**：逐条对照初稿结论，验证代码实现状态，提供修正意见。
 
 ### 一、初稿误判纠正（2 处）
@@ -453,9 +453,9 @@ PRD §7 架构决策记录（ADR）清单：
 初稿结论称“当前是严格的单 Provider 实现”，**与实际代码不符**。
 
 **已实现证据**：
-- `rollball-runtime/src/providers/registry.rs` — `ProviderRegistry` 完整实现：动态注册、能力查询、fallback 链、路由策略切换（`RoutingStrategy::CostPriority / QualityPriority / LatencyPriority`）。
-- `rollball-runtime/src/providers/router.rs` — `create_provider()` 工厂函数 + 路由逻辑。
-- `rollball-core/src/manifest.rs` — `LlmConfig` 包含 `providers: HashMap<String, ProviderConfig>` 多 Provider 配置、`routing: Option<RoutingConfig>` 路由策略、`budget: Option<LlmBudget>` 预算配置。
+- `acowork-runtime/src/providers/registry.rs` — `ProviderRegistry` 完整实现：动态注册、能力查询、fallback 链、路由策略切换（`RoutingStrategy::CostPriority / QualityPriority / LatencyPriority`）。
+- `acowork-runtime/src/providers/router.rs` — `create_provider()` 工厂函数 + 路由逻辑。
+- `acowork-core/src/manifest.rs` — `LlmConfig` 包含 `providers: HashMap<String, ProviderConfig>` 多 Provider 配置、`routing: Option<RoutingConfig>` 路由策略、`budget: Option<LlmBudget>` 预算配置。
 - S5.1~S5.2 任务已完成，17 个集成测试全部通过（`s5_integration.rs`）。
 
 **修正结论**：RUN-04~06 已完整实现，初稿应标记为 ✅。
@@ -467,9 +467,9 @@ PRD §7 架构决策记录（ADR）清单：
 初稿结论称“`start_agent()` 只有基础 spawn 逻辑，没有身份注入”，**与实际代码不符**。
 
 **已实现证据**：
-- `rollball-gateway/src/lifecycle/manager.rs` — `auto_start_system_agent()` 启动 System Agent；`build_identity_delivery()` 构建身份投递协议；`deliver_identity()` 在 spawn 前完成身份注入。
+- `acowork-gateway/src/lifecycle/manager.rs` — `auto_start_system_agent()` 启动 System Agent；`build_identity_delivery()` 构建身份投递协议；`deliver_identity()` 在 spawn 前完成身份注入。
 - S3.3 任务已完成，冷启动身份注入端到端测试通过。
-- `rollball-runtime/src/agent/context.rs` — `ContextBuilder::with_identity()` 支持身份注入到 System Prompt。
+- `acowork-runtime/src/agent/context.rs` — `ContextBuilder::with_identity()` 支持身份注入到 System Prompt。
 
 **修正结论**：GTW-12 已完整实现，初稿应标记为 ✅。
 
@@ -477,19 +477,19 @@ PRD §7 架构决策记录（ADR）清单：
 
 ### 二、初稿合理项的处置决定（11 项）
 
-| 编号 | 问题 | 初稿建议 | 团队决定 | 执行方式 |
-|------|------|---------|---------|----------|
-| #1 | TOL-01 工具数量（15 vs 14） | 改 PRD 加 identity_observe | ✅ 同意 | 更新 PRD 文档 |
-| #3 | RUN-12 Rate Limit 分层处理 | 改代码拆分错误类型 | ✅ 同意 | 修改代码 |
-| #4 | MEM-04 遗忘机制缺自动调度 | 改 PRD 为按需计算 | ✅ 同意 | 更新 PRD 文档 |
-| #5 | MEM-09 离线巩固未实现 | 改 PRD 标记 Phase 3 | ✅ 同意 | 更新 PRD 文档 |
-| #6 | GTW-08 HTTP API 缺失 | 改 PRD 降级为 P2/P3 | ✅ 同意，保留接口预留 | 更新 PRD 文档 |
-| #7 | GTW-10 定时触发器缺失 | 改 PRD 标记 Phase 3 | ✅ 同意 | 更新 PRD 文档 |
-| #9 | SYS-03 身份提报 LLM 判断缺失 | 改 PRD 标记 Phase 3 | ✅ 同意 | 更新 PRD 文档 |
-| #10 | SEC-08 Shell 安全分级缺失 | 改 PRD 标记 Phase 3 | ✅ 同意 | 更新 PRD 文档 |
-| #11 | COM-05 Header 12 字节 vs PRD 8 字节 | 同步更新 PRD | ✅ 同意 | 更新 PRD 文档 |
-| #12 | PERF-01 内存目标无验证 | 文档补充设计约束 | ✅ 同意 | 更新设计文档 |
-| #13 | SKL-01/02 Skill 系统未实现 | 需讨论 | ⏳ 待定 | 见下方专项讨论 |
+| 编号 | 问题                                | 初稿建议                   | 团队决定             | 执行方式       |
+| ---- | ----------------------------------- | -------------------------- | -------------------- | -------------- |
+| #1   | TOL-01 工具数量（15 vs 14）         | 改 PRD 加 identity_observe | ✅ 同意               | 更新 PRD 文档  |
+| #3   | RUN-12 Rate Limit 分层处理          | 改代码拆分错误类型         | ✅ 同意               | 修改代码       |
+| #4   | MEM-04 遗忘机制缺自动调度           | 改 PRD 为按需计算          | ✅ 同意               | 更新 PRD 文档  |
+| #5   | MEM-09 离线巩固未实现               | 改 PRD 标记 Phase 3        | ✅ 同意               | 更新 PRD 文档  |
+| #6   | GTW-08 HTTP API 缺失                | 改 PRD 降级为 P2/P3        | ✅ 同意，保留接口预留 | 更新 PRD 文档  |
+| #7   | GTW-10 定时触发器缺失               | 改 PRD 标记 Phase 3        | ✅ 同意               | 更新 PRD 文档  |
+| #9   | SYS-03 身份提报 LLM 判断缺失        | 改 PRD 标记 Phase 3        | ✅ 同意               | 更新 PRD 文档  |
+| #10  | SEC-08 Shell 安全分级缺失           | 改 PRD 标记 Phase 3        | ✅ 同意               | 更新 PRD 文档  |
+| #11  | COM-05 Header 12 字节 vs PRD 8 字节 | 同步更新 PRD               | ✅ 同意               | 更新 PRD 文档  |
+| #12  | PERF-01 内存目标无验证              | 文档补充设计约束           | ✅ 同意               | 更新设计文档   |
+| #13  | SKL-01/02 Skill 系统未实现          | 需讨论                     | ⏳ 待定               | 见下方专项讨论 |
 
 **说明**：
 - **#3 RUN-12 Rate Limit 分层**：代码改动小（增加 `ProviderErrorType::PaymentRequired`），但价值大（避免余额不足场景无意义重试），**建议立即执行**。
@@ -519,12 +519,12 @@ PRD §7 架构决策记录（ADR）清单：
 
 ### 四、执行计划汇总
 
-| 优先级 | 任务 | 类型 | 预估工作量 |
-|--------|------|------|-----------|
-| **P0** | SKL-01 SKILL.md 解析实现 | 改代码 | 1-2 天 |
-| **P1** | RUN-12 Rate Limit 分层（PaymentRequired） | 改代码 | 0.5 天 |
-| **P2** | 文档同步（TOL-01、MEM-04、MEM-09、GTW-08、GTW-10、SYS-03、SEC-08、COM-05、PERF-01） | 改文档 | 1 天 |
-| **P2** | 初稿误判纠正（RUN-04~06、GTW-12） | 改 review 文档 | 0.1 天 |
+| 优先级 | 任务                                                                                | 类型           | 预估工作量 |
+| ------ | ----------------------------------------------------------------------------------- | -------------- | ---------- |
+| **P0** | SKL-01 SKILL.md 解析实现                                                            | 改代码         | 1-2 天     |
+| **P1** | RUN-12 Rate Limit 分层（PaymentRequired）                                           | 改代码         | 0.5 天     |
+| **P2** | 文档同步（TOL-01、MEM-04、MEM-09、GTW-08、GTW-10、SYS-03、SEC-08、COM-05、PERF-01） | 改文档         | 1 天       |
+| **P2** | 初稿误判纠正（RUN-04~06、GTW-12）                                                   | 改 review 文档 | 0.1 天     |
 
 ---
 

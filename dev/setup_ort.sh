@@ -10,7 +10,7 @@
 #
 # After running, env vars are set for the current session. To build:
 #   ./dev/build_core.sh               # Auto-detects .ort/ and builds all crates
-#   cargo build -p rollball-embed      # Direct build (env set in this session)
+#   cargo build -p acowork-embed      # Direct build (env set in this session)
 #
 # Supported platforms:
 #   Linux  - glibc auto-detection, selects compatible ORT version
@@ -95,7 +95,7 @@ case "$ARCH" in
 esac
 
 echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║   ONNX Runtime Setup for RollBall.AI        ║${NC}"
+echo -e "${CYAN}║   ONNX Runtime Setup for AgentCowork.AI        ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  OS:   ${BOLD}$OS${NC}"
@@ -108,7 +108,7 @@ if [ "$OS" = "windows" ]; then
     echo -e "  ${CYAN}.\\dev\\setup_ort.ps1${NC}"
     echo ""
     echo -e "Or simply use download-ort feature (no manual setup needed):"
-    echo -e "  ${CYAN}cargo build --release -p rollball-embed --features download-ort${NC}"
+    echo -e "  ${CYAN}cargo build --release -p acowork-embed --features download-ort${NC}"
     exit 0
 fi
 
@@ -161,7 +161,7 @@ elif [ "$OS" = "linux" ]; then
         echo -e "${CYAN}Using ORT $ORT_VERSION (compatible)${NC}"
         echo ""
         echo -e "${GRAY}Tip: Your system supports download-ort, you can also just run:${NC}"
-        echo -e "${GRAY}  cargo build --release -p rollball-embed --features download-ort${NC}"
+        echo -e "${GRAY}  cargo build --release -p acowork-embed --features download-ort${NC}"
     elif [ "$GLIBC_SCORE" -ge 235 ]; then
         ORT_VERSION="$ORT_VERSION_UBUNTU2204"
         echo -e "${YELLOW}glibc $GLIBC_VERSION < 2.38 — older system (e.g. Ubuntu 22.04)${NC}"
@@ -408,5 +408,5 @@ echo -e "  ${YELLOW}Build & Run${NC} (recommended):"
 echo -e "    ${CYAN}./dev/build_core.sh${NC}"
 echo ""
 echo -e "  ${YELLOW}Build Embed only${NC} (env already set in this session):"
-echo -e "    ${CYAN}cargo build --release -p rollball-embed${NC}"
+echo -e "    ${CYAN}cargo build --release -p acowork-embed${NC}"
 echo ""

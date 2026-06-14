@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RollBall LSP install script: pylsp (Python)
+# AgentCowork LSP install script: pylsp (Python)
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -113,7 +113,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== RollBall LSP Setup: pylsp (Python) ==="
+echo "=== AgentCowork LSP Setup: pylsp (Python) ==="
 install
 verify
 health_check

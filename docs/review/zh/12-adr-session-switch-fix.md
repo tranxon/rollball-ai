@@ -68,7 +68,7 @@ Ok(_session) => {   // ← _session 在这里被 drop！
 
 ## 实现细节
 
-### 1. AgentLoop.switch_conversation() （core/rollball-runtime/src/agent/loop_.rs）
+### 1. AgentLoop.switch_conversation() （core/acowork-runtime/src/agent/loop_.rs）
 
 ```rust
 pub fn switch_conversation(&mut self, new_session: ConversationSession)
@@ -136,9 +136,9 @@ switchSession: async (sessionId: string, agentId?: string) => {
 ### 修改的文件
 | 文件 | 改动类型 |
 |------|----------|
-| `core/rollball-runtime/src/agent/loop_.rs` | 新增 `switch_conversation()` + `close_session_inner()` |
-| `core/rollball-runtime/src/cli.rs` | 修改 `handle_create_session()` 签名+实现；新增 `handle_activate_session()` |
-| `core/rollball-gateway/src/http/chat.rs` | 新增 `activate_session` 路由+handler |
+| `core/acowork-runtime/src/agent/loop_.rs` | 新增 `switch_conversation()` + `close_session_inner()` |
+| `core/acowork-runtime/src/cli.rs` | 修改 `handle_create_session()` 签名+实现；新增 `handle_activate_session()` |
+| `core/acowork-gateway/src/http/chat.rs` | 新增 `activate_session` 路由+handler |
 | `apps/.../stores/sessionStore.ts` | `switchSession` 改为 async + 调用 activate API |
 | `apps/.../components/chat/ChatPanel.tsx` | 更新 `switchSession` 调用签名 |
 | `apps/.../components/chat/SessionPanel.tsx` | `handleSwitchSession` 改为 async |
@@ -149,8 +149,8 @@ switchSession: async (sessionId: string, agentId?: string) => {
 
 ## 验证清单
 
-- [x] `cargo check -p rollball-runtime` 编译通过
-- [x] `cargo check -p rollball-gateway` 编译通过
+- [x] `cargo check -p acowork-runtime` 编译通过
+- [x] `cargo check -p acowork-gateway` 编译通过
 - [x] `npx tsc --noEmit` 前端零错误
 - [ ] 端到端测试：新建 session 后发送消息，验证 JSONL 写入正确的 session 文件
 - [ ] 端到端测试：切换已有 session 后发送消息，验证消息不串入其他 session

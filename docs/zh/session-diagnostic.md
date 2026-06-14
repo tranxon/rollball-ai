@@ -1,4 +1,4 @@
-# Rollball Desktop Session 管理与本地缓存诊断报告
+# AgentCowork Desktop Session 管理与本地缓存诊断报告
 
 ## 一、Store 架构全景
 
@@ -16,7 +16,7 @@
 
 ## 二、chatStore.ts 完整结构分析
 
-文件: d:/projects/rust/agent-study/apps/rollball-desktop/src/stores/chatStore.ts
+文件: d:/projects/rust/agent-study/apps/acowork-desktop/src/stores/chatStore.ts
 
 ### 2.1 状态字段
 
@@ -68,7 +68,7 @@ messages 是单一全局数组，没有 per-session 缓存：
 
 ## 三、sessionStore.ts 完整结构分析
 
-文件: d:/projects/rust/agent-study/apps/rollball-desktop/src/stores/sessionStore.ts
+文件: d:/projects/rust/agent-study/apps/acowork-desktop/src/stores/sessionStore.ts
 
 ### 3.1 状态字段
 
@@ -91,16 +91,16 @@ messages 是单一全局数组，没有 per-session 缓存：
 
 ## 四、agentStore.ts 完整结构分析
 
-文件: d:/projects/rust/agent-study/apps/rollball-desktop/src/stores/agentStore.ts
+文件: d:/projects/rust/agent-study/apps/acowork-desktop/src/stores/agentStore.ts
 
 - agents: AgentInfo[] + selectedAgentId: string | null
-- 自动选择 System Agent (com.rollball.system)
+- 自动选择 System Agent (com.acowork.system)
 - 通过 Tauri invoke 调用 Rust 命令
 - 与 session 无直接交互
 
 ## 五、ChatPanel.tsx - Agent/Session 切换 Effect 逻辑
 
-文件: d:/projects/rust/agent-study/apps/rollball-desktop/src/components/chat/ChatPanel.tsx
+文件: d:/projects/rust/agent-study/apps/acowork-desktop/src/components/chat/ChatPanel.tsx
 
 ### 5.1 Agent 切换 Effect（第141-210行）
 

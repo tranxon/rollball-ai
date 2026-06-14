@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# RollBall Agent Package Builder and Signer
+# AgentCowork Agent Package Builder and Signer
 # Usage: ./build-agent.sh <agent-dir> [output-dir]
 #
 # This script:
@@ -57,7 +57,7 @@ if [ -z "$AGENT_ID" ]; then
 fi
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}RollBall Agent Package Builder${NC}"
+echo -e "${GREEN}AgentCowork Agent Package Builder${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "Agent ID:      ${YELLOW}${AGENT_ID}${NC}"
 echo -e "Agent Version: ${YELLOW}${AGENT_VERSION}${NC}"
@@ -88,7 +88,7 @@ if [ ! -d "$KEY_DIR" ] || [ ! -f "${KEY_DIR}/developer.key" ]; then
     
     # Build and run keygen
     cd "$PROJECT_ROOT/core"
-    cargo run --release --bin rollball-keygen -- --type developer --output-dir "$KEY_DIR" 2>&1 | grep -v "Compiling\|Finished\|Running\|warning"
+    cargo run --release --bin acowork-keygen -- --type developer --output-dir "$KEY_DIR" 2>&1 | grep -v "Compiling\|Finished\|Running\|warning"
     
     echo -e "      Keys generated in: ${KEY_DIR}"
 else
@@ -99,7 +99,7 @@ echo ""
 # Step 3: Sign the package
 echo -e "${GREEN}[3/4]${NC} Signing package..."
 cd "$PROJECT_ROOT/core"
-cargo run --release --bin rollball-sign -- \
+cargo run --release --bin acowork-sign -- \
     --input "$UNSIGNED_PKG" \
     --key "$KEY_DIR" \
     --output "$SIGNED_PKG" \
@@ -111,7 +111,7 @@ echo ""
 # Step 4: Verify the signature
 echo -e "${GREEN}[4/4]${NC} Verifying signature..."
 cd "$PROJECT_ROOT/core"
-VERIFY_OUTPUT=$(cargo run --release --bin rollball-verify -- "$SIGNED_PKG" 2>&1 | grep -v "Compiling\|Finished\|Running\|warning")
+VERIFY_OUTPUT=$(cargo run --release --bin acowork-verify -- "$SIGNED_PKG" 2>&1 | grep -v "Compiling\|Finished\|Running\|warning")
 echo -e "      ${VERIFY_OUTPUT}"
 echo ""
 

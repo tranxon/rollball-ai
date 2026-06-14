@@ -1,7 +1,7 @@
 # Runtime 上下文压缩审查报告
 
 **审查日期**：2026-05-28  
-**范围**：`rollball-runtime` + `docs/design`  
+**范围**：`acowork-runtime` + `docs/design`  
 **核心文件**：`history.rs`, `loop_.rs`, `context.rs`, `token/counter.rs`, `agent_core.rs`, `loop_llm.rs`, `memory/manager.rs`, `episode_distill.rs`, `session_state.rs`  
 **设计对照**：`03-agent-runtime.md`, `05-memory.md`, `15-conversation-persistence.md`, `16-adr-context-threshold-dynamic.md`, `04-p2-s2-design-review.md`
 

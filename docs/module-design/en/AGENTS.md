@@ -1,6 +1,6 @@
 # AGENTS.md — docs/module-design/
 
-Detailed Rust crate specifications for RollBall.AI implementation.
+Detailed Rust crate specifications for AgentCowork.AI implementation.
 
 ## OVERVIEW
 
@@ -12,11 +12,11 @@ Detailed Rust crate specifications for RollBall.AI implementation.
 module-design/
 ├── zh/                       # 中文规格文档（源语言）
 │   ├── 00-overview.md        # Workspace layout, Cargo.toml deps, crate list
-│   ├── 01-core.md            # rollball-core: shared types, protocol, traits
-│   ├── 02-runtime.md         # rollball-runtime: Agent Runtime binary
-│   ├── 03-gateway.md         # rollball-gateway: IPC gateway, lifecycle mgmt
-│   ├── 04-grafeo.md          # rollball-grafeo: graph DB + HNSW + BM25
-│   ├── 05-vault-sign.md      # rollball-vault + rollball-sign: secrets, signing
+│   ├── 01-core.md            # acowork-core: shared types, protocol, traits
+│   ├── 02-runtime.md         # acowork-runtime: Agent Runtime binary
+│   ├── 03-gateway.md         # acowork-gateway: IPC gateway, lifecycle mgmt
+│   ├── 04-grafeo.md          # acowork-grafeo: graph DB + HNSW + BM25
+│   ├── 05-vault-sign.md      # acowork-vault + acowork-sign: secrets, signing
 │   ├── 06-architecture.md    # Dependency graph, data flows, compilation
 │   └── 06-ask-user-question-tool.md  # AskUserQuestion tool design
 └── en/                       # English agent instructions
@@ -25,13 +25,13 @@ module-design/
 
 ## WHERE TO LOOK
 
-| Crate | Spec File (zh) |
-|-------|----------------|
-| rollball-core | `zh/01-core.md` |
-| rollball-runtime | `zh/02-runtime.md` |
-| rollball-gateway | `zh/03-gateway.md` |
-| rollball-grafeo | `zh/04-grafeo.md` |
-| rollball-vault + sign | `zh/05-vault-sign.md` |
+| Crate                 | Spec File (zh)          |
+| --------------------- | ----------------------- |
+| acowork-core         | `zh/01-core.md`         |
+| acowork-runtime      | `zh/02-runtime.md`      |
+| acowork-gateway      | `zh/03-gateway.md`      |
+| acowork-grafeo       | `zh/04-grafeo.md`       |
+| acowork-vault + sign | `zh/05-vault-sign.md`   |
 | Architecture overview | `zh/06-architecture.md` |
 
 ## KEY CONVENTIONS

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RollBall LSP install script: gopls (Go)
+# AgentCowork LSP install script: gopls (Go)
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -114,7 +114,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== RollBall LSP Setup: gopls (Go) ==="
+echo "=== AgentCowork LSP Setup: gopls (Go) ==="
 install
 verify
 health_check

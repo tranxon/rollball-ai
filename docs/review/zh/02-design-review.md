@@ -25,7 +25,7 @@
 | P0-2 07-system-agent.md §3 冷启动描述矛盾 | ✅ 已修复 | 改用握手 identity_delivery 消息流程 |
 | P1-3 文档版本号同步 | ✅ 误报已修正 | 01-overview.md 和 08-security.md 实际已是 v3.4 |
 | P1-4 Capability Registry 实现细节缺失 | ✅ 已修复 | 单 HashMap + 显式 Intent |
-| P1-5 Desktop App Cargo 依赖路径 | ✅ 误报已修正 | `rollball-core` 依赖行不存在于当前文件，注释准确 |
+| P1-5 Desktop App Cargo 依赖路径 | ✅ 误报已修正 | `acowork-core` 依赖行不存在于当前文件，注释准确 |
 | P1-6 06-communication.md §0 引用错误 | ✅ 已修复 | 描述已修正 |
 | P2-7 01-overview.md Memory 描述对齐 | ✅ 已修复 | 版本已对齐 v3.4 |
 | P2-8 08-security.md §6 跨平台命名 | ✅ 已修复 | §6 已明确"Unix Socket / Named Pipe" |
@@ -106,7 +106,7 @@
 | 问题 | 类型 | 状态 |
 |------|------|------|
 | P1-1 工具数量矛盾 | P1 | ✅ 已修复：工具表加 Phase 1 说明 |
-| P1-2 Cargo 依赖矛盾 | P1 | ✅ 误报：`rollball-core` 行不存在于当前文件 |
+| P1-2 Cargo 依赖矛盾 | P1 | ✅ 误报：`acowork-core` 行不存在于当前文件 |
 | P2-1 版本号未同步 | P2 | ✅ 误报：01/08-overview.md 实际已是 v3.4 |
 | P2-2 导航描述不清晰 | P2 | ✅ 已修复：三通道独立描述 |
 | P2-3 §6 跨平台命名 | P2 | ✅ 已修复：已写"Unix Socket / Named Pipe" |

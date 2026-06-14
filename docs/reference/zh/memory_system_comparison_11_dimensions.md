@@ -68,7 +68,7 @@
 | 质量指标 | LLM Judge分数 | F1、BLEU、LLM Judge | Recall@K、EM、F1 | 依赖单元测试验证逻辑正确性 |
 | 外部验证 | 生产级部署（OpenMemory服务） | 论文结果：计算成本降低117倍，API调用减少159倍，准确率提升10.9% | 论文结果：多跳推理任务显著优于标准RAG | 社区使用反馈 |
 
-关键差异：LightMem和HippoRAG有学术级评估体系，配合标准基准测试和论文发表。mem0有生产级评估但偏向集成测试。zeroclaw完全依赖单元测试，缺少系统性质量评估框架——这在RollBall的Phase 1代码审查中也被指出（P1: Usage Report未通过IPC实际发送）。
+关键差异：LightMem和HippoRAG有学术级评估体系，配合标准基准测试和论文发表。mem0有生产级评估但偏向集成测试。zeroclaw完全依赖单元测试，缺少系统性质量评估框架——这在AgentCowork的Phase 1代码审查中也被指出（P1: Usage Report未通过IPC实际发送）。
 
 ---
 
@@ -94,7 +94,7 @@
 | 数据访问控制 | `filters`查询限定范围；metadata过滤支持9种操作符 | 向量数据库payload过滤 | 无 | `PolicyEnforcer`：只读命名空间、命名空间配额、分类配额 |
 | 数据导出 | `get_all()`支持filter导出 | 无内置导出 | 无 | `export(filter: ExportFilter)`支持GDPR Art.20数据可移植性 |
 | 删除权限 | `delete(memory_id)`单条 + `delete_all()`批量 | 无显式删除API | 无 | `forget(key)`单条 + `purge_namespace()` + `purge_session()`批量 |
-| 加密 | 无内置加密 | 无 | 无 | Vault集成（设计阶段，P1审查指出VaultFacade未接入rollball-vault） |
+| 加密 | 无内置加密 | 无 | 无 | Vault集成（设计阶段，P1审查指出VaultFacade未接入agentcowork-vault） |
 
 关键差异：zeroclaw的访问控制最完善——namespace隔离（装饰器模式强制执行）、PolicyEnforcer策略引擎（配额/只读/保留期）、GDPR合规导出。mem0通过`user_id/agent_id/run_id`三维度filter实现多租户，但无策略引擎。LightMem和HippoRAG几乎没有访问控制设计。
 
@@ -166,16 +166,16 @@
 | HippoRAG | 海马体索引 | 记忆=知识图谱上的关联激活 | 多跳推理的RAG问答 |
 | zeroclaw | 编译期安全 | 记忆=类型化的持久化条目 | 嵌入式Agent运行时 |
 
-### 对RollBall Grafeo设计的启示
+### 对AgentCowork Grafeo设计的启示
 
-基于以上对比分析，对RollBall v3.4的Grafeo记忆系统有以下启示：
+基于以上对比分析，对AgentCowork v3.4的Grafeo记忆系统有以下启示：
 
 1. **记忆检索**：zeroclaw的三阶段管线（缓存→FTS→向量）+ HippoRAG的PPR图遍历，可组合为"FTS/向量初筛 + Grafeo图遍历精排"的混合方案。
 2. **记忆注入**：zeroclaw的`[Memory context]`独立上下文块方案值得借鉴，避免记忆注入污染系统提示。
 3. **冲突处理**：zeroclaw的`superseded_by`软删除 + mem0的LLM仲裁可分层组合——工程级冲突用Jaccard/向量检测，语义级冲突用LLM仲裁。
 4. **生命周期**：LightMem的offline_update睡眠巩固 + zeroclaw的time decay/保留策略，可组合为Grafeo的"在线衰减 + 离线巩固"双循环机制。
-5. **访问控制**：zeroclaw的NamespacedMemory装饰器 + PolicyEnforcer策略引擎，直接适配RollBall的Agent隔离需求（每个Agent独立Grafeo）。
-6. **质量评估**：RollBall当前缺少评估体系，应参考LightMem/HippoRAG引入标准基准测试。
+5. **访问控制**：zeroclaw的NamespacedMemory装饰器 + PolicyEnforcer策略引擎，直接适配AgentCowork的Agent隔离需求（每个Agent独立Grafeo）。
+6. **质量评估**：AgentCowork当前缺少评估体系，应参考LightMem/HippoRAG引入标准基准测试。
 
 ---
 
@@ -187,4 +187,4 @@
 4. [zeroclaw: Rust-first Autonomous Agent Runtime](https://github.com/nicholasgasior/zeroclaw)
 5. [Memory in the Age of AI Agents - arXiv](https://arxiv.org/abs/2512.13564)
 6. [Graph-based Agent Memory: Taxonomy, Techniques, and Applications - arXiv](https://arxiv.org/abs/2602.05665)
-7. RollBall设计文档: `docs/05-memory.md`, `docs/module-design/04-grafeo.md`
+7. AgentCowork设计文档: `docs/05-memory.md`, `docs/module-design/04-grafeo.md`

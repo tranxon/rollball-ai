@@ -212,7 +212,7 @@ pub enum SessionStatus {
 #### 4.2.1 SessionState 加 status 字段
 
 ```rust
-// rollball-runtime/src/agent/session_state.rs
+// acowork-runtime/src/agent/session_state.rs
 
 pub struct SessionState {
     pub(crate) status: SessionStatus,  // 新增
@@ -277,7 +277,7 @@ pub enum ChunkEvent {
 #### 4.2.4 SessionInfoDto 加 status
 
 ```rust
-// rollball-core/src/protocol.rs
+// acowork-core/src/protocol.rs
 
 pub struct SessionInfoDto {
     pub session_id: String,
@@ -455,7 +455,7 @@ const isPaused = sessionStatus?.status === "paused";
 
 | 复杂度 | 位置 | 评估 |
 |--------|------|------|
-| 状态枚举定义 | rollball-core/protocol.rs | 新增 ~30 行，一次性 |
+| 状态枚举定义 | acowork-core/protocol.rs | 新增 ~30 行，一次性 |
 | SessionState.set_status() | session_state.rs | 新增 ~15 行 |
 | AgentLoop 状态转换点 | loop_.rs | ~10 处插入点，每处 3-5 行 |
 | ChunkEvent 新变体 | loop_.rs | 1 个新变体 |
@@ -492,7 +492,7 @@ const isPaused = sessionStatus?.status === "paused";
 
 ### Phase 1: Runtime 状态机（后端先行）
 
-1. 定义 `SessionStatus` 枚举（rollball-core/src/protocol.rs）
+1. 定义 `SessionStatus` 枚举（acowork-core/src/protocol.rs）
 2. `SessionState` 加 `status` 字段 + `set_status()` 方法
 3. `ChunkEvent` 加 `SessionStateChanged` 变体
 4. AgentLoop 的 10 个转换点插入 `set_status()` + emit

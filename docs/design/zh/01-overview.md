@@ -10,16 +10,16 @@
 
 **核心类比——Android 模型：**
 
-| Android | Rollball | 作用 |
-|---------|----------|------|
-| zygote / ART | Agent Runtime 二进制 | 通用执行引擎，只有一个 |
-| APK (DEX + resources) | .agent 包 (config + prompts + skills) | 声明式，无自定义代码 |
-| APK Signature | .agent Signing Block | 包签名，验证完整性和来源 |
-| ActivityManagerService | Gateway | 生命周期管理 |
-| Binder IPC | Gateway Service API | 进程间通信（传输层由平台实现） |
-| ContentProvider | Gateway UserProfile | 用户身份与偏好管理 |
-| PackageManagerService | Package Manager | 安装/卸载 |
-| AndroidManifest.xml | manifest.toml | 权限声明 |
+| Android                | AgentCowork                              | 作用                           |
+| ---------------------- | ------------------------------------- | ------------------------------ |
+| zygote / ART           | Agent Runtime 二进制                  | 通用执行引擎，只有一个         |
+| APK (DEX + resources)  | .agent 包 (config + prompts + skills) | 声明式，无自定义代码           |
+| APK Signature          | .agent Signing Block                  | 包签名，验证完整性和来源       |
+| ActivityManagerService | Gateway                               | 生命周期管理                   |
+| Binder IPC             | Gateway Service API                   | 进程间通信（传输层由平台实现） |
+| ContentProvider        | Gateway UserProfile                   | 用户身份与偏好管理             |
+| PackageManagerService  | Package Manager                       | 安装/卸载                      |
+| AndroidManifest.xml    | manifest.toml                         | 权限声明                       |
 
 ## 2. 核心特性
 
@@ -88,26 +88,26 @@
 
 **Agent 尽可能自治，Gateway 只管必须集中化的事。**
 
-| 职责 | 执行位置 | 原因 |
-|------|---------|------|
-| LLM 调用 | Agent 进程 | 直连无 RPC 开销，流式自然，Agent 自治 |
-| Tool 执行 | Agent 进程 | 自治权限校验，低延迟 |
-| 私有 Memory 读写 | Agent 进程（内嵌 Grafeo） | 零延迟，数据隔离 |
-| API Key 存储 | Gateway Vault | 安全集中管理 |
-| API Key 分发 | 启动时一次性给 Agent | Agent 直连 LLM 需要 |
-| 预算追踪 | Gateway（接收上报） | 跨 Agent 统计 |
-| 预算执行 | Agent（本地预检） | 低延迟，自治 |
-| 预算硬限 | Gateway（超限信号） | 兜底保障 |
-| 速率限制 | Gateway（令牌分配） | 共享资源协调 |
-| 用户身份与偏好 | Gateway（UserProfile） | 集中式身份管理，通过握手协议注入 |
-| Intent 路由 | Gateway | 跨进程调度 |
-| 沙箱配置 | Gateway（启动时） | 系统级权限 |
+| 职责             | 执行位置                  | 原因                                  |
+| ---------------- | ------------------------- | ------------------------------------- |
+| LLM 调用         | Agent 进程                | 直连无 RPC 开销，流式自然，Agent 自治 |
+| Tool 执行        | Agent 进程                | 自治权限校验，低延迟                  |
+| 私有 Memory 读写 | Agent 进程（内嵌 Grafeo） | 零延迟，数据隔离                      |
+| API Key 存储     | Gateway Vault             | 安全集中管理                          |
+| API Key 分发     | 启动时一次性给 Agent      | Agent 直连 LLM 需要                   |
+| 预算追踪         | Gateway（接收上报）       | 跨 Agent 统计                         |
+| 预算执行         | Agent（本地预检）         | 低延迟，自治                          |
+| 预算硬限         | Gateway（超限信号）       | 兜底保障                              |
+| 速率限制         | Gateway（令牌分配）       | 共享资源协调                          |
+| 用户身份与偏好   | Gateway（UserProfile）    | 集中式身份管理，通过握手协议注入      |
+| Intent 路由      | Gateway                   | 跨进程调度                            |
+| 沙箱配置         | Gateway（启动时）         | 系统级权限                            |
 
 ## 4.1 LLM 优先原则
 
 **信任 LLM 超过信任规则——除非规则能解决 LLM 不能解决的问题。**
 
-长期来看 LLM 的能力在持续提升（幻觉率下降、推理能力增强），而基于规则的方案缺乏泛化性，不是长期方案。在能力边界的权衡中，RollBall 遵循以下准则：
+长期来看 LLM 的能力在持续提升（幻觉率下降、推理能力增强），而基于规则的方案缺乏泛化性，不是长期方案。在能力边界的权衡中，AgentCowork 遵循以下准则：
 
 - **语义判断交给 LLM**：分类、评分、质量检查等涉及理解语义的任务，由 LLM 完成，不用规则模拟
 - **机械性限制交给规则**：长度校验、频率限制、安全过滤等 LLM 做不了的自我约束，由 Runtime 规则执行

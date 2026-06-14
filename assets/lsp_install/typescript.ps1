@@ -1,4 +1,4 @@
-# RollBall LSP install script: typescript-language-server
+# AgentCowork LSP install script: typescript-language-server
 # Phases: Install -> Verify -> Health Check
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== RollBall LSP Setup: typescript-language-server ==="
+Write-Host "=== AgentCowork LSP Setup: typescript-language-server ==="
 Install-Server
 Verify-Server
 Health-Check

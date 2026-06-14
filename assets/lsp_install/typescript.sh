@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RollBall LSP install script: typescript-language-server
+# AgentCowork LSP install script: typescript-language-server
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -112,7 +112,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== RollBall LSP Setup: typescript-language-server ==="
+echo "=== AgentCowork LSP Setup: typescript-language-server ==="
 install
 verify
 health_check

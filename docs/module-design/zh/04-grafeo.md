@@ -1,4 +1,4 @@
-# rollball-grafeo — 记忆存储引擎
+# acowork-grafeo — 记忆存储引擎
 
 **定位**：Agent 私有 Memory 的存储引擎实现。Grafeo 实现 `MemoryStore` trait（定义在 05-memory.md §10），作为 Phase 1 唯一的存储后端。每个 Agent Runtime 进程内嵌一个 GrafeoStore 实例。
 
@@ -26,7 +26,7 @@
 ## Crate 结构
 
 ```
-crates/rollball-grafeo/
+crates/acowork-grafeo/
 ├── Cargo.toml
 └── src/
     ├── lib.rs              # Export GrafeoStore + public types
@@ -68,7 +68,7 @@ crates/rollball-grafeo/
 - ~~`fulltext/bm25.rs`~~ — 替换为 grafeo-engine 原生 BM25 全文索引
 - ~~`retrieval/rrf.rs`~~ — 替换为 grafeo-engine `hybrid_search()` 内置 RRF
 - ~~`retrieval/hybrid_search.rs`~~ — 逻辑并入 `retrieval.rs`，直接调用 `db.hybrid_search()`
-- ~~`embedding/`~~ — Embedding 生成移至 `rollball-runtime` 层
+- ~~`embedding/`~~ — Embedding 生成移至 `acowork-runtime` 层
 - ~~`backup.rs` / `recovery.rs`~~ — 替换为 grafeo-engine WAL + `grafeo-file` 原生持久化
 - ~~`migration.rs`~~ — Grafeo LPG 无版本化 Schema 迁移概念，索引通过 API 动态创建
 - ~~`schema.rs`~~ — 关系型表结构定义已废弃
@@ -78,10 +78,10 @@ crates/rollball-grafeo/
 ## GrafeoStore（MemoryStore trait 实现）
 
 ```rust
-use rollball_memory::MemoryStore;
-use rollball_memory::{MemoryQuery, SearchResult, DecayConfig, StoreHealth, StoreStats};
-use rollball_memory::{Episode, KnowledgeNode, ProceduralNode, AutobiographicalNode};
-use rollball_memory::MemoryFilters;
+use acowork_memory::MemoryStore;
+use acowork_memory::{MemoryQuery, SearchResult, DecayConfig, StoreHealth, StoreStats};
+use acowork_memory::{Episode, KnowledgeNode, ProceduralNode, AutobiographicalNode};
+use acowork_memory::MemoryFilters;
 use grafeo_engine::GrafeoDB;
 
 /// Grafeo — MemoryStore implementation backed by grafeo-engine
@@ -268,29 +268,29 @@ impl MemoryStore for GrafeoStore {
 }
 ```
 
-**注意**：`MemoryStore` trait、`MemoryQuery`、`SearchResult`、`DecayConfig`、`StoreHealth`、`StoreStats`、`MemoryMiddleware` 等类型定义在独立的 `rollball-memory` crate 中（与 Runtime 共享），Grafeo crate 只实现 trait，不定义 trait。详见 05-memory.md §10。
+**注意**：`MemoryStore` trait、`MemoryQuery`、`SearchResult`、`DecayConfig`、`StoreHealth`、`StoreStats`、`MemoryMiddleware` 等类型定义在独立的 `acowork-memory` crate 中（与 Runtime 共享），Grafeo crate 只实现 trait，不定义 trait。详见 05-memory.md §10。
 
-**Embedding 职责上移**：GrafeoStore 不持有 `EmbeddingProvider`。Embedding 向量由 `rollball-runtime` 层通过 `EmbeddingProvider` trait 生成（Ollama `/api/embed` → Remote `/embeddings` 降级链），以 `Vec<f32>` 形式传入 `Episode` / `MemoryQuery`。`MemoryManager.retrieve()` 方法头部自动生成 embedding（200ms 超时），失败降级到 `text_search`。GrafeoStore 仅负责向量存储和 HNSW 索引，维度由 `GrafeoConfig.embedding_dim` 动态注入。
+**Embedding 职责上移**：GrafeoStore 不持有 `EmbeddingProvider`。Embedding 向量由 `acowork-runtime` 层通过 `EmbeddingProvider` trait 生成（Ollama `/api/embed` → Remote `/embeddings` 降级链），以 `Vec<f32>` 形式传入 `Episode` / `MemoryQuery`。`MemoryManager.retrieve()` 方法头部自动生成 embedding（200ms 超时），失败降级到 `text_search`。GrafeoStore 仅负责向量存储和 HNSW 索引，维度由 `GrafeoConfig.embedding_dim` 动态注入。
 
 ---
 
 ## Grafeo LPG 数据模型
 
-Rollball 的记忆类型直接映射为 Grafeo 的 **Label**，利用 Label 隔离实现类型区分，无需额外的 `node_type` 枚举字段。
+AgentCowork 的记忆类型直接映射为 Grafeo 的 **Label**，利用 Label 隔离实现类型区分，无需额外的 `node_type` 枚举字段。
 
 ### 8.1 节点类型（NodeType）— 认知功能分层
 
 节点类型通过 **LPG Label** 实现，区分记忆的**认知功能**：
 
-| Label | 含义 | 核心 Properties |
-|-------|------|----------------|
-| `Episodic` | 经历层节点 | `content`, `embedding`, `importance`, `timestamp`, `session_id`, `role`, `content_type`, `consolidated`, `metadata`, `artifact_refs` |
-| `Knowledge` | 知识节点 | `content`, `embedding`, `sub_type` (Fact/Preference/Relation), `confidence`, `subject`, `predicate`, `object`, `status`, `privacy` |
-| `Procedural` | 程序记忆节点 | `content`, `embedding`, `procedure_id`, `success_rate`, `invocation_count`, `status` |
-| `Autobiographical` | 自传体记忆节点 | `content`, `embedding`, `sub_type` (Identity/Capability/Limitation/Preference/History/Relationship), `status` (forced Active) |
-| `SystemConfig` | 系统配置节点 | `config_key`, `config_value`, `updated_at` |
-| `ToolInvocation` | 工具调用记录 | `tool_name`, `input_hash`, `output_summary`, `timestamp`, `latency_ms` |
-| `Session` | 会话节点 | `session_id`, `started_at`, `ended_at`, `agent_id` |
+| Label              | 含义           | 核心 Properties                                                                                                                      |
+| ------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `Episodic`         | 经历层节点     | `content`, `embedding`, `importance`, `timestamp`, `session_id`, `role`, `content_type`, `consolidated`, `metadata`, `artifact_refs` |
+| `Knowledge`        | 知识节点       | `content`, `embedding`, `sub_type` (Fact/Preference/Relation), `confidence`, `subject`, `predicate`, `object`, `status`, `privacy`   |
+| `Procedural`       | 程序记忆节点   | `content`, `embedding`, `procedure_id`, `success_rate`, `invocation_count`, `status`                                                 |
+| `Autobiographical` | 自传体记忆节点 | `content`, `embedding`, `sub_type` (Identity/Capability/Limitation/Preference/History/Relationship), `status` (forced Active)        |
+| `SystemConfig`     | 系统配置节点   | `config_key`, `config_value`, `updated_at`                                                                                           |
+| `ToolInvocation`   | 工具调用记录   | `tool_name`, `input_hash`, `output_summary`, `timestamp`, `latency_ms`                                                               |
+| `Session`          | 会话节点       | `session_id`, `started_at`, `ended_at`, `agent_id`                                                                                   |
 
 **NodeType 设计原则：**
 - 通过 **Grafeo Label** 实现（而非枚举字段），利用 Label 隔离实现类型区分
@@ -306,7 +306,7 @@ Zone 用于区分记忆的**业务场景分区**，与 NodeType 正交：
 - **Zone** 回答"这个记忆属于哪个业务场景？"（业务分区：work/personal/system）
 
 **⚠️ 当前状态（Phase 1-3）：**
-- `rollball-core/src/memory/traits.rs` 中定义了 `MemoryNode.zone` 字段，但**暂未使用**
+- `acowork-core/src/memory/traits.rs` 中定义了 `MemoryNode.zone` 字段，但**暂未使用**
 - `MemoryStore::list_by_zone()` 方法已定义，但 **GrafeoStore 未实现**
 - Zone 功能推迟到 Phase 4+，当前所有节点默认属于 `default` zone
 
@@ -328,13 +328,13 @@ Zone 用于区分记忆的**业务场景分区**，与 NodeType 正交：
 
 ### Edge Types
 
-| Edge Type | 起点 | 终点 | 含义 |
-|-----------|------|------|------|
-| `HAS_MEMORY` | `Session` | `Episodic` / `Knowledge` / ... | 会话拥有记忆 |
-| `REFERENCES` | `Knowledge` | `Knowledge` | 知识间引用关系 |
-| `SELF_REFERENCES` | `Autobiographical` | `Autobiographical` | 自传体自我引用（身份关联） |
-| `PRODUCED` | `ToolInvocation` | `Knowledge` / `Episodic` | 工具调用产生记忆 |
-| `DERIVED_FROM` | `Knowledge` | `Episodic` | 知识来源于某段经历 |
+| Edge Type         | 起点               | 终点                           | 含义                       |
+| ----------------- | ------------------ | ------------------------------ | -------------------------- |
+| `HAS_MEMORY`      | `Session`          | `Episodic` / `Knowledge` / ... | 会话拥有记忆               |
+| `REFERENCES`      | `Knowledge`        | `Knowledge`                    | 知识间引用关系             |
+| `SELF_REFERENCES` | `Autobiographical` | `Autobiographical`             | 自传体自我引用（身份关联） |
+| `PRODUCED`        | `ToolInvocation`   | `Knowledge` / `Episodic`       | 工具调用产生记忆           |
+| `DERIVED_FROM`    | `Knowledge`        | `Episodic`                     | 知识来源于某段经历         |
 
 ### LPG 模型初始化示例
 
@@ -369,14 +369,14 @@ session.commit()?;
 
 ## 检索能力（基于 grafeo-engine 原生 API）
 
-| 能力 | 旧描述 | 新描述 |
-|------|--------|--------|
-| 语义检索 | 自研 HNSW (M=16, ef_c=100) | `db.vector_search(label, "embedding", &vec, k, Some(ef), filters)` — Grafeo 原生 HNSW，支持余弦/欧几里得/点积距离，SIMD 加速 |
-| 关键词检索 | rusqlite FTS5 BM25 | `db.text_search(label, "content", query, k, filters)` — Grafeo 原生 BM25，内置 Unicode 分词器 |
-| 混合检索 | 自研 RRF 融合 | `db.hybrid_search(label, "content", "embedding", query, Some(&vec), k, filters)` — 内置 RRF 融合，可选 topology boost |
-| MMR 去重 | 无 | `db.mmr_search(label, "embedding", &vec, k, fetch_k, lambda, ef, filters)` — Maximal Marginal Relevance，保证结果多样性 |
-| 图遍历 | SQL 模拟 | GQL: `MATCH (m)-[r*1..3]-(other) WHERE id(m) = $id RETURN other` — 原生 LPG 遍历，有查询优化器支持 |
-| 冲突检测 | 无（Phase 2 新增） | `db.vector_search()` — 两层信号融合（语义相似度 + 时间窗口），统一 Ambiguous，Phase 3 LLM 仲裁 |
+| 能力       | 旧描述                     | 新描述                                                                                                                       |
+| ---------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 语义检索   | 自研 HNSW (M=16, ef_c=100) | `db.vector_search(label, "embedding", &vec, k, Some(ef), filters)` — Grafeo 原生 HNSW，支持余弦/欧几里得/点积距离，SIMD 加速 |
+| 关键词检索 | rusqlite FTS5 BM25         | `db.text_search(label, "content", query, k, filters)` — Grafeo 原生 BM25，内置 Unicode 分词器                                |
+| 混合检索   | 自研 RRF 融合              | `db.hybrid_search(label, "content", "embedding", query, Some(&vec), k, filters)` — 内置 RRF 融合，可选 topology boost        |
+| MMR 去重   | 无                         | `db.mmr_search(label, "embedding", &vec, k, fetch_k, lambda, ef, filters)` — Maximal Marginal Relevance，保证结果多样性      |
+| 图遍历     | SQL 模拟                   | GQL: `MATCH (m)-[r*1..3]-(other) WHERE id(m) = $id RETURN other` — 原生 LPG 遍历，有查询优化器支持                           |
+| 冲突检测   | 无（Phase 2 新增）         | `db.vector_search()` — 两层信号融合（语义相似度 + 时间窗口），统一 Ambiguous，Phase 3 LLM 仲裁                               |
 
 ### 代码示例
 
@@ -442,11 +442,11 @@ let expanded = session.execute_with_params(&gql, [("id", seed_id.into())])?;
 
 ## 图算法增强
 
-grafeo-engine 内置图算法过程（`algos` feature），Rollball 记忆系统可直接调用以提升记忆质量。
+grafeo-engine 内置图算法过程（`algos` feature），AgentCowork 记忆系统可直接调用以提升记忆质量。
 
 ### PageRank 集成
 
-Rollball 原有的 `importance_score` 是手调的 `f32`。Grafeo 的 PageRank 算法可以自动评估记忆节点的重要性——被更多边引用的节点 PageRank 更高，作为 `importance_score` 的补充或替代。
+AgentCowork 原有的 `importance_score` 是手调的 `f32`。Grafeo 的 PageRank 算法可以自动评估记忆节点的重要性——被更多边引用的节点 PageRank 更高，作为 `importance_score` 的补充或替代。
 
 ```rust
 /// Compute PageRank scores for all memory nodes
@@ -583,10 +583,10 @@ pub fn detect_memory_communities(&self) -> Result<Vec<Community>> {
 
 ### 两层冲突信号
 
-| 信号层 | 数据源 | 判定逻辑 | 动态阈值 |
-|--------|--------|---------|---------|
+| 信号层         | 数据源                                        | 判定逻辑                             | 动态阈值                                    |
+| -------------- | --------------------------------------------- | ------------------------------------ | ------------------------------------------- |
 | **语义相似度** | `db.vector_search()` 返回的候选节点 embedding | 新节点与已有 Active 节点的余弦相似度 | Fact 0.85 / Preference 0.80 / Relation 0.90 |
-| **时间冲突** | 节点创建时间差 | 同一 subject 在 24h 内的矛盾陈述 | 时间差 < 24h |
+| **时间冲突**   | 节点创建时间差                                | 同一 subject 在 24h 内的矛盾陈述     | 时间差 < 24h                                |
 
 **语义阈值差异化设计**：
 - **Fact（事实）**：阈值 0.85 — 事实要求高精度匹配，避免误判
@@ -680,10 +680,10 @@ pub fn detect_conflict(
 
 `conflict.rs`（即时阶段）和 `consolidation/conflict.rs`（离线阶段）的分工：
 
-| 阶段 | 模块 | 职责 | 输出 |
-|------|------|------|------|
-| **即时** | `conflict.rs` | 两层信号融合，统一标记 Ambiguous | `ConflictSignal` + `conflict_group_id` |
-| **离线** | `consolidation/conflict_llm.rs` | LLM 仲裁，精确分类 Evolution/Correction/Ambiguous | Edge 创建 + 旧节点 Dormant 处理 |
+| 阶段     | 模块                            | 职责                                              | 输出                                   |
+| -------- | ------------------------------- | ------------------------------------------------- | -------------------------------------- |
+| **即时** | `conflict.rs`                   | 两层信号融合，统一标记 Ambiguous                  | `ConflictSignal` + `conflict_group_id` |
+| **离线** | `consolidation/conflict_llm.rs` | LLM 仲裁，精确分类 Evolution/Correction/Ambiguous | Edge 创建 + 旧节点 Dormant 处理        |
 
 即时阶段仅做**冲突候选发现**（语义 + 时间），统一标记 Ambiguous 后交由离线巩固 LLM 做最终判定。这与 05-memory.md §6.4 的两阶段设计一致。
 
@@ -691,21 +691,21 @@ pub fn detect_conflict(
 
 ## 索引说明
 
-| 索引类型 | 旧实现 | 新实现 |
-|----------|--------|--------|
-| 向量索引 | 自研 HNSW (`vector/hnsw.rs`) | Grafeo 原生 HNSW 向量索引，通过 `db.create_vector_index()` 创建 |
-| 全文索引 | rusqlite FTS5 (`fulltext/bm25.rs`) | Grafeo 原生 BM25 全文索引，通过 `db.create_text_index()` 创建 |
-| 混合检索 | 自研 RRF (`retrieval/rrf.rs`) | Grafeo 原生 `hybrid_search()`，内置 RRF 融合 + topology boost |
-| 图遍历索引 | SQL JOIN 模拟 | Grafeo 原生邻接索引，O(degree) 遍历，查询优化器支持谓词下推 |
-| 事务隔离 | rusqlite WAL | Grafeo MVCC 快照隔离，原生多版本并发控制 |
-| 崩溃恢复 | 自研 `recovery.rs` | Grafeo WAL 重放机制，内置崩溃恢复 |
-| 备份 | 自研 `backup.rs` | `grafeo-file` 单文件格式 + 文件级备份 |
+| 索引类型   | 旧实现                             | 新实现                                                          |
+| ---------- | ---------------------------------- | --------------------------------------------------------------- |
+| 向量索引   | 自研 HNSW (`vector/hnsw.rs`)       | Grafeo 原生 HNSW 向量索引，通过 `db.create_vector_index()` 创建 |
+| 全文索引   | rusqlite FTS5 (`fulltext/bm25.rs`) | Grafeo 原生 BM25 全文索引，通过 `db.create_text_index()` 创建   |
+| 混合检索   | 自研 RRF (`retrieval/rrf.rs`)      | Grafeo 原生 `hybrid_search()`，内置 RRF 融合 + topology boost   |
+| 图遍历索引 | SQL JOIN 模拟                      | Grafeo 原生邻接索引，O(degree) 遍历，查询优化器支持谓词下推     |
+| 事务隔离   | rusqlite WAL                       | Grafeo MVCC 快照隔离，原生多版本并发控制                        |
+| 崩溃恢复   | 自研 `recovery.rs`                 | Grafeo WAL 重放机制，内置崩溃恢复                               |
+| 备份       | 自研 `backup.rs`                   | `grafeo-file` 单文件格式 + 文件级备份                           |
 
 ---
 
 ## 设计决策
 
-- **MemoryStore trait 抽象**：GrafeoStore 实现 `rollball-memory` crate 定义的 `MemoryStore` trait，Runtime 和 MemoryManager 只依赖 trait。未来可无缝替换为其他存储后端（Sled / LMDB / 远程服务 / 内存 mock）
+- **MemoryStore trait 抽象**：GrafeoStore 实现 `acowork-memory` crate 定义的 `MemoryStore` trait，Runtime 和 MemoryManager 只依赖 trait。未来可无缝替换为其他存储后端（Sled / LMDB / 远程服务 / 内存 mock）
 - **存储后端**：`grafeo-engine`（v0.5.39，crates.io），纯 Rust 图数据库，支持 LPG + GQL + HNSW + BM25 + WAL + MVCC
 - **向量索引**：Grafeo 原生 HNSW，M/ef/beam_width 全可配置，距离函数支持余弦/欧几里得/点积/曼哈顿，SIMD 加速
 - **全文索引**：Grafeo 原生 BM25，内置 Unicode 分词器
@@ -729,7 +729,7 @@ pub fn detect_conflict(
 
 ```toml
 [dependencies]
-rollball-memory = { workspace = true }    # MemoryStore trait + shared types
+acowork-memory = { workspace = true }    # MemoryStore trait + shared types
 grafeo-engine = { workspace = true }      # v0.5.39, features: lpg, gql, vector-index, text-index, hybrid-search, wal, grafeo-file, algos, cdc, parallel
 grafeo-common = { workspace = true }      # Shared types from Grafeo ecosystem
 serde = { workspace = true }              # Serialization
@@ -763,7 +763,7 @@ grafeo-common = { version = "0.5.39" }
 
 ## Feature Flags
 
-`rollball-grafeo` 本身 feature flags 极简 —— 复杂能力由 `grafeo-engine` 的 feature flags 控制：
+`acowork-grafeo` 本身 feature flags 极简 —— 复杂能力由 `grafeo-engine` 的 feature flags 控制：
 
 ```toml
 [features]
@@ -776,11 +776,11 @@ default = []
 
 ## 未来扩展方向
 
-| 方向 | 说明 | Phase |
-|------|------|-------|
-| InMemoryStore | 基于 `GrafeoDB::new_in_memory()` 的 mock 实现，用于单元测试和集成测试 | Phase 3 |
-| RemoteMemoryStore | 基于 Grafeo Server 的云端分布式存储，支持多设备实时共享 | Phase 5+ |
-| 增量同步 | 基于 Grafeo CDC + WAL 的跨设备增量同步协议 | Phase 5+ |
-| Temporal 版本化 | 启用 `grafeo-engine` `"temporal"` feature，支持记忆时间版本化查询 | Phase 4+ |
-| 加密存储 | 启用 `grafeo-engine` `"encryption"` feature（AES-256-GCM），与 Vault 密钥管理集成 | Phase 4+ |
-| MCP 暴露 | 通过 `grafeo-mcp` 将记忆 API 暴露给外部 Agent | Phase 4+ |
+| 方向              | 说明                                                                              | Phase    |
+| ----------------- | --------------------------------------------------------------------------------- | -------- |
+| InMemoryStore     | 基于 `GrafeoDB::new_in_memory()` 的 mock 实现，用于单元测试和集成测试             | Phase 3  |
+| RemoteMemoryStore | 基于 Grafeo Server 的云端分布式存储，支持多设备实时共享                           | Phase 5+ |
+| 增量同步          | 基于 Grafeo CDC + WAL 的跨设备增量同步协议                                        | Phase 5+ |
+| Temporal 版本化   | 启用 `grafeo-engine` `"temporal"` feature，支持记忆时间版本化查询                 | Phase 4+ |
+| 加密存储          | 启用 `grafeo-engine` `"encryption"` feature（AES-256-GCM），与 Vault 密钥管理集成 | Phase 4+ |
+| MCP 暴露          | 通过 `grafeo-mcp` 将记忆 API 暴露给外部 Agent                                     | Phase 4+ |

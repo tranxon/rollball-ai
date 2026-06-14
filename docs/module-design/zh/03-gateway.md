@@ -1,9 +1,9 @@
-# rollball-gateway — Gateway
+# acowork-gateway — Gateway
 
 **定位**：常驻系统级进程，管理 Agent 生命周期、Intent 路由、密钥分发、预算协调。**不代理 Agent 业务逻辑**。
 
 ```
-crates/rollball-gateway/
+crates/acowork-gateway/
 ├── Cargo.toml
 └── src/
     ├── main.rs                    # CLI 入口（系统托盘 / 守护进程）
@@ -35,7 +35,7 @@ crates/rollball-gateway/
     │   ├── mod.rs
     │   └── limiter.rs             # 速率令牌分配（per-provider RPM/TPM）
     ├── vault/
-    │   ├── mod.rs                 # Key Vault 门面（委托 rollball-vault crate）
+    │   ├── mod.rs                 # Key Vault 门面（委托 acowork-vault crate）
     │   └── distributor.rs         # Key 一次性分发（通过 IPC 传输）
     ├── sandbox/
     │   ├── mod.rs
@@ -89,9 +89,9 @@ impl LifecycleManager {
 
 ## Gateway 定位
 
-- `rollball-core` — 共享类型
-- `rollball-sign` — 签名验证
-- `rollball-vault` — 密钥存储与分发
+- `acowork-core` — 共享类型
+- `acowork-sign` — 签名验证
+- `acowork-vault` — 密钥存储与分发
 - `tokio`, `clap`, `serde_json`, `tracing`
 - `cron` — 定时触发器
 

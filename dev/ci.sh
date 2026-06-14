@@ -1,12 +1,12 @@
 #!/bin/bash
-# CI script for Rollball.AI
+# CI script for AgentCowork.AI
 # Usage: ./dev/ci.sh [check|clippy|test|integration|all]
 
 set -e
 
 MODE=${1:-all}
 
-echo "=== Rollball.AI CI ==="
+echo "=== AgentCowork.AI CI ==="
 
 run_check() {
     echo "Running cargo check..."
@@ -16,15 +16,15 @@ run_check() {
 run_clippy() {
     echo "Running cargo clippy..."
     cargo clippy --all-targets -- -D warnings
-    echo "Running cargo clippy for rollball-embed..."
-    cargo clippy -p rollball-embed --all-targets -- -D warnings
+    echo "Running cargo clippy for acowork-embed..."
+    cargo clippy -p acowork-embed --all-targets -- -D warnings
 }
 
 run_test() {
     echo "Running cargo test..."
     cargo test --all
-    echo "Running rollball-embed tests..."
-    cargo test -p rollball-embed
+    echo "Running acowork-embed tests..."
+    cargo test -p acowork-embed
 }
 
 run_integration() {
