@@ -92,9 +92,33 @@ try {
 
 Write-Host ""
 
-# Step: Build Embedding Runtime (ORT auto-detected by build.rs)
+# Step: Build Embedding Runtime (ORT auto-detected from .ort/ directory)
 $step++
 Write-Host "[$step/$totalSteps] Building Embedding Runtime (release mode)..." -ForegroundColor Yellow
+
+# Auto-detect local ONNX Runtime install under .ort/
+if (-not $env:ORT_LIB_LOCATION) {
+    $ortDir = Join-Path $WorkspaceRoot ".ort"
+    if (Test-Path $ortDir) {
+        $entries = Get-ChildItem -Path $ortDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "onnxruntime-*" }
+        foreach ($entry in $entries) {
+            $libDir = Join-Path $entry.FullName "lib"
+            $dllPath = Join-Path $libDir "onnxruntime.dll"
+            if (Test-Path $dllPath) {
+                $env:ORT_LIB_LOCATION = $libDir
+                $env:ORT_DYLIB_PATH = $dllPath
+                Write-Host "  Detected local ORT: $libDir" -ForegroundColor Green
+                break
+            }
+        }
+    }
+    if (-not $env:ORT_LIB_LOCATION) {
+        Write-Host "  ONNX Runtime not found. Run .\dev\setup_ort.ps1 first." -ForegroundColor Red
+        Write-Host "  Alternative: cargo build --release -p rollball-embed --features download-ort" -ForegroundColor Red
+        exit 1
+    }
+}
+
 try {
     cargo build --release -p rollball-embed 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {

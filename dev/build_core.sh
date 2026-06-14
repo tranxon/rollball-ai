@@ -103,8 +103,9 @@ echo ""
 
 # Step 3.5: Build Embedding Runtime
 #
-# ORT linking is auto-detected by rollball-embed's build.rs at compile time.
-# No manual env vars or strategy selection needed.
+# This script probes .ort/onnxruntime-*/lib for a local ONNX Runtime install
+# and exports ORT_LIB_LOCATION / ORT_DYLIB_PATH / ORT_PREFER_DYNAMIC_LINK
+# before invoking cargo. Run dev/setup_ort.sh first to download ORT.
 #
 # Users can skip this step entirely with: ./dev/build_core.sh --skip-embed
 
@@ -119,6 +120,31 @@ if [ "$SKIP_EMBED" = "true" ]; then
     echo -e "${YELLOW}[3.5/5] Skipping Embedding Runtime (--skip-embed).${NC}"
 else
     echo -e "${YELLOW}[3.5/5] Building Embedding Runtime (release mode)...${NC}"
+
+    # Auto-detect local ONNX Runtime install under .ort/
+    if [ -z "$ORT_LIB_LOCATION" ]; then
+        for ort_dir in "$WORKSPACE_ROOT"/.ort/onnxruntime-*; do
+            [ -d "$ort_dir" ] || continue
+            local_lib=""
+            case "$OS" in
+                macos)   local_lib="$ort_dir/lib/libonnxruntime.dylib" ;;
+                windows) local_lib="$ort_dir/lib/onnxruntime.dll" ;;
+                *)       local_lib="$ort_dir/lib/libonnxruntime.so" ;;
+            esac
+            if [ -f "$local_lib" ]; then
+                export ORT_LIB_LOCATION="$ort_dir/lib"
+                export ORT_DYLIB_PATH="$local_lib"
+                export ORT_PREFER_DYNAMIC_LINK=1
+                echo -e "${GREEN}  Detected local ORT: $ort_dir/lib${NC}"
+                break
+            fi
+        done
+    fi
+    if [ -z "$ORT_LIB_LOCATION" ]; then
+        echo -e "${RED}  ONNX Runtime not found. Run ./dev/setup_ort.sh first.${NC}"
+        echo -e "${RED}  Alternative: cargo build --release -p rollball-embed --features download-ort${NC}"
+        exit 1
+    fi
 
     if cargo build --release -p rollball-embed 2>&1 | tee /tmp/embed_build.log; then
         if grep -q "error" /tmp/embed_build.log 2>/dev/null; then

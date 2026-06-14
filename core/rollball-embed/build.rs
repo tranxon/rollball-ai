@@ -1,11 +1,14 @@
 //! Build script for rollball-embed.
 //!
-//! ORT linking is configured via the `ORT_LIB_LOCATION` environment variable,
-//! which is auto-detected by:
-//!   - `dev/ort_env.js`         (used by `npm run tauri dev`)
-//!   - `dev/build_core.ps1`     (Windows)
-//!   - `dev/build_core.sh`      (Linux / macOS)
-//!   - `dev/setup_ort.ps1/sh`   (initial ORT download)
+//! ORT linking is configured via the `ORT_LIB_LOCATION` environment variable.
+//! This variable is auto-detected at build time by:
+//!   - `dev/build_core.sh`      (Linux / macOS — probes .ort/ directory)
+//!   - `dev/build_core.ps1`     (Windows — probes .ort/ directory)
+//!   - `dev/ort_env.js`         (Tauri dev mode — probes .ort/ directory)
+//!
+//! ORT is installed to .ort/ by:
+//!   - `dev/setup_ort.sh`       (Linux / macOS)
+//!   - `dev/setup_ort.ps1`      (Windows)
 //!
 //! If `ORT_LIB_LOCATION` is unset and `download-ort` is not active, this
 //! script emits a warning so developers know to install ORT first.
