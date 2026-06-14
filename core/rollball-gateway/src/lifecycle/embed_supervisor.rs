@@ -204,31 +204,62 @@ async fn run_supervisor(
     }
 
     loop {
-        match run_monitor_session(&cfg, &state, &pusher, port, &mut in_startup_grace).await {
+        let exit_reason = match run_monitor_session(&cfg, &state, &pusher, port, &mut in_startup_grace).await {
             MonitorExit::Clean => {
-                // Process exited normally (e.g., user-triggered stop). Bail out.
                 tracing::info!("Embed monitor session ended cleanly");
                 return;
             }
-            MonitorExit::HeartbeatTimeout => {
-                tracing::warn!("Embed heartbeat timeout — process considered stuck");
-            }
-            MonitorExit::ConnectionLost => {
-                tracing::warn!("Lost connection to embed /events");
-            }
-        }
+            exit @ MonitorExit::HeartbeatTimeout | exit @ MonitorExit::ConnectionLost => exit,
+        };
 
-        // Decide whether to restart. During startup grace, don't count
-        // failures against the budget — the embed was probably just
-        // slow to boot. Once a successful monitor session has run
-        // (in_startup_grace is false), any further disconnection is
-        // a real restart trigger.
+        // During startup grace, failures don't count — the embed is
+        // probably just slow to boot.
         if in_startup_grace {
             tracing::warn!(
-                "Embed monitor session ended during startup grace — sleeping briefly then retrying"
+                "Embed monitor session ended during startup grace — retrying shortly"
             );
             sleep(STARTUP_POLL).await;
             continue;
+        }
+
+        // Best-effort: is the embed actually dead, or just the SSE
+        // connection that broke?
+        let embed_alive = try_connect_events(port).await;
+
+        match exit_reason {
+            MonitorExit::HeartbeatTimeout => {
+                // SSE had established heartbeats, then they stopped.
+                // The HTTP server may still be responding (stuck in
+                // deadlock or ONNX hang). Kill + restart.
+                tracing::warn!("Embed heartbeat timeout — killing stuck process");
+                if embed_alive {
+                    let pid = state.read().await
+                        .embed_process.as_ref().map(|e| e.pid);
+                    if let Some(p) = pid {
+                        let _ = super::embed::kill_embed_process(p).await;
+                    }
+                }
+            }
+            MonitorExit::ConnectionLost => {
+                if embed_alive {
+                    // Transient network glitch or the SSE-timeout bug.
+                    // Embed is fine — just reconnect.
+                    tracing::info!(
+                        "Embed /events connection lost but server is responding; reconnecting"
+                    );
+                    continue;
+                }
+                // Embed process died. Fall through to restart.
+            }
+            MonitorExit::Clean => unreachable!(),
+        }
+
+        // If the reaper hasn't fired yet but the embed is actually
+        // dead, we may still see a stale Some in embed_process.
+        // Clear it so the restart logic starts from a clean state.
+        {
+            let mut gw = state.write().await;
+            gw.embed_process = None;
         }
 
         let attempts = history.record();
@@ -363,8 +394,12 @@ async fn run_monitor_session(
     let url = format!("http://127.0.0.1:{port}/events");
     tracing::info!(%url, "Connecting to embed SSE event stream");
 
+    // SSE is a long-lived connection (hours/days). Use only a connect
+    // timeout for the TCP handshake; the per-connection total-timeout
+    // would kill the stream after 30s and falsely trigger a restart.
+    // Liveness is enforced by the heartbeat watchdog at the app level.
     let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(30)) // per-chunk read timeout
+        .connect_timeout(Duration::from_secs(5))
         .build()
     {
         Ok(c) => c,
