@@ -70,6 +70,26 @@ echo -e "${YELLOW}[1/5] Stopping running Gateway, Runtime, and Embed processes..
 stop_process "rollball-gateway" "Gateway"
 stop_process "rollball-runtime" "Runtime"
 stop_process "rollball-embed"  "Embed"
+
+# Ensure embed port is released before starting a new gateway.
+# On Unix, pkill may not have finished releasing port 18080 within the
+# 1s sleep; the new gateway spawns its own embed immediately and if the
+# old one is still binding, the new embed panics with AddrInUse.
+if [ "$OS" = "linux" ] || [ "$OS" = "macos" ]; then
+    if command -v fuser &>/dev/null; then
+        fuser -k 18080/tcp 2>/dev/null || true
+    fi
+    # Wait up to 3s for the port to be released
+    waited=0
+    while command -v ss &>/dev/null && ss -tlnp 2>/dev/null | grep -q ":18080 "; do
+        sleep 0.5
+        waited=$((waited + 1))
+        if [ $waited -ge 6 ]; then
+            echo -e "${RED}  WARNING: Port 18080 still in use after 3s${NC}"
+            break
+        fi
+    done
+fi
 echo ""
 
 # Step 2: Build Gateway
