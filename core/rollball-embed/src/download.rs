@@ -273,6 +273,15 @@ impl Downloader {
                 *name = local_name.to_string();
             }
             let local_path = tmp_dir.join(local_name);
+            // Skip the download if the file already exists in the temp
+            // directory — a previous attempt may have completed this
+            // file before failing on another. Existence + non-zero size
+            // is a simple integrity check (we trust the server's data).
+            if local_path.exists() && local_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+                tracing::info!(local_name, "File already downloaded, skipping");
+                downloaded_files.push(local_name.to_string());
+                continue;
+            }
             download_file_race(
                 &self.http_client,
                 hf_repo,
@@ -302,10 +311,14 @@ impl Downloader {
             .to_string();
         let ext_data_path = tmp_dir.join(&onnx_ext_data_local);
 
-        if let Ok(mut name) = progress.current_file.lock() {
-            *name = onnx_ext_data_local.to_string();
-        }
-        match download_file_race(
+        if ext_data_path.exists() && ext_data_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+            tracing::info!(%onnx_ext_data_local, "External data file already downloaded, skipping");
+            downloaded_files.push(onnx_ext_data_local);
+        } else {
+            if let Ok(mut name) = progress.current_file.lock() {
+                *name = onnx_ext_data_local.to_string();
+            }
+            match download_file_race(
             &self.http_client,
             hf_repo,
             &onnx_ext_data_remote,
@@ -325,6 +338,7 @@ impl Downloader {
                 );
             }
         }
+        } // else: external data file already exists
 
         // Atomic rename: tmp_dir → model_dir (cross-platform)
         rename_or_replace(&tmp_dir, &model_dir)?;
