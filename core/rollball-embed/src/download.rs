@@ -318,26 +318,28 @@ impl Downloader {
             if let Ok(mut name) = progress.current_file.lock() {
                 *name = onnx_ext_data_local.to_string();
             }
-            match download_file_race(
-            &self.http_client,
-            hf_repo,
-            &onnx_ext_data_remote,
-            &ext_data_path,
-            &sources,
-            progress,
-        ).await {
-            Ok(()) => {
-                downloaded_files.push(onnx_ext_data_local);
+            // External data is optional — one-shot download, no race
+            // or retries. If the file doesn't exist, the server returns
+            // 404 and we move on immediately.
+            match download_single(
+                &self.http_client,
+                &hf_file_url(hf_repo, &onnx_ext_data_remote, &sources[0]),
+                &ext_data_path,
+                0,
+                progress,
+            ).await {
+                Ok(()) => {
+                    downloaded_files.push(onnx_ext_data_local);
+                }
+                Err(e) => {
+                    // External data is optional — some models embed weights directly
+                    tracing::info!(
+                        path = %onnx_ext_data_remote,
+                        error = %e,
+                        "External data file not found (model may have embedded weights)"
+                    );
+                }
             }
-            Err(e) => {
-                // External data is optional — some models embed weights directly
-                tracing::info!(
-                    path = %onnx_ext_data_remote,
-                    error = %e,
-                    "External data file not found (model may have embedded weights)"
-                );
-            }
-        }
         } // else: external data file already exists
 
         // Atomic rename: tmp_dir → model_dir (cross-platform)
